@@ -41,6 +41,7 @@ app.post('/api/login', async (req, res) => {
 
     if (error || !tenant) {
       console.error('[LOGIN] tenant lookup failed:', error?.message);
+      console.error('[LOGIN] SUPABASE_URL =', process.env.SUPABASE_URL ?? 'UNDEFINED');
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
