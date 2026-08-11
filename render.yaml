@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: carrier-vetting
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend
+    startCommand: node backend/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FMCSA_WEBKEY
+        sync: false
+      - key: SAFERWATCH_SERVICE_KEY
+        sync: false
+      - key: SAFERWATCH_CUSTOMER_KEY
+        sync: false

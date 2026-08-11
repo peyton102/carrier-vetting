@@ -6,6 +6,10 @@ import { generateVettingPDF } from '../lib/pdf_generator.js';
 
 const router = express.Router();
 
+function getSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
 // ── POST /api/vetting/run — compute verdict; no DB touch ─────────────────────
 router.post('/run', (req, res, next) => {
   try {
@@ -14,9 +18,6 @@ router.post('/run', (req, res, next) => {
 });
 
 // ── POST /api/vetting/pdf ─────────────────────────────────────────────────────
-// Generate and deliver the PDF certificate.
-// !! NO database operations here — DB failure can never block PDF delivery !!
-// Pre-generates a UUID so it appears in the PDF and can be passed to /save.
 router.post('/pdf', async (req, res, next) => {
   try {
     const { carrierData, override } = req.body;
@@ -35,7 +36,7 @@ router.post('/pdf', async (req, res, next) => {
     const finalVerdict = applyOverride ? 'APPROVED WITH OVERRIDE' : result.verdict;
 
     const generatedAt = new Date();
-    const recordId    = randomUUID();  // pre-generate so it appears inside the PDF
+    const recordId    = randomUUID();
 
     const pdfBuffer = await generateVettingPDF({
       carrierData,
@@ -55,7 +56,6 @@ router.post('/pdf', async (req, res, next) => {
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    // Surface metadata to the frontend for the subsequent /save call
     res.setHeader('X-Record-Id',    recordId);
     res.setHeader('X-Verdict',      finalVerdict);
     res.setHeader('X-Tier',         result.tier);
@@ -64,16 +64,13 @@ router.post('/pdf', async (req, res, next) => {
       'X-Record-Id, X-Verdict, X-Tier, X-Filename');
 
     res.send(pdfBuffer);
-    // PDF is delivered. Nothing after this line can affect what the user received.
   } catch (e) { next(e); }
 });
 
 // ── POST /api/vetting/save ────────────────────────────────────────────────────
-// Persist the vetting record to Supabase.
-// Called AFTER the PDF has already been delivered. Completely independent.
-// Always returns JSON { ok, recordId?, error? } — never throws to the client.
 router.post('/save', async (req, res) => {
   const { carrierData, override, recordId, verdict, tier } = req.body;
+  const orgId = req.auth.orgId;
 
   try {
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -89,18 +86,13 @@ router.post('/save', async (req, res) => {
       override?.managerName?.trim() &&
       override?.reason?.trim()
     );
-    // Prefer the verdict computed at PDF time (passed in from frontend)
     const finalVerdict = verdict || (applyOverride ? 'APPROVED WITH OVERRIDE' : result.verdict);
 
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-    );
-
-    const { data: row, error: dbErr } = await supabase
+    const { data: row, error: dbErr } = await getSupabase()
       .from('vetting_logs')
       .insert({
-        id:               recordId,           // use the same UUID that's in the PDF
+        id:               recordId,
+        org_id:           orgId,
         load_ref:         carrierData.loadRef,
         dispatcher:       carrierData.dispatcher,
         carrier_name:     carrierData.carrierName || null,
@@ -122,24 +114,20 @@ router.post('/save', async (req, res) => {
 
     res.json({ ok: true, recordId: row.id });
   } catch (e) {
-    // Never let this propagate — PDF is already delivered, this is informational only
     res.json({ ok: false, error: e.message });
   }
 });
 
-// ── GET /api/vetting/logs — audit trail ──────────────────────────────────────
+// ── GET /api/vetting/logs ─────────────────────────────────────────────────────
 router.get('/logs', async (req, res, next) => {
   try {
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return res.json([]);
     }
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-    );
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('vetting_logs')
       .select('id,created_at,load_ref,dispatcher,carrier_name,dot_number,mc_number,verdict,tier,reasons,pdf_url')
+      .eq('org_id', req.auth.orgId)
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
@@ -153,14 +141,11 @@ router.get('/logs/:id', async (req, res, next) => {
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return res.status(503).json({ error: 'Database not configured' });
     }
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-    );
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from('vetting_logs')
       .select('*')
       .eq('id', req.params.id)
+      .eq('org_id', req.auth.orgId)
       .single();
     if (error) throw error;
     res.json(data);
