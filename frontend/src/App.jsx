@@ -12,14 +12,14 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
-      const res = await fetch('/api/login', {
+      const res  = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (res.ok) {
-        onLogin({ name: data.name, email: data.email, role: data.role, orgName: data.orgName });
+        onLogin({ email: data.email, name: data.name, tenant: data.tenant });
       } else {
         setError(data.error || 'Invalid email or password');
       }
@@ -64,7 +64,7 @@ function LoginScreen({ onLogin }) {
 }
 
 export default function App() {
-  const [user,  setUser]  = useState(null);   // null = loading, false = not authed
+  const [user,  setUser]  = useState(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -85,9 +85,9 @@ export default function App() {
   return (
     <div className="app">
       <nav>
-        <span className="brand">{user.orgName || 'Carrier Vetting'}</span>
+        <span className="brand">{user.name || 'Carrier Vetting'}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontSize: 13, color: '#6b7280' }}>{user.name}</span>
+          <span style={{ fontSize: 13, color: '#6b7280' }}>{user.email}</span>
           <button
             onClick={handleLogout}
             style={{

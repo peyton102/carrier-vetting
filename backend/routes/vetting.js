@@ -70,7 +70,7 @@ router.post('/pdf', async (req, res, next) => {
 // ── POST /api/vetting/save ────────────────────────────────────────────────────
 router.post('/save', async (req, res) => {
   const { carrierData, override, recordId, verdict, tier } = req.body;
-  const orgId = req.auth.orgId;
+  const tenantId = req.auth.tenant;
 
   try {
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -92,7 +92,7 @@ router.post('/save', async (req, res) => {
       .from('vetting_logs')
       .insert({
         id:               recordId,
-        org_id:           orgId,
+        tenant_id:        tenantId,
         load_ref:         carrierData.loadRef,
         dispatcher:       carrierData.dispatcher,
         carrier_name:     carrierData.carrierName || null,
@@ -111,7 +111,6 @@ router.post('/save', async (req, res) => {
       .single();
 
     if (dbErr) throw new Error(dbErr.message);
-
     res.json({ ok: true, recordId: row.id });
   } catch (e) {
     res.json({ ok: false, error: e.message });
@@ -127,7 +126,7 @@ router.get('/logs', async (req, res, next) => {
     const { data, error } = await getSupabase()
       .from('vetting_logs')
       .select('id,created_at,load_ref,dispatcher,carrier_name,dot_number,mc_number,verdict,tier,reasons,pdf_url')
-      .eq('org_id', req.auth.orgId)
+      .eq('tenant_id', req.auth.tenant)
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
@@ -145,7 +144,7 @@ router.get('/logs/:id', async (req, res, next) => {
       .from('vetting_logs')
       .select('*')
       .eq('id', req.params.id)
-      .eq('org_id', req.auth.orgId)
+      .eq('tenant_id', req.auth.tenant)
       .single();
     if (error) throw error;
     res.json(data);

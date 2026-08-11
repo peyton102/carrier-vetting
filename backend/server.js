@@ -9,7 +9,7 @@ import cors           from 'cors';
 import cookieParser   from 'cookie-parser';
 import bcrypt         from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
-import { signToken }  from './lib/auth.js';
+import { signToken }   from './lib/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import vettingRouter    from './routes/vetting.js';
 import fmcsaRouter      from './routes/fmcsa.js';
@@ -21,79 +21,60 @@ app.use(cookieParser());
 app.use(express.json());
 
 function getSupabase() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
 }
 
-// ── Public: login ─────────────────────────────────────────────────────────────
+// ── POST /api/login ───────────────────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body ?? {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
   try {
-    const supabase = getSupabase();
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, org_id, email, name, role, password_hash')
+    const { data: tenant, error } = await getSupabase()
+      .from('tenants')
+      .select('slug, email, name, password_hash')
       .eq('email', email.toLowerCase().trim())
       .single();
 
-    if (error || !user) {
-      console.error('[LOGIN] user lookup failed:', error?.message, '| found:', !!user);
-      console.error('[LOGIN] SUPABASE_URL set:', !!process.env.SUPABASE_URL, '| KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+    if (error || !tenant) {
+      console.error('[LOGIN] tenant lookup failed:', error?.message);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const valid = await bcrypt.compare(password, user.password_hash);
+    const valid = await bcrypt.compare(password, tenant.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
-    // Fetch org name separately
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('name')
-      .eq('id', user.org_id)
-      .single();
-
-    const token = signToken({ userId: user.id, orgId: user.org_id, role: user.role });
-    res.cookie('auth', token, { httpOnly: true, sameSite: 'strict', maxAge: 30 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, name: user.name, email: user.email, role: user.role, orgName: org?.name });
+    const token = signToken({ sub: tenant.email, tenant: tenant.slug });
+    res.cookie('auth', token, { httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug });
   } catch (e) {
-    console.error('[LOGIN ERROR]', e.message);
+    console.error('[LOGIN] error:', e.message);
     res.status(500).json({ error: 'Login failed' });
   }
 });
 
-// ── Public: logout ────────────────────────────────────────────────────────────
+// ── POST /api/logout ──────────────────────────────────────────────────────────
 app.post('/api/logout', (req, res) => {
   res.clearCookie('auth');
   res.json({ ok: true });
 });
 
-// ── All routes below require a valid JWT ──────────────────────────────────────
+// ── All routes below require valid JWT ────────────────────────────────────────
 app.use('/api', requireAuth);
 
-// ── Auth: current user info ───────────────────────────────────────────────────
+// ── GET /api/me ───────────────────────────────────────────────────────────────
 app.get('/api/me', async (req, res, next) => {
   try {
-    const supabase = getSupabase();
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, email, name, role')
-      .eq('id', req.auth.userId)
+    const { data: tenant, error } = await getSupabase()
+      .from('tenants')
+      .select('slug, email, name')
+      .eq('slug', req.auth.tenant)
       .single();
-    if (error || !user) return res.status(401).json({ error: 'User not found' });
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('name')
-      .eq('id', req.auth.orgId)
-      .single();
-    res.json({
-      userId:  user.id,
-      email:   user.email,
-      name:    user.name,
-      role:    user.role,
-      orgId:   req.auth.orgId,
-      orgName: org?.name,
-    });
+    if (error || !tenant) return res.status(401).json({ error: 'Tenant not found' });
+    res.json({ email: tenant.email, name: tenant.name, tenant: tenant.slug });
   } catch (e) { next(e); }
 });
 
@@ -115,14 +96,12 @@ app.use((err, _req, res, _next) => {
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
-  const url   = process.env.SUPABASE_URL              || '(not set)';
-  const key   = process.env.SUPABASE_SERVICE_ROLE_KEY || '(not set)';
-  const jwt   = process.env.JWT_SECRET                || '(not set)';
-  const fmcsa = process.env.FMCSA_WEBKEY              || '(not set)';
-  const mask  = (k) => k === '(not set)' ? k : k.length > 8 ? `${k.slice(0, 4)}…${k.slice(-4)}` : '(too short)';
+  const url  = process.env.SUPABASE_URL              || '(not set)';
+  const key  = process.env.SUPABASE_SERVICE_ROLE_KEY || '(not set)';
+  const jwt  = process.env.JWT_SECRET                ? 'set' : 'using dev-secret';
+  const mask = (k) => k === '(not set)' ? k : `${k.slice(0, 4)}…${k.slice(-4)}`;
   console.log(`\n  Carrier Vetting running at http://localhost:${PORT}`);
   console.log(`  SUPABASE_URL              = ${url}`);
   console.log(`  SUPABASE_SERVICE_ROLE_KEY = ${mask(key)}`);
-  console.log(`  JWT_SECRET                = ${mask(jwt)}`);
-  console.log(`  FMCSA_WEBKEY              = ${mask(fmcsa)}\n`);
+  console.log(`  JWT_SECRET                = ${jwt}\n`);
 });
