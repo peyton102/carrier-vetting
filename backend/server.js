@@ -37,7 +37,10 @@ app.post('/api/login', async (req, res) => {
       .eq('email', email.toLowerCase().trim())
       .single();
 
-    if (error || !user) return res.status(401).json({ error: 'Invalid email or password' });
+    if (error || !user) {
+      console.error('[LOGIN] user lookup failed:', error?.message, '| found:', !!user);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
