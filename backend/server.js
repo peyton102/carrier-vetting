@@ -33,7 +33,7 @@ app.post('/api/login', async (req, res) => {
     const supabase = getSupabase();
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, org_id, email, name, role, password_hash, organizations(name)')
+      .select('id, org_id, email, name, role, password_hash')
       .eq('email', email.toLowerCase().trim())
       .single();
 
@@ -42,9 +42,16 @@ app.post('/api/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
+    // Fetch org name separately
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('name')
+      .eq('id', user.org_id)
+      .single();
+
     const token = signToken({ userId: user.id, orgId: user.org_id, role: user.role });
     res.cookie('auth', token, { httpOnly: true, sameSite: 'strict', maxAge: 30 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, name: user.name, email: user.email, role: user.role, orgName: user.organizations?.name });
+    res.json({ ok: true, name: user.name, email: user.email, role: user.role, orgName: org?.name });
   } catch (e) {
     console.error('[LOGIN ERROR]', e.message);
     res.status(500).json({ error: 'Login failed' });
@@ -66,17 +73,22 @@ app.get('/api/me', async (req, res, next) => {
     const supabase = getSupabase();
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, name, role, organizations(name)')
+      .select('id, email, name, role')
       .eq('id', req.auth.userId)
       .single();
     if (error || !user) return res.status(401).json({ error: 'User not found' });
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('name')
+      .eq('id', req.auth.orgId)
+      .single();
     res.json({
       userId:  user.id,
       email:   user.email,
       name:    user.name,
       role:    user.role,
       orgId:   req.auth.orgId,
-      orgName: user.organizations?.name,
+      orgName: org?.name,
     });
   } catch (e) { next(e); }
 });
