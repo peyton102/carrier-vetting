@@ -39,6 +39,7 @@ app.post('/api/login', async (req, res) => {
 
     if (error || !user) {
       console.error('[LOGIN] user lookup failed:', error?.message, '| found:', !!user);
+      console.error('[LOGIN] SUPABASE_URL set:', !!process.env.SUPABASE_URL, '| KEY set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
