@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import CarrierVetting from './pages/CarrierVetting.jsx';
+import Certificates   from './pages/Certificates.jsx';
 
 function LoginScreen({ onLogin }) {
   const [email,    setEmail]    = useState('');
@@ -86,6 +87,26 @@ export default function App() {
     <div className="app">
       <nav>
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
+          <NavLink
+            to="/vetting"
+            style={({ isActive }) => ({
+              fontSize: 13, fontWeight: 600, textDecoration: 'none',
+              color: isActive ? '#1e3a5f' : '#6b7280',
+            })}
+          >
+            Vetting
+          </NavLink>
+          <NavLink
+            to="/certificates"
+            style={({ isActive }) => ({
+              fontSize: 13, fontWeight: 600, textDecoration: 'none',
+              color: isActive ? '#1e3a5f' : '#6b7280',
+            })}
+          >
+            Certificates
+          </NavLink>
+        </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontSize: 13, color: '#6b7280' }}>{user.email}</span>
           <button
@@ -102,7 +123,8 @@ export default function App() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/vetting" replace />} />
-          <Route path="/vetting" element={<CarrierVetting />} />
+          <Route path="/vetting"      element={<CarrierVetting />} />
+          <Route path="/certificates" element={<Certificates />} />
         </Routes>
       </main>
     </div>

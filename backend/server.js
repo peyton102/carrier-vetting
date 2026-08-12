@@ -11,9 +11,10 @@ import bcrypt         from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
 import { signToken }   from './lib/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
-import vettingRouter    from './routes/vetting.js';
-import fmcsaRouter      from './routes/fmcsa.js';
-import saferwatchRouter from './routes/saferwatch.js';
+import vettingRouter      from './routes/vetting.js';
+import fmcsaRouter        from './routes/fmcsa.js';
+import saferwatchRouter   from './routes/saferwatch.js';
+import certificatesRouter from './routes/certificates.js';
 
 const app = express();
 app.use(cors());
@@ -81,9 +82,10 @@ app.get('/api/me', async (req, res, next) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.use('/api/vetting',    vettingRouter);
-app.use('/api/fmcsa',      fmcsaRouter);
-app.use('/api/saferwatch', saferwatchRouter);
+app.use('/api/vetting',      vettingRouter);
+app.use('/api/fmcsa',        fmcsaRouter);
+app.use('/api/saferwatch',   saferwatchRouter);
+app.use('/api/certificates', certificatesRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');

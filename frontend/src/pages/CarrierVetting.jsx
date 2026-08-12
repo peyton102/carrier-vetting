@@ -397,7 +397,10 @@ export default function CarrierVetting() {
     finally { setRunning(false); }
   }
 
-  // ── Finalize: generate PDF then archive ─────────────────────────────────────
+  // ── Finalize: generate PDF, save to storage, download to user ───────────────
+  // The backend generates the PDF once, uploads that exact buffer to storage,
+  // then sends the same buffer as the download. X-Certificate-Save-Error is set
+  // in the response headers if the save failed — PDF is always delivered.
   async function finalize() {
     setFinalErr('');
     setSaveStatus(null);
@@ -418,7 +421,6 @@ export default function CarrierVetting() {
     const applyOverride = verdict?.canOverride &&
       override.managerName.trim() && override.reason.trim();
 
-    let recordId, verdictFinal, tierFinal, filename;
     try {
       const pdfRes = await fetch('/api/vetting/pdf', {
         method: 'POST',
@@ -434,11 +436,11 @@ export default function CarrierVetting() {
         throw new Error(err.error ?? 'PDF generation failed');
       }
 
-      recordId     = pdfRes.headers.get('X-Record-Id');
-      verdictFinal = pdfRes.headers.get('X-Verdict');
-      tierFinal    = pdfRes.headers.get('X-Tier');
-      filename     = pdfRes.headers.get('X-Filename') || 'VettingCert.pdf';
+      const recordId  = pdfRes.headers.get('X-Record-Id');
+      const filename  = pdfRes.headers.get('X-Filename') || 'VettingCert.pdf';
+      const saveErr   = pdfRes.headers.get('X-Certificate-Save-Error');
 
+      // Trigger browser download
       const blob = await pdfRes.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a');
@@ -450,34 +452,11 @@ export default function CarrierVetting() {
       URL.revokeObjectURL(url);
 
       setSavedRecordId(recordId);
-      setFinalizing(false);
+      setSaveStatus(saveErr ? { ok: false, error: saveErr } : { ok: true, recordId });
     } catch (e) {
       setFinalErr(`PDF generation failed: ${e.message}`);
+    } finally {
       setFinalizing(false);
-      return;
-    }
-
-    setSaveStatus({ saving: true });
-    try {
-      const saveRes = await fetch('/api/vetting/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          carrierData: form,
-          override:    applyOverride ? override : null,
-          recordId,
-          verdict:     verdictFinal,
-          tier:        tierFinal,
-        }),
-      });
-      const saveData = await saveRes.json().catch(() => ({ ok: false, error: 'No response' }));
-      if (saveData.ok) {
-        setSaveStatus({ ok: true, recordId: saveData.recordId });
-      } else {
-        setSaveStatus({ ok: false, error: saveData.error });
-      }
-    } catch (e) {
-      setSaveStatus({ ok: false, error: e.message });
     }
   }
 
@@ -955,31 +934,29 @@ export default function CarrierVetting() {
           {/* ── Post-generate status ── */}
           {savedRecordId && (
             <div style={{
-              background: '#f0fdf4', border: '1.5px solid #16a34a', borderRadius: 8,
-              padding: '14px 18px', marginTop: 16,
+              background: saveStatus?.ok === false ? '#fffbeb' : '#f0fdf4',
+              border: `1.5px solid ${saveStatus?.ok === false ? '#d97706' : '#16a34a'}`,
+              borderRadius: 8, padding: '14px 18px', marginTop: 16,
             }}>
-              <strong style={{ color: '#166534' }}>PDF generated and downloaded.</strong>
+              <strong style={{ color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
+                PDF generated and downloaded.
+              </strong>
               {' '}
-              <span style={{ fontSize: 13, color: '#166534' }}>
+              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
                 Attach it to the load in Dr Dispatch now.
               </span>
 
-              {saveStatus?.saving && (
-                <p style={{ fontSize: 12, color: '#6b7280', marginTop: 8, marginBottom: 0 }}>
-                  Saving to archive…
-                </p>
-              )}
               {saveStatus?.ok && (
                 <p style={{ fontSize: 12, color: '#166534', marginTop: 8, marginBottom: 0 }}>
-                  ✓ Archived to database. Record ID:{' '}
+                  Certificate saved to secure storage. Record ID:{' '}
                   <code style={{ fontSize: 11, background: '#dcfce7', padding: '1px 4px', borderRadius: 3 }}>
                     {saveStatus.recordId}
                   </code>
                 </p>
               )}
-              {saveStatus && !saveStatus.saving && saveStatus.ok === false && (
+              {saveStatus?.ok === false && (
                 <p style={{ fontSize: 12, color: '#92400e', marginTop: 8, marginBottom: 0 }}>
-                  PDF generated. (Archive save skipped — database not configured yet.)
+                  Certificate could not be saved to storage: {saveStatus.error}
                 </p>
               )}
 
@@ -1026,7 +1003,7 @@ export default function CarrierVetting() {
                         <td style={s.logTd}>{tierBadge(row.tier, row.verdict)}</td>
                         <td style={s.logTd}>
                           {row.pdf_url
-                            ? <a href={row.pdf_url} target="_blank" rel="noreferrer" style={{ color: '#1e3a5f', fontWeight: 600 }}>Download</a>
+                            ? <a href={`/api/certificates/${row.id}/download`} target="_blank" rel="noreferrer" style={{ color: '#1e3a5f', fontWeight: 600 }}>Download</a>
                             : <span style={{ color: '#9ca3af' }}>—</span>}
                         </td>
                       </tr>

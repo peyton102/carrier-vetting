@@ -24,45 +24,36 @@ const rl = createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(r => rl.question(q, r));
 
 async function main() {
-  console.log('\n── Create tenant + user ─────────────────────────\n');
+  console.log('\n── Create tenant ────────────────────────────────\n');
 
-  const orgName  = await ask('Organization name (e.g. Precision Freight): ');
-  const orgSlug  = await ask('Organization slug (e.g. precision-freight): ');
-  const userName = await ask('User full name: ');
-  const email    = await ask('User email: ');
-  const password = await ask('User password: ');
-  const role     = (await ask('Role [admin/dispatcher] (default: admin): ')).trim() || 'admin';
+  const name     = await ask('Organization / display name (e.g. Precision Transport): ');
+  const slug     = await ask('Tenant slug — lowercase, hyphens only (e.g. precision-transport): ');
+  const email    = await ask('Login email: ');
+  const password = await ask('Login password: ');
   rl.close();
 
-  // Create org
-  const { data: org, error: orgErr } = await supabase
-    .from('organizations')
-    .insert({ name: orgName.trim(), slug: orgSlug.trim() })
-    .select('id, name')
+  const password_hash = await bcrypt.hash(password.trim(), 10);
+
+  const { data: tenant, error } = await supabase
+    .from('tenants')
+    .insert({
+      slug:  slug.trim().toLowerCase(),
+      email: email.trim().toLowerCase(),
+      name:  name.trim(),
+      password_hash,
+    })
+    .select('slug, email, name')
     .single();
 
-  if (orgErr) {
-    console.error('\nFailed to create org:', orgErr.message);
-    process.exit(1);
-  }
-  console.log(`\nOrg created: ${org.name} (${org.id})`);
-
-  // Hash password
-  const password_hash = await bcrypt.hash(password, 10);
-
-  // Create user
-  const { data: user, error: userErr } = await supabase
-    .from('users')
-    .insert({ org_id: org.id, email: email.trim().toLowerCase(), password_hash, name: userName.trim(), role })
-    .select('id, email, name, role')
-    .single();
-
-  if (userErr) {
-    console.error('\nFailed to create user:', userErr.message);
+  if (error) {
+    console.error('\nFailed to create tenant:', error.message);
     process.exit(1);
   }
 
-  console.log(`User created: ${user.name} <${user.email}> role=${user.role}`);
+  console.log(`\nTenant created:`);
+  console.log(`  Name:  ${tenant.name}`);
+  console.log(`  Slug:  ${tenant.slug}`);
+  console.log(`  Email: ${tenant.email}`);
   console.log('\nDone. You can now sign in at http://localhost:3002\n');
 }
 
