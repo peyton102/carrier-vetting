@@ -15,6 +15,7 @@ import vettingRouter      from './routes/vetting.js';
 import fmcsaRouter        from './routes/fmcsa.js';
 import saferwatchRouter   from './routes/saferwatch.js';
 import certificatesRouter from './routes/certificates.js';
+import settingsRouter     from './routes/settings.js';
 
 const app = express();
 app.use(cors());
@@ -86,6 +87,7 @@ app.use('/api/vetting',      vettingRouter);
 app.use('/api/fmcsa',        fmcsaRouter);
 app.use('/api/saferwatch',   saferwatchRouter);
 app.use('/api/certificates', certificatesRouter);
+app.use('/api/settings',     settingsRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');

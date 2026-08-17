@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { runVettingRules } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
+import { fetchSettings } from '../lib/settings.js';
 
 const router = express.Router();
 
@@ -10,10 +11,20 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+async function getTenantName(slug) {
+  const { data } = await getSupabase()
+    .from('tenants')
+    .select('name')
+    .eq('slug', slug)
+    .single();
+  return data?.name ?? slug;
+}
+
 // ── POST /api/vetting/run — compute verdict; no DB touch ─────────────────────
-router.post('/run', (req, res, next) => {
+router.post('/run', async (req, res, next) => {
   try {
-    res.json(runVettingRules(req.body));
+    const cfg = await fetchSettings(req.auth.tenant);
+    res.json(runVettingRules(req.body, cfg));
   } catch (e) { next(e); }
 });
 
@@ -29,7 +40,13 @@ router.post('/pdf', async (req, res, next) => {
     if (!carrierData?.loadRef)    return res.status(400).json({ error: 'loadRef is required' });
     if (!carrierData?.dispatcher) return res.status(400).json({ error: 'dispatcher is required' });
 
-    const result = runVettingRules(carrierData);
+    // Fetch settings and broker name in parallel
+    const [cfg, brokerName] = await Promise.all([
+      fetchSettings(orgId),
+      getTenantName(orgId),
+    ]);
+
+    const result = runVettingRules(carrierData, cfg);
 
     const applyOverride = (
       result.verdict === 'HOLD' &&
@@ -52,6 +69,8 @@ router.post('/pdf', async (req, res, next) => {
       override:      applyOverride ? override : null,
       generatedAt,
       recordId,
+      settings:      cfg,
+      brokerName,
     });
 
     const dot      = (carrierData.dotNumber || 'NODOT').replace(/\W/g, '');
@@ -84,7 +103,6 @@ router.post('/pdf', async (req, res, next) => {
           mc_number:    carrierData.mcNumber    || null,
           verdict:      finalVerdict,
           storage_path: storagePath,
-          // created_at is set by DB default — never sent from here
         });
 
       if (certErr) throw new Error(`Certificate record: ${certErr.message}`);

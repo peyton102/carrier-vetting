@@ -1,91 +1,112 @@
-// ── Precision Transport — Carrier Vetting Rules Engine ──────────────────────
-// Change ONLY these constants to update all thresholds sitewide.
+// ── Carrier Vetting — Rules Engine ───────────────────────────────────────────
+// All thresholds come from per-tenant settings fetched from the DB.
+// Nothing is hardcoded. DEFAULT_SETTINGS are the starting point for new customers.
 
-// Per-BASIC thresholds (set 1% below CSA intervention levels per company policy)
-export const THRESHOLD_UNSAFE_DRIVING      = 65;  // RED
-export const THRESHOLD_CRASH_INDICATOR     = 55;  // RED  (unchanged)
-export const THRESHOLD_HOS                 = 65;  // YELLOW
-export const THRESHOLD_DRIVER_FITNESS      = 80;  // YELLOW
-export const THRESHOLD_CONTROLLED_SUBSTANCE = 80; // RED  (drugs/alcohol)
-export const THRESHOLD_VEHICLE_MAINTENANCE = 79;  // YELLOW
-
-export const AUTHORITY_MIN_DAYS       = 365;
-export const AUTO_LIABILITY_MIN       = 750_000;   // hard block below this (federal minimum)
-export const AUTO_LIABILITY_PREFERRED = 1_000_000; // soft note if below this but above MIN
-export const CARGO_MIN                = 100_000;
+/**
+ * Default settings applied when a tenant has not yet configured their own policy.
+ * These values are also stored as DB column defaults in tenant_settings.
+ */
+export const DEFAULT_SETTINGS = {
+  // BASIC thresholds (percentile, 1–100)
+  basicUnsafeDrivingThreshold:       55,
+  basicUnsafeDrivingAction:          'reject', // 'reject' = hard block | 'hold' = override-able
+  basicCrashIndicatorThreshold:      55,
+  basicCrashIndicatorAction:         'reject',
+  basicHosThreshold:                 55,
+  basicHosAction:                    'hold',
+  basicVehicleMaintenanceThreshold:  55,
+  basicVehicleMaintenanceAction:     'hold',
+  basicDriverFitnessThreshold:       55,
+  basicDriverFitnessAction:          'hold',
+  basicControlledSubstanceThreshold: 55,
+  basicControlledSubstanceAction:    'reject',
+  // Insurance minimums (USD)
+  autoLiabilityMin:  1_000_000,
+  cargoMin:            100_000,
+  // Authority age
+  authorityMinDays:   365,
+  authorityAgeAction: 'hold',  // 'hold' | 'block'
+  // Safety ratings that trigger a block
+  blockConditional:    true,
+  blockUnsatisfactory: true,
+  // OOS: flag if carrier rate >= national_avg * oosRateMultiplier
+  oosRateMultiplier: 2,
+};
 
 /**
  * Run the tri-tier (RED / YELLOW / GREEN) vetting rules.
  *
- * @param {object} d  carrier data fields from manual entry form
+ * @param {object} d    — carrier data fields from the vetting form
+ * @param {object} cfg  — tenant settings, merged with DEFAULT_SETTINGS by caller
  * @returns {{ verdict, tier, reasons, notes, authorityDays, canOverride }}
  */
-export function runVettingRules(d) {
+export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const red    = [];
   const yellow = [];
-  const notes  = [];  // informational only — does not affect verdict or require override
+  const notes  = [];
 
-  // Authority age in calendar days
   const authorityDays = d.authorityGrantDate
     ? Math.floor((Date.now() - new Date(d.authorityGrantDate).getTime()) / 86_400_000)
     : null;
 
-  const status   = (d.authorityStatus      ?? '').toLowerCase();
-  const rawRating = (d.safetyRating        ?? '').toLowerCase().replace(/\//g, '').replace(/\s/g, '');
-  const grade    = (d.carrierAssureGrade   ?? '').toUpperCase();
+  const status    = (d.authorityStatus    ?? '').toLowerCase();
+  const rawRating = (d.safetyRating       ?? '').toLowerCase().replace(/\//g, '').replace(/\s/g, '');
+  const grade     = (d.carrierAssureGrade ?? '').toUpperCase();
 
-  // "None", "Unrated", "None/Unrated", or empty → unrated branch
+  // 'None', 'Unrated', 'None/Unrated', or empty → unrated branch
   const isUnrated = ['none', 'unrated', 'noneunrated', ''].includes(rawRating);
 
-  // ── RED — Immediate REJECT (no override path) ───────────────────────────
-
+  // ── Always-RED: operating authority status ────────────────────────────────
   if (['inactive', 'suspended', 'revoked', 'not authorized'].includes(status)) {
     red.push(`Operating authority is ${d.authorityStatus} — carrier cannot operate legally`);
   }
 
+  // ── Configurable: safety rating blocks ───────────────────────────────────
   if (!isUnrated) {
-    if (rawRating === 'conditional')    red.push('FMCSA safety rating is Conditional');
-    if (rawRating === 'unsatisfactory') red.push('FMCSA safety rating is Unsatisfactory');
+    if (cfg.blockConditional    && rawRating === 'conditional')    red.push('FMCSA safety rating is Conditional');
+    if (cfg.blockUnsatisfactory && rawRating === 'unsatisfactory') red.push('FMCSA safety rating is Unsatisfactory');
   }
 
+  // ── Configurable: auto liability minimum ─────────────────────────────────
   const autoLiab = parseFloat(d.autoLiability);
-  if (!isNaN(autoLiab)) {
-    if (autoLiab < AUTO_LIABILITY_MIN) {
-      red.push(`Auto liability $${fmtMoney(autoLiab)} is below the federal minimum of $${fmtMoney(AUTO_LIABILITY_MIN)} — hard fail`);
-    } else if (autoLiab < AUTO_LIABILITY_PREFERRED) {
-      notes.push(`Auto liability $${fmtMoney(autoLiab)} meets the federal minimum ($${fmtMoney(AUTO_LIABILITY_MIN)}) but is below our preferred $${fmtMoney(AUTO_LIABILITY_PREFERRED)} threshold — informational only, no override required`);
-    }
+  if (!isNaN(autoLiab) && autoLiab < cfg.autoLiabilityMin) {
+    red.push(`Auto liability $${fmtMoney(autoLiab)} is below this broker's $${fmtMoney(cfg.autoLiabilityMin)} minimum — hard fail`);
   }
 
+  // ── Configurable: cargo insurance minimum ────────────────────────────────
   const cargo = parseFloat(d.cargoInsurance);
-  if (!isNaN(cargo) && cargo < CARGO_MIN) {
-    red.push(`Cargo insurance $${fmtMoney(cargo)} is below the $100,000 minimum`);
+  if (!isNaN(cargo) && cargo < cfg.cargoMin) {
+    red.push(`Cargo insurance $${fmtMoney(cargo)} is below this broker's $${fmtMoney(cfg.cargoMin)} minimum`);
   }
 
+  // ── Always-RED: Carrier Assure grade F ───────────────────────────────────
   if (grade === 'F') {
     red.push('Carrier Assure grade F — automatic disqualification');
   }
 
+  // ── Always-RED: active federal Out-of-Service order ──────────────────────
   if (d.activeFederalOOS) {
     red.push('Carrier has an active federal Out-of-Service order');
   }
 
-  const unsafeDriving = parseFloat(d.unsafeDrivingBasic);
-  if (!isNaN(unsafeDriving) && unsafeDriving >= THRESHOLD_UNSAFE_DRIVING) {
-    red.push(`Unsafe Driving BASIC ${unsafeDriving}% ≥ alert threshold of ${THRESHOLD_UNSAFE_DRIVING}%`);
+  // ── Configurable: BASIC score checks ─────────────────────────────────────
+  // Each BASIC has a per-tenant threshold and action ('reject' → RED, 'hold' → YELLOW).
+  function checkBasic(rawVal, threshold, action, label) {
+    const val = parseFloat(rawVal);
+    if (isNaN(val) || val < threshold) return;
+    const msg = `${label} BASIC ${val}% ≥ this broker's ${threshold}% threshold`;
+    if (action === 'reject') red.push(msg);
+    else yellow.push(msg);
   }
 
-  const crashInd = parseFloat(d.crashIndicatorBasic);
-  if (!isNaN(crashInd) && crashInd >= THRESHOLD_CRASH_INDICATOR) {
-    red.push(`Crash Indicator BASIC ${crashInd}% ≥ alert threshold of ${THRESHOLD_CRASH_INDICATOR}%`);
-  }
+  checkBasic(d.unsafeDrivingBasic,        cfg.basicUnsafeDrivingThreshold,       cfg.basicUnsafeDrivingAction,       'Unsafe Driving');
+  checkBasic(d.crashIndicatorBasic,       cfg.basicCrashIndicatorThreshold,      cfg.basicCrashIndicatorAction,      'Crash Indicator');
+  checkBasic(d.hosBasic,                  cfg.basicHosThreshold,                 cfg.basicHosAction,                 'Hours of Service');
+  checkBasic(d.vehicleMaintenanceBasic,   cfg.basicVehicleMaintenanceThreshold,  cfg.basicVehicleMaintenanceAction,  'Vehicle Maintenance');
+  checkBasic(d.driverFitnessBasic,        cfg.basicDriverFitnessThreshold,       cfg.basicDriverFitnessAction,       'Driver Fitness');
+  checkBasic(d.controlledSubstancesBasic, cfg.basicControlledSubstanceThreshold, cfg.basicControlledSubstanceAction, 'Controlled Substances/Alcohol');
 
-  const controlledSub = parseFloat(d.controlledSubstancesBasic);
-  if (!isNaN(controlledSub) && controlledSub >= THRESHOLD_CONTROLLED_SUBSTANCE) {
-    red.push(`Controlled Substances/Alcohol BASIC ${controlledSub}% ≥ alert threshold of ${THRESHOLD_CONTROLLED_SUBSTANCE}%`);
-  }
-
-  // Unrated-specific REDs: C/D → reject; ghost-carrier pattern → reject
+  // ── Always-RED (unrated): Carrier Assure C/D and ghost-carrier pattern ───
   if (isUnrated) {
     if (['C', 'D'].includes(grade)) {
       red.push(`Unrated carrier with Carrier Assure grade ${grade} — auto-reject (C/D is red for unrated carriers)`);
@@ -97,38 +118,24 @@ export function runVettingRules(d) {
     }
   }
 
+  // ── Configurable: authority age ───────────────────────────────────────────
+  if (authorityDays !== null && authorityDays < cfg.authorityMinDays) {
+    const msg = `Authority age ${authorityDays} days is under this broker's ${cfg.authorityMinDays}-day minimum`;
+    if (cfg.authorityAgeAction === 'block') {
+      red.push(`${msg} — hard block`);
+    } else {
+      yellow.push(`${msg} — manager override required`);
+    }
+  }
+
   if (red.length > 0) {
     return { verdict: 'REJECT', tier: 'RED', reasons: red, notes, authorityDays, canOverride: false };
   }
 
-  // ── YELLOW — HOLD for manager review (override allowed) ─────────────────
+  // ── YELLOW — HOLD for manager review (override allowed) ──────────────────
 
-  if (authorityDays !== null && authorityDays < AUTHORITY_MIN_DAYS) {
-    yellow.push(
-      `Authority age ${authorityDays} days is under the ${AUTHORITY_MIN_DAYS}-day minimum — manager override required`
-    );
-  }
-
-  if (!isUnrated) {
-    // Grade C/D: yellow for rated carriers
-    if (['C', 'D'].includes(grade)) {
-      yellow.push(`Carrier Assure grade ${grade} — manager review required`);
-    }
-  }
-
-  // BASIC score YELLOW checks apply to ALL carriers (rated or unrated)
-  // Unsafe Driving + Crash Indicator are already RED-tier for all carriers above.
-  const hos = parseFloat(d.hosBasic);
-  if (!isNaN(hos) && hos >= THRESHOLD_HOS) {
-    yellow.push(`Hours of Service BASIC ${hos}% ≥ alert threshold of ${THRESHOLD_HOS}%`);
-  }
-  const vm = parseFloat(d.vehicleMaintenanceBasic);
-  if (!isNaN(vm) && vm >= THRESHOLD_VEHICLE_MAINTENANCE) {
-    yellow.push(`Vehicle Maintenance BASIC ${vm}% ≥ alert threshold of ${THRESHOLD_VEHICLE_MAINTENANCE}%`);
-  }
-  const driverFitness = parseFloat(d.driverFitnessBasic);
-  if (!isNaN(driverFitness) && driverFitness >= THRESHOLD_DRIVER_FITNESS) {
-    yellow.push(`Driver Fitness BASIC ${driverFitness}% ≥ alert threshold of ${THRESHOLD_DRIVER_FITNESS}%`);
+  if (!isUnrated && ['C', 'D'].includes(grade)) {
+    yellow.push(`Carrier Assure grade ${grade} — manager review required`);
   }
 
   if (status === 'revocation pending') {
@@ -141,24 +148,21 @@ export function runVettingRules(d) {
 
   const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 5.5;
   const avgDriver = parseFloat(d.nationalAvgDriverOos) || 5.2;
+  const mult      = parseFloat(cfg.oosRateMultiplier)  || 2;
   const truckOos  = parseFloat(d.truckOosPct);
   const driverOos = parseFloat(d.driverOosPct);
-  if (!isNaN(truckOos) && truckOos >= avgTruck * 2) {
-    yellow.push(`Truck OOS ${truckOos}% ≥ double national average (${(avgTruck * 2).toFixed(1)}%)`);
+  if (!isNaN(truckOos) && truckOos >= avgTruck * mult) {
+    yellow.push(`Truck OOS ${truckOos}% ≥ ${mult}x national average (${(avgTruck * mult).toFixed(1)}%)`);
   }
-  if (!isNaN(driverOos) && driverOos >= avgDriver * 2) {
-    yellow.push(`Driver OOS ${driverOos}% ≥ double national average (${(avgDriver * 2).toFixed(1)}%)`);
+  if (!isNaN(driverOos) && driverOos >= avgDriver * mult) {
+    yellow.push(`Driver OOS ${driverOos}% ≥ ${mult}x national average (${(avgDriver * mult).toFixed(1)}%)`);
   }
 
-  // Unrated carrier — only flag specific concerns; do not auto-HOLD
-  // (~70% of carriers are unrated; being unrated alone is not disqualifying)
+  // Unrated carrier — flag if 0 inspections explicitly entered
   if (isUnrated) {
     const insp = parseInt(d.inspections24mo, 10);
-    // Only flag if inspections were explicitly entered as 0 (not just blank)
     if (!isNaN(insp) && insp === 0) {
-      yellow.push(
-        'Unrated carrier with 0 vehicle inspections in 24 months — manual phone verification of equipment required'
-      );
+      yellow.push('Unrated carrier with 0 vehicle inspections in 24 months — manual phone verification of equipment required');
     }
   }
 
@@ -166,11 +170,10 @@ export function runVettingRules(d) {
     return { verdict: 'HOLD', tier: 'YELLOW', reasons: yellow, notes, authorityDays, canOverride: true };
   }
 
-  // ── GREEN — APPROVE ──────────────────────────────────────────────────────
   return {
     verdict: 'APPROVE',
     tier: 'GREEN',
-    reasons: ['All Precision Transport vetting criteria met — carrier approved for booking'],
+    reasons: ['All vetting criteria met — carrier approved for booking'],
     notes,
     authorityDays,
     canOverride: false,

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import CarrierVetting from './pages/CarrierVetting.jsx';
 import Certificates   from './pages/Certificates.jsx';
+import Settings       from './pages/Settings.jsx';
 
 function LoginScreen({ onLogin }) {
   const [email,    setEmail]    = useState('');
@@ -65,8 +66,9 @@ function LoginScreen({ onLogin }) {
 }
 
 export default function App() {
-  const [user,  setUser]  = useState(null);
-  const [ready, setReady] = useState(false);
+  const [user,     setUser]     = useState(null);
+  const [ready,    setReady]    = useState(false);
+  const [settings, setSettings] = useState(null);
 
   useEffect(() => {
     fetch('/api/me')
@@ -75,37 +77,44 @@ export default function App() {
       .catch(() => { setUser(false); setReady(true); });
   }, []);
 
+  // Load settings whenever a user session is established
+  useEffect(() => {
+    if (!user) return;
+    fetch('/api/settings')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setSettings(data); })
+      .catch(() => {});
+  }, [user]);
+
   async function handleLogout() {
     await fetch('/api/logout', { method: 'POST' });
     setUser(false);
+    setSettings(null);
   }
 
   if (!ready) return null;
   if (!user)  return <LoginScreen onLogin={setUser} />;
+
+  const navLink = (to, label) => (
+    <NavLink
+      to={to}
+      style={({ isActive }) => ({
+        fontSize: 13, fontWeight: 600, textDecoration: 'none',
+        color: isActive ? '#1e3a5f' : '#6b7280',
+      })}
+    >
+      {label}
+    </NavLink>
+  );
 
   return (
     <div className="app">
       <nav>
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
-          <NavLink
-            to="/vetting"
-            style={({ isActive }) => ({
-              fontSize: 13, fontWeight: 600, textDecoration: 'none',
-              color: isActive ? '#1e3a5f' : '#6b7280',
-            })}
-          >
-            Vetting
-          </NavLink>
-          <NavLink
-            to="/certificates"
-            style={({ isActive }) => ({
-              fontSize: 13, fontWeight: 600, textDecoration: 'none',
-              color: isActive ? '#1e3a5f' : '#6b7280',
-            })}
-          >
-            Certificates
-          </NavLink>
+          {navLink('/vetting',      'Vetting')}
+          {navLink('/certificates', 'Certificates')}
+          {navLink('/settings',     'Settings')}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontSize: 13, color: '#6b7280' }}>{user.email}</span>
@@ -123,8 +132,9 @@ export default function App() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/vetting" replace />} />
-          <Route path="/vetting"      element={<CarrierVetting />} />
+          <Route path="/vetting"      element={<CarrierVetting settings={settings} />} />
           <Route path="/certificates" element={<Certificates />} />
+          <Route path="/settings"     element={<Settings settings={settings} onSave={setSettings} />} />
         </Routes>
       </main>
     </div>

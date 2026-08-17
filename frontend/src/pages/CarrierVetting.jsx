@@ -1,15 +1,23 @@
 import { useState, useCallback } from 'react';
 
-// ── Thresholds (mirror rules_engine.js — update both if changed) ─────────────
-const THRESHOLD_UNSAFE_DRIVING       = 65;
-const THRESHOLD_CRASH_INDICATOR      = 55;
-const THRESHOLD_HOS                  = 65;
-const THRESHOLD_DRIVER_FITNESS       = 80;
-const THRESHOLD_CONTROLLED_SUBSTANCE = 80;
-const THRESHOLD_VEHICLE_MAINTENANCE  = 79;
-const AUTHORITY_MIN_DAYS = 365;
-const AUTO_LIABILITY_MIN = 1_000_000;
-const CARGO_MIN          = 100_000;
+// Fallback defaults used only while settings are loading (replaced immediately by server values)
+const DEFAULTS = {
+  basicUnsafeDrivingThreshold:       55,
+  basicUnsafeDrivingAction:          'reject',
+  basicCrashIndicatorThreshold:      55,
+  basicCrashIndicatorAction:         'reject',
+  basicHosThreshold:                 55,
+  basicHosAction:                    'hold',
+  basicVehicleMaintenanceThreshold:  55,
+  basicVehicleMaintenanceAction:     'hold',
+  basicDriverFitnessThreshold:       55,
+  basicDriverFitnessAction:          'hold',
+  basicControlledSubstanceThreshold: 55,
+  basicControlledSubstanceAction:    'reject',
+  autoLiabilityMin:  1_000_000,
+  cargoMin:            100_000,
+  authorityMinDays:      365,
+};
 
 const INITIAL_FORM = {
   // Run metadata
@@ -227,7 +235,9 @@ function tierBadge(tier, verdict) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function CarrierVetting() {
+export default function CarrierVetting({ settings }) {
+  // Merge incoming settings with fallback defaults so labels are always populated
+  const cfg = { ...DEFAULTS, ...(settings ?? {}) };
   const [form,    setForm]    = useState(INITIAL_FORM);
   const [verdict, setVerdict] = useState(null);
   const [running, setRunning] = useState(false);
@@ -651,14 +661,14 @@ export default function CarrierVetting() {
           </Field>
           <div />
 
-          <Field label={`Auto Liability ($) — min $${AUTO_LIABILITY_MIN.toLocaleString()}`}>
+          <Field label={`Auto Liability ($) — min $${cfg.autoLiabilityMin.toLocaleString()}`}>
             <TextInput
               type="number" name="autoLiability" value={form.autoLiability}
               onChange={handleChange} placeholder="e.g. 1000000" min="0"
               inputStyle={fi('autoLiability')}
             />
           </Field>
-          <Field label={`Cargo Insurance ($) — min $${CARGO_MIN.toLocaleString()}`}>
+          <Field label={`Cargo Insurance ($) — min $${cfg.cargoMin.toLocaleString()}`}>
             <TextInput
               type="number" name="cargoInsurance" value={form.cargoInsurance}
               onChange={handleChange} placeholder="e.g. 100000" min="0"
@@ -698,41 +708,41 @@ export default function CarrierVetting() {
           </div>
           <div />
 
-          <Field label={`Unsafe Driving BASIC % (RED ≥ ${THRESHOLD_UNSAFE_DRIVING})`}>
+          <Field label={`Unsafe Driving BASIC % (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicUnsafeDrivingThreshold})`}>
             <TextInput
               type="number" name="unsafeDrivingBasic" value={form.unsafeDrivingBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('unsafeDrivingBasic')}
             />
           </Field>
-          <Field label={`Crash Indicator BASIC % (RED ≥ ${THRESHOLD_CRASH_INDICATOR}) — manual entry`}>
+          <Field label={`Crash Indicator BASIC % (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicCrashIndicatorThreshold}) — manual entry`}>
             <TextInput
               type="number" name="crashIndicatorBasic" value={form.crashIndicatorBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
             />
           </Field>
-          <Field label={`Hours of Service BASIC % (YELLOW ≥ ${THRESHOLD_HOS})`}>
+          <Field label={`Hours of Service BASIC % (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHosThreshold})`}>
             <TextInput
               type="number" name="hosBasic" value={form.hosBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('hosBasic')}
             />
           </Field>
-          <Field label={`Vehicle Maintenance BASIC % (YELLOW ≥ ${THRESHOLD_VEHICLE_MAINTENANCE})`}>
+          <Field label={`Vehicle Maintenance BASIC % (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleMaintenanceThreshold})`}>
             <TextInput
               type="number" name="vehicleMaintenanceBasic" value={form.vehicleMaintenanceBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('vehicleMaintenanceBasic')}
             />
           </Field>
-          <Field label={`Driver Fitness BASIC % (YELLOW ≥ ${THRESHOLD_DRIVER_FITNESS})`}>
+          <Field label={`Driver Fitness BASIC % (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicDriverFitnessThreshold})`}>
             <TextInput
               type="number" name="driverFitnessBasic" value={form.driverFitnessBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('driverFitnessBasic')}
             />
           </Field>
-          <Field label={`Controlled Substances/Alcohol BASIC % (RED ≥ ${THRESHOLD_CONTROLLED_SUBSTANCE})`}>
+          <Field label={`Controlled Substances/Alcohol BASIC % (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicControlledSubstanceThreshold})`}>
             <TextInput
               type="number" name="controlledSubstancesBasic" value={form.controlledSubstancesBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
@@ -841,8 +851,8 @@ export default function CarrierVetting() {
             {verdict.authorityDays !== null && (
               <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
                 Authority age: <strong>{verdict.authorityDays} days</strong>
-                {verdict.authorityDays < AUTHORITY_MIN_DAYS
-                  ? <span style={{ color: '#d97706' }}> (under {AUTHORITY_MIN_DAYS}-day minimum)</span>
+                {verdict.authorityDays < cfg.authorityMinDays
+                  ? <span style={{ color: '#d97706' }}> (under {cfg.authorityMinDays}-day minimum)</span>
                   : <span style={{ color: '#16a34a' }}> ✓</span>}
               </p>
             )}
