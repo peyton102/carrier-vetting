@@ -16,6 +16,8 @@ import fmcsaRouter        from './routes/fmcsa.js';
 import saferwatchRouter   from './routes/saferwatch.js';
 import certificatesRouter from './routes/certificates.js';
 import settingsRouter     from './routes/settings.js';
+import adminRouter        from './routes/admin.js';
+import inviteRouter       from './routes/invite.js';
 
 const app = express();
 app.use(cors());
@@ -37,7 +39,7 @@ app.post('/api/login', async (req, res) => {
   try {
     const { data: tenant, error } = await getSupabase()
       .from('tenants')
-      .select('slug, email, name, password_hash')
+      .select('slug, email, name, password_hash, is_active, is_admin')
       .eq('email', email.toLowerCase().trim())
       .single();
 
@@ -47,12 +49,16 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    if (!tenant.is_active) {
+      return res.status(401).json({ error: 'Account not yet activated. Check your email for the invite link.' });
+    }
+
     const valid = await bcrypt.compare(password, tenant.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
     const token = signToken({ sub: tenant.email, tenant: tenant.slug });
     res.cookie('auth', token, { httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug });
+    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin });
   } catch (e) {
     console.error('[LOGIN] error:', e.message);
     res.status(500).json({ error: 'Login failed' });
@@ -73,11 +79,11 @@ app.get('/api/me', async (req, res, next) => {
   try {
     const { data: tenant, error } = await getSupabase()
       .from('tenants')
-      .select('slug, email, name')
+      .select('slug, email, name, is_admin')
       .eq('slug', req.auth.tenant)
       .single();
     if (error || !tenant) return res.status(401).json({ error: 'Tenant not found' });
-    res.json({ email: tenant.email, name: tenant.name, tenant: tenant.slug });
+    res.json({ email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin });
   } catch (e) { next(e); }
 });
 
@@ -88,6 +94,10 @@ app.use('/api/fmcsa',        fmcsaRouter);
 app.use('/api/saferwatch',   saferwatchRouter);
 app.use('/api/certificates', certificatesRouter);
 app.use('/api/settings',     settingsRouter);
+app.use('/api/admin',        adminRouter);
+
+// Invite routes are public (no requireAuth) — user has no session yet
+app.use('/api/invite',       inviteRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');

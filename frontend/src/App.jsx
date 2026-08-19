@@ -3,6 +3,8 @@ import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import CarrierVetting from './pages/CarrierVetting.jsx';
 import Certificates   from './pages/Certificates.jsx';
 import Settings       from './pages/Settings.jsx';
+import Admin          from './pages/Admin.jsx';
+import Activate       from './pages/Activate.jsx';
 
 function LoginScreen({ onLogin }) {
   const [email,    setEmail]    = useState('');
@@ -93,7 +95,16 @@ export default function App() {
   }
 
   if (!ready) return null;
-  if (!user)  return <LoginScreen onLogin={setUser} />;
+
+  // /activate is public — render before the auth gate
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/activate" element={<Activate onActivate={data => { setUser(data); }} />} />
+        <Route path="*" element={<LoginScreen onLogin={setUser} />} />
+      </Routes>
+    );
+  }
 
   const navLink = (to, label) => (
     <NavLink
@@ -115,6 +126,7 @@ export default function App() {
           {navLink('/vetting',      'Vetting')}
           {navLink('/certificates', 'Certificates')}
           {navLink('/settings',     'Settings')}
+          {user.isAdmin && navLink('/admin', 'Admin')}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
           <span style={{ fontSize: 13, color: '#6b7280' }}>{user.email}</span>
@@ -135,6 +147,7 @@ export default function App() {
           <Route path="/vetting"      element={<CarrierVetting settings={settings} />} />
           <Route path="/certificates" element={<Certificates />} />
           <Route path="/settings"     element={<Settings settings={settings} onSave={setSettings} />} />
+          <Route path="/admin"        element={user.isAdmin ? <Admin /> : <Navigate to="/vetting" replace />} />
         </Routes>
       </main>
     </div>
