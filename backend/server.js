@@ -71,6 +71,9 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Public routes (no auth required) — must be registered BEFORE requireAuth ──
+app.use('/api/invite',       inviteRouter);
+
 // ── All routes below require valid JWT ────────────────────────────────────────
 app.use('/api', requireAuth);
 
@@ -95,9 +98,6 @@ app.use('/api/saferwatch',   saferwatchRouter);
 app.use('/api/certificates', certificatesRouter);
 app.use('/api/settings',     settingsRouter);
 app.use('/api/admin',        adminRouter);
-
-// Invite routes are public (no requireAuth) — user has no session yet
-app.use('/api/invite',       inviteRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');
