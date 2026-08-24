@@ -72,77 +72,81 @@ const CA_GRADES = ['A', 'B', 'C', 'D', 'F'];
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   page: { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:   { fontSize: 22, fontWeight: 800, color: '#1e3a5f', margin: '0 0 4px' },
-  sub:  { fontSize: 13, color: '#6b7280', marginBottom: 24 },
+  h1:   { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  sub:  { fontSize: 13, color: '#64748b', marginBottom: 24 },
 
-  card:     { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#1e3a5f', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', paddingBottom: 10, marginBottom: 16 },
+  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
 
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' },
   grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px' },
 
-  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
+  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
   input: {
-    width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827',
-    background: '#fff',
+    width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6,
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
+    background: '#0a1220',
   },
   inputFilled: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #16a34a', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827',
-    background: '#f0fdf4',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
+    background: '#0a1f0e',
   },
   inputFilledSW: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #0284c7', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827',
-    background: '#f0f9ff',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
+    background: '#0a1525',
   },
   select: {
-    width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#fff',
+    width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6,
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220',
   },
   selectFilled: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #16a34a', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#f0fdf4',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1f0e',
   },
   selectFilledSW: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #0284c7', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#f0f9ff',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1525',
   },
-  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#94a3b8', cursor: 'pointer' },
 
   btn: (color, disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#d1d5db' : color === 'blue' ? '#1e3a5f' : color === 'green' ? '#16a34a' : '#b45309',
-    color: '#fff', opacity: disabled ? 0.7 : 1, transition: 'opacity .15s',
+    background: disabled ? '#243044'
+      : color === 'gray' ? '#162032'
+      : '#f97316',
+    color: disabled ? '#64748b' : '#fff',
+    opacity: disabled ? 0.6 : 1,
+    transition: 'opacity .15s',
+    boxShadow: disabled || color === 'gray' ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
   btnRow: { display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' },
 
   lookupBtn: (disabled) => ({
     padding: '8px 11px', border: 'none', borderRadius: 6, fontWeight: 700, fontSize: 12,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    flexShrink: 0, background: disabled ? '#d1d5db' : '#1e3a5f', color: '#fff',
+    flexShrink: 0, background: disabled ? '#243044' : '#f97316', color: disabled ? '#64748b' : '#fff',
     opacity: disabled ? 0.6 : 1,
   }),
 
   fmcsaBanner: {
-    background: '#f0fdf4', border: '1.5px solid #16a34a', borderRadius: 8,
+    background: '#0a1f0e', border: '1.5px solid #16a34a', borderRadius: 8,
     padding: '14px 18px', marginBottom: 12, fontSize: 12,
   },
   swBanner: {
-    background: '#f0f9ff', border: '1.5px solid #0284c7', borderRadius: 8,
+    background: '#0a1525', border: '1.5px solid #0284c7', borderRadius: 8,
     padding: '14px 18px', marginBottom: 20, fontSize: 12,
   },
   swWarnBanner: {
-    background: '#fffbeb', border: '1.5px solid #d97706', borderRadius: 8,
+    background: '#1a1200', border: '1.5px solid #d97706', borderRadius: 8,
     padding: '14px 18px', marginBottom: 20, fontSize: 12,
   },
 
-  // Verdict card
   verdictCard: (tier) => ({
     borderRadius: 10, padding: '20px 24px', marginBottom: 20,
-    background: tier === 'GREEN' ? '#f0fdf4' : tier === 'YELLOW' ? '#fffbeb' : '#fef2f2',
+    background: tier === 'GREEN' ? '#0a1f0e' : tier === 'YELLOW' ? '#1a1200' : '#1a0808',
     border: `2px solid ${tier === 'GREEN' ? '#16a34a' : tier === 'YELLOW' ? '#d97706' : '#dc2626'}`,
   }),
   verdictBadge: (tier) => ({
@@ -152,22 +156,22 @@ const s = {
     color: '#fff', marginBottom: 14,
   }),
   reasonItem: (tier) => ({
-    fontSize: 13, color: tier === 'GREEN' ? '#166534' : tier === 'YELLOW' ? '#92400e' : '#991b1b',
+    fontSize: 13, color: tier === 'GREEN' ? '#4ade80' : tier === 'YELLOW' ? '#fbbf24' : '#f87171',
     marginBottom: 4, paddingLeft: 14, position: 'relative',
   }),
 
   overrideCard: {
-    background: '#fffbeb', border: '2px solid #d97706', borderRadius: 10,
+    background: '#1a1200', border: '2px solid #d97706', borderRadius: 10,
     padding: '20px 24px', marginBottom: 20,
   },
-  overrideHead: { fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 6 },
-  overrideSub:  { fontSize: 12, color: '#92400e', marginBottom: 14, lineHeight: 1.5 },
+  overrideHead: { fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 6 },
+  overrideSub:  { fontSize: 12, color: '#d97706', marginBottom: 14, lineHeight: 1.5 },
 
   logTable: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  logTh:    { textAlign: 'left', padding: '8px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb' },
-  logTd:    { padding: '7px 10px', borderBottom: '1px solid #f3f4f6', color: '#374151' },
+  logTh:    { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45' },
+  logTd:    { padding: '7px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8' },
 
-  required: { color: '#dc2626', marginLeft: 2 },
+  required: { color: '#f87171', marginLeft: 2 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -551,7 +555,7 @@ export default function CarrierVetting({ settings }) {
               </button>
             </div>
             {lookupErr && (
-              <p style={{ color: '#dc2626', fontSize: 11, margin: '4px 0 0' }}>{lookupErr}</p>
+              <p style={{ color: '#f87171', fontSize: 11, margin: '4px 0 0' }}>{lookupErr}</p>
             )}
           </Field>
 
@@ -577,13 +581,13 @@ export default function CarrierVetting({ settings }) {
       {/* ── Auto-fill Banners ── */}
       {fmcsaData && (
         <div style={s.fmcsaBanner}>
-          <strong style={{ color: '#166534' }}>
+          <strong style={{ color: '#4ade80' }}>
             FMCSA: {fmcsaData.filledFields.length} fields auto-filled
           </strong>
           {fmcsaData._fmcsa?.legalName && (
-            <span style={{ color: '#166534' }}> — {fmcsaData._fmcsa.legalName}</span>
+            <span style={{ color: '#4ade80' }}> — {fmcsaData._fmcsa.legalName}</span>
           )}
-          <span style={{ color: '#374151' }}>
+          <span style={{ color: '#94a3b8' }}>
             {'. '}Green-bordered fields came from the FMCSA public registry.
           </span>
         </div>
@@ -591,23 +595,23 @@ export default function CarrierVetting({ settings }) {
 
       {swData && (
         <div style={s.swBanner}>
-          <strong style={{ color: '#075985' }}>
+          <strong style={{ color: '#38bdf8' }}>
             SaferWatch: {swData.filledFields.length} fields auto-filled
           </strong>
-          <span style={{ color: '#374151' }}>
+          <span style={{ color: '#94a3b8' }}>
             {'. '}Blue-bordered fields came from SaferWatch (BASIC scores, insurance, OOS).
           </span>
           {swData.cargoExpiration && (
-            <span style={{ color: '#374151' }}>{' '}Cargo cert expires: <strong>{swData.cargoExpiration}</strong>.</span>
+            <span style={{ color: '#94a3b8' }}>{' '}Cargo cert expires: <strong>{swData.cargoExpiration}</strong>.</span>
           )}
           {swData.certStatus && swData.certStatus !== 'APPROVED' && (
-            <span style={{ color: '#b45309', fontWeight: 600 }}>
+            <span style={{ color: '#fbbf24', fontWeight: 600 }}>
               {' '}⚠ Cert status: {swData.certStatus}
             </span>
           )}
           {/* SaferWatch Risk Assessment — display only, does not drive our verdict */}
           {swData.riskAssessment?.overall && (
-            <div style={{ marginTop: 8, color: '#374151' }}>
+            <div style={{ marginTop: 8, color: '#94a3b8' }}>
               <strong>SaferWatch Risk (reference only — our rules engine decides):</strong>{' '}
               Overall: <RiskBadge v={swData.riskAssessment.overall} />{' '}
               Authority: <RiskBadge v={swData.riskAssessment.authority} />{' '}
@@ -615,7 +619,7 @@ export default function CarrierVetting({ settings }) {
               Safety: <RiskBadge v={swData.riskAssessment.safety} />
             </div>
           )}
-          <div style={{ marginTop: 8, color: '#374151' }}>
+          <div style={{ marginTop: 8, color: '#94a3b8' }}>
             <strong>Still requires manual entry:</strong>{' '}
             Crash Indicator BASIC, Clean inspections count,
             Pending insurance cancellation, Carrier Assure grade &amp; flags.
@@ -625,16 +629,16 @@ export default function CarrierVetting({ settings }) {
 
       {swErr && !swData && fmcsaData && (
         <div style={s.swWarnBanner}>
-          <strong style={{ color: '#92400e' }}>SaferWatch unavailable:</strong>{' '}
-          <span style={{ color: '#92400e' }}>{swErr}</span>
-          <div style={{ marginTop: 6, color: '#92400e' }}>
+          <strong style={{ color: '#fbbf24' }}>SaferWatch unavailable:</strong>{' '}
+          <span style={{ color: '#fbbf24' }}>{swErr}</span>
+          <div style={{ marginTop: 6, color: '#fbbf24' }}>
             BASIC scores, insurance amounts, and OOS rates require manual entry.
           </div>
         </div>
       )}
 
       {!fmcsaData && !swData && (
-        <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#475569', marginBottom: 16 }}>
           <strong>Still requires manual entry after Look Up:</strong>{' '}
           Crash Indicator BASIC, Clean inspections count,
           Pending insurance cancellation, Carrier Assure grade &amp; flags.
@@ -838,7 +842,7 @@ export default function CarrierVetting({ settings }) {
           Clear Form
         </button>
       </div>
-      {runErr && <p style={{ color: '#dc2626', fontSize: 13, marginTop: 8 }}>{runErr}</p>}
+      {runErr && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{runErr}</p>}
 
       {/* ── Verdict Display ── */}
       {verdict && (
@@ -849,11 +853,11 @@ export default function CarrierVetting({ settings }) {
             </div>
 
             {verdict.authorityDays !== null && (
-              <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>
+              <p style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
                 Authority age: <strong>{verdict.authorityDays} days</strong>
                 {verdict.authorityDays < cfg.authorityMinDays
-                  ? <span style={{ color: '#d97706' }}> (under {cfg.authorityMinDays}-day minimum)</span>
-                  : <span style={{ color: '#16a34a' }}> ✓</span>}
+                  ? <span style={{ color: '#fbbf24' }}> (under {cfg.authorityMinDays}-day minimum)</span>
+                  : <span style={{ color: '#4ade80' }}> ✓</span>}
               </p>
             )}
 
@@ -869,13 +873,13 @@ export default function CarrierVetting({ settings }) {
             </ul>
 
             {verdict.notes?.length > 0 && (
-              <div style={{ marginTop: 14, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 14px' }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+              <div style={{ marginTop: 14, background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '10px 14px' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#60a5fa', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
                   Informational
                 </div>
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                   {verdict.notes.map((n, i) => (
-                    <li key={i} style={{ fontSize: 13, color: '#1e40af', paddingLeft: 18, position: 'relative', marginBottom: 2 }}>
+                    <li key={i} style={{ fontSize: 13, color: '#93c5fd', paddingLeft: 18, position: 'relative', marginBottom: 2 }}>
                       <span style={{ position: 'absolute', left: 0 }}>ℹ</span>
                       {n}
                     </li>
@@ -885,7 +889,7 @@ export default function CarrierVetting({ settings }) {
             )}
 
             {isReject && (
-              <p style={{ fontSize: 12, fontWeight: 700, color: '#991b1b', marginTop: 12, marginBottom: 0 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: '#f87171', marginTop: 12, marginBottom: 0 }}>
                 REJECT decisions cannot be overridden. Do not book this carrier.
               </p>
             )}
@@ -896,7 +900,7 @@ export default function CarrierVetting({ settings }) {
             <div style={s.overrideCard}>
               <div style={s.overrideHead}>Manager Override</div>
               <p style={s.overrideSub}>
-                This carrier is on <strong>HOLD</strong>. You may proceed by completing the override below,
+                This carrier is on <strong style={{ color: '#fbbf24' }}>HOLD</strong>. You may proceed by completing the override below,
                 or save the record as HOLD without overriding.
                 RED results cannot be overridden — only HOLD.
               </p>
@@ -919,7 +923,7 @@ export default function CarrierVetting({ settings }) {
                 </Field>
               </div>
               {override.managerName.trim() && override.reason.trim() && (
-                <p style={{ fontSize: 12, color: '#92400e', marginTop: 10, marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: '#fbbf24', marginTop: 10, marginBottom: 0 }}>
                   Verdict will be recorded as <strong>APPROVED WITH OVERRIDE</strong>.
                   Manager name, reason, and timestamp will appear in the PDF.
                 </p>
@@ -939,33 +943,33 @@ export default function CarrierVetting({ settings }) {
               </button>
             </div>
           )}
-          {finalErr && <p style={{ color: '#dc2626', fontSize: 13, marginTop: 8 }}>{finalErr}</p>}
+          {finalErr && <p style={{ color: '#f87171', fontSize: 13, marginTop: 8 }}>{finalErr}</p>}
 
           {/* ── Post-generate status ── */}
           {savedRecordId && (
             <div style={{
-              background: saveStatus?.ok === false ? '#fffbeb' : '#f0fdf4',
+              background: saveStatus?.ok === false ? '#1a1200' : '#0a1f0e',
               border: `1.5px solid ${saveStatus?.ok === false ? '#d97706' : '#16a34a'}`,
               borderRadius: 8, padding: '14px 18px', marginTop: 16,
             }}>
-              <strong style={{ color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
+              <strong style={{ color: saveStatus?.ok === false ? '#fbbf24' : '#4ade80' }}>
                 PDF generated and downloaded.
               </strong>
               {' '}
-              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
+              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#fbbf24' : '#4ade80' }}>
                 Attach it to the load in Dr Dispatch now.
               </span>
 
               {saveStatus?.ok && (
-                <p style={{ fontSize: 12, color: '#166534', marginTop: 8, marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: '#4ade80', marginTop: 8, marginBottom: 0 }}>
                   Certificate saved to secure storage. Record ID:{' '}
-                  <code style={{ fontSize: 11, background: '#dcfce7', padding: '1px 4px', borderRadius: 3 }}>
+                  <code style={{ fontSize: 11, background: 'rgba(34,197,94,.15)', padding: '1px 4px', borderRadius: 3, color: '#4ade80' }}>
                     {saveStatus.recordId}
                   </code>
                 </p>
               )}
               {saveStatus?.ok === false && (
-                <p style={{ fontSize: 12, color: '#92400e', marginTop: 8, marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: '#fbbf24', marginTop: 8, marginBottom: 0 }}>
                   Certificate could not be saved to storage: {saveStatus.error}
                 </p>
               )}
@@ -988,7 +992,7 @@ export default function CarrierVetting({ settings }) {
             {logsLoading ? 'Loading…' : logs ? 'Refresh' : 'Load Log'}
           </button>
         </div>
-        {logsErr && <p style={{ color: '#dc2626', fontSize: 13 }}>{logsErr}</p>}
+        {logsErr && <p style={{ color: '#f87171', fontSize: 13 }}>{logsErr}</p>}
         {logs && (
           logs.length === 0
             ? <p style={{ fontSize: 13, color: '#6b7280' }}>No records yet.</p>
@@ -1013,8 +1017,8 @@ export default function CarrierVetting({ settings }) {
                         <td style={s.logTd}>{tierBadge(row.tier, row.verdict)}</td>
                         <td style={s.logTd}>
                           {row.pdf_url
-                            ? <a href={`/api/certificates/${row.id}/download`} target="_blank" rel="noreferrer" style={{ color: '#1e3a5f', fontWeight: 600 }}>Download</a>
-                            : <span style={{ color: '#9ca3af' }}>—</span>}
+                            ? <a href={`/api/certificates/${row.id}/download`} target="_blank" rel="noreferrer" style={{ color: '#f97316', fontWeight: 600 }}>Download</a>
+                            : <span style={{ color: '#475569' }}>—</span>}
                         </td>
                       </tr>
                     ))}

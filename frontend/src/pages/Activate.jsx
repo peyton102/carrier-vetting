@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 
 const s = {
-  wrap:    { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f0f4f8' },
-  card:    { background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', boxShadow: '0 2px 12px rgba(0,0,0,.08)', padding: '40px 36px', width: 380 },
-  logo:    { fontWeight: 800, fontSize: 20, color: '#1e3a5f', marginBottom: 4 },
-  sub:     { color: '#6b7280', fontSize: 13, marginBottom: 28, lineHeight: 1.5 },
-  label:   { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
-  input:   { width: '100%', padding: '10px 14px', border: '1.5px solid #d1d5db', borderRadius: 8, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', boxSizing: 'border-box' },
+  wrap:    { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#080e1a' },
+  card:    { background: '#0f1729', borderRadius: 14, border: '1px solid #1e2d45', boxShadow: '0 8px 32px rgba(0,0,0,.4)', padding: '40px 36px', width: 380 },
+  logo:    { fontWeight: 800, fontSize: 20, color: '#f1f5f9', marginBottom: 4 },
+  sub:     { color: '#64748b', fontSize: 13, marginBottom: 28, lineHeight: 1.5 },
+  label:   { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
+  input:   { width: '100%', padding: '10px 14px', border: '1.5px solid #1e2d45', borderRadius: 8, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', boxSizing: 'border-box', background: '#0a1220', color: '#e2e8f0' },
   btn:     (disabled) => ({
-    width: '100%', padding: '10px', background: disabled ? '#d1d5db' : '#1e3a5f', color: '#fff',
-    border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.7 : 1,
+    width: '100%', padding: '10px', background: disabled ? '#243044' : '#f97316', color: '#fff',
+    border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.6 : 1, boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.3)',
   }),
-  err:     { color: '#dc2626', fontSize: 13, marginBottom: 12 },
-  success: { textAlign: 'center', color: '#166534' },
+  err:     { color: '#f87171', fontSize: 13, marginBottom: 12 },
+  success: { textAlign: 'center', color: '#4ade80' },
 };
 
 export default function Activate({ onActivate }) {
@@ -71,16 +71,16 @@ export default function Activate({ onActivate }) {
         <div style={s.logo}>Carrier Vetting</div>
 
         {status === 'loading' && (
-          <p style={{ color: '#6b7280', fontSize: 13 }}>Verifying your invite link…</p>
+          <p style={{ color: '#64748b', fontSize: 13 }}>Verifying your invite link…</p>
         )}
 
         {status === 'invalid' && (
           <>
-            <p style={{ color: '#dc2626', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+            <p style={{ color: '#f87171', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
               Link invalid or expired
             </p>
-            <p style={{ color: '#6b7280', fontSize: 13 }}>{statusMsg}</p>
-            <p style={{ color: '#6b7280', fontSize: 13 }}>
+            <p style={{ color: '#64748b', fontSize: 13 }}>{statusMsg}</p>
+            <p style={{ color: '#64748b', fontSize: 13 }}>
               Contact your administrator for a new invite.
             </p>
           </>
@@ -103,7 +103,7 @@ export default function Activate({ onActivate }) {
             </div>
             <form onSubmit={handleSubmit}>
               <label style={s.label}>Email</label>
-              <input style={{ ...s.input, background: '#f3f4f6', color: '#6b7280' }} value={decodeURIComponent(email)} readOnly />
+              <input style={{ ...s.input, background: '#0a1220', color: '#475569' }} value={decodeURIComponent(email)} readOnly />
 
               <label style={s.label}>Password</label>
               <input

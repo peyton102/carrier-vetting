@@ -2,30 +2,32 @@ import { useState, useEffect } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:       { fontSize: 22, fontWeight: 800, color: '#1e3a5f', margin: '0 0 4px' },
-  sub:      { fontSize: 13, color: '#6b7280', marginBottom: 24 },
-  card:     { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#1e3a5f', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', paddingBottom: 10, marginBottom: 16 },
-  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
-  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#fff' },
-  hint:     { fontSize: 11, color: '#9ca3af', marginTop: 3 },
+  h1:       { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  sub:      { fontSize: 13, color: '#64748b', marginBottom: 24 },
+  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
+  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
+  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
+  hint:     { fontSize: 11, color: '#475569', marginTop: 3 },
   grid2:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' },
   btn: (disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#d1d5db' : '#1e3a5f', color: '#fff', opacity: disabled ? 0.7 : 1,
+    background: disabled ? '#243044' : '#f97316', color: '#fff', opacity: disabled ? 0.6 : 1,
+    boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
   btnSm: (variant, disabled) => ({
-    padding: '4px 10px', border: variant === 'danger' ? 'none' : '1px solid #d1d5db',
+    padding: '4px 10px',
+    border: variant === 'danger' ? 'none' : '1px solid #1e2d45',
     borderRadius: 5, fontWeight: 700, fontSize: 11,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#f3f4f6' : variant === 'danger' ? '#dc2626' : '#fff',
-    color: disabled ? '#9ca3af' : variant === 'danger' ? '#fff' : '#374151',
+    background: disabled ? '#162032' : variant === 'danger' ? '#dc2626' : '#162032',
+    color: disabled ? '#475569' : variant === 'danger' ? '#fff' : '#94a3b8',
     opacity: disabled ? 0.6 : 1,
   }),
-  success: { background: '#f0fdf4', border: '2px solid #16a34a', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  th:      { textAlign: 'left', padding: '8px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb', fontSize: 12 },
-  td:      { padding: '7px 10px', borderBottom: '1px solid #f3f4f6', color: '#374151', fontSize: 12, verticalAlign: 'middle' },
+  success: { background: 'rgba(34,197,94,.08)', border: '2px solid #16a34a', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
+  th:      { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', fontSize: 12 },
+  td:      { padding: '7px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8', fontSize: 12, verticalAlign: 'middle' },
 };
 
 function toSlug(name) {
@@ -126,7 +128,7 @@ export default function Admin() {
     if (state === 'confirm-delete') {
       return (
         <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>Delete all data?</span>
+          <span style={{ fontSize: 11, color: '#f87171', fontWeight: 600 }}>Delete all data?</span>
           <button style={s.btnSm('danger', false)} onClick={() => handleDelete(t.slug)}>Yes, delete</button>
           <button style={s.btnSm('default', false)} onClick={() => setRow(t.slug, null)}>Cancel</button>
         </span>
@@ -134,13 +136,13 @@ export default function Admin() {
     }
 
     if (state === 'resent') {
-      return <span style={{ fontSize: 11, color: '#166534', fontWeight: 700 }}>Invite sent</span>;
+      return <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>Invite sent</span>;
     }
 
     if (state?.error) {
       return (
         <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: '#dc2626' }}>{state.error}</span>
+          <span style={{ fontSize: 11, color: '#f87171' }}>{state.error}</span>
           <button style={s.btnSm('default', false)} onClick={() => setRow(t.slug, null)}>Dismiss</button>
         </span>
       );
@@ -171,20 +173,20 @@ export default function Admin() {
   function StatusBadge({ t }) {
     if (t.is_active) {
       return (
-        <span style={{ background: '#dcfce7', color: '#166534', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+        <span style={{ background: 'rgba(34,197,94,.15)', color: '#4ade80', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
           Active
         </span>
       );
     }
     if (t.invite_pending) {
       return (
-        <span style={{ background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+        <span style={{ background: 'rgba(245,158,11,.15)', color: '#fbbf24', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
           Invite pending
         </span>
       );
     }
     return (
-      <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+      <span style={{ background: 'rgba(239,68,68,.15)', color: '#f87171', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
         Invite expired
       </span>
     );
@@ -200,15 +202,15 @@ export default function Admin() {
 
       {result && (
         <div style={s.success}>
-          <div style={{ fontWeight: 700, color: '#166534', fontSize: 15, marginBottom: 8 }}>
+          <div style={{ fontWeight: 700, color: '#4ade80', fontSize: 15, marginBottom: 8 }}>
             Invite sent to {result.email}
           </div>
-          <div style={{ fontSize: 13, color: '#166534' }}>
+          <div style={{ fontSize: 13, color: '#4ade80' }}>
             <strong>Org:</strong> {result.name}<br />
             <strong>Slug:</strong> {result.slug}<br />
             <strong>Email:</strong> {result.email}
           </div>
-          <p style={{ fontSize: 12, color: '#166534', marginTop: 10, marginBottom: 0 }}>
+          <p style={{ fontSize: 12, color: '#4ade80', marginTop: 10, marginBottom: 0 }}>
             Their account is inactive until they set a password via the invite link.
           </p>
         </div>
@@ -262,7 +264,7 @@ export default function Admin() {
           <div style={s.cardHead}>All Orgs</div>
           <button
             onClick={loadTenants} disabled={loadingOrgs}
-            style={{ padding: '5px 12px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', fontSize: 12, cursor: 'pointer' }}
+            style={{ padding: '5px 12px', border: '1px solid #1e2d45', borderRadius: 6, background: '#162032', fontSize: 12, cursor: 'pointer', color: '#64748b', fontFamily: 'inherit' }}
           >
             {loadingOrgs ? 'Loading…' : 'Refresh'}
           </button>

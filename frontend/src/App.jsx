@@ -32,15 +32,20 @@ function LoginScreen({ onLogin }) {
   }
 
   const inputStyle = {
-    width: '100%', padding: '10px 14px', border: '1.5px solid #d1d5db',
-    borderRadius: 8, fontSize: 15, marginBottom: 14, fontFamily: 'inherit', boxSizing: 'border-box',
+    width: '100%', padding: '10px 14px',
+    border: '1.5px solid #1e2d45', borderRadius: 8, fontSize: 15, marginBottom: 14,
+    fontFamily: 'inherit', boxSizing: 'border-box',
+    background: '#0a1220', color: '#e2e8f0',
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f0f4f8' }}>
-      <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', boxShadow: '0 2px 12px rgba(0,0,0,.08)', padding: '40px 36px', width: 340 }}>
-        <div style={{ fontWeight: 800, fontSize: 20, color: '#1e3a5f', marginBottom: 4 }}>Carrier Vetting</div>
-        <div style={{ color: '#6b7280', fontSize: 13, marginBottom: 28 }}>Sign in to your account</div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#080e1a' }}>
+      <div style={{ background: '#0f1729', borderRadius: 14, border: '1px solid #1e2d45', boxShadow: '0 8px 32px rgba(0,0,0,.4)', padding: '40px 36px', width: 340 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e', display: 'inline-block' }} />
+          <span style={{ fontWeight: 800, fontSize: 20, color: '#f1f5f9' }}>Carrier Vetting</span>
+        </div>
+        <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>Sign in to your account</div>
         <form onSubmit={handleSubmit}>
           <input
             type="email" value={email} onChange={e => setEmail(e.target.value)}
@@ -50,13 +55,16 @@ function LoginScreen({ onLogin }) {
             type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder="Password" autoComplete="current-password" style={inputStyle}
           />
-          {error && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
+          {error && <div style={{ color: '#f87171', fontSize: 13, marginBottom: 12 }}>{error}</div>}
           <button
             type="submit" disabled={loading || !email || !password}
             style={{
-              width: '100%', padding: '10px', background: '#1e3a5f', color: '#fff',
-              border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer',
-              opacity: loading || !email || !password ? 0.5 : 1,
+              width: '100%', padding: '10px',
+              background: loading || !email || !password ? '#243044' : '#f97316',
+              color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14,
+              cursor: loading || !email || !password ? 'not-allowed' : 'pointer',
+              opacity: loading || !email || !password ? 0.6 : 1,
+              boxShadow: loading || !email || !password ? 'none' : '0 2px 8px rgba(249,115,22,.3)',
             }}
           >
             {loading ? 'Signing in…' : 'Sign in'}
@@ -107,13 +115,7 @@ export default function App() {
   }
 
   const navLink = (to, label) => (
-    <NavLink
-      to={to}
-      style={({ isActive }) => ({
-        fontSize: 13, fontWeight: 600, textDecoration: 'none',
-        color: isActive ? '#1e3a5f' : '#6b7280',
-      })}
-    >
+    <NavLink to={to} style={{ textDecoration: 'none' }}>
       {label}
     </NavLink>
   );
@@ -129,12 +131,13 @@ export default function App() {
           {user.isAdmin && navLink('/admin', 'Admin')}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontSize: 13, color: '#6b7280' }}>{user.email}</span>
+          <span style={{ fontSize: 13, color: '#475569' }}>{user.email}</span>
           <button
             onClick={handleLogout}
             style={{
-              padding: '5px 14px', border: '1px solid #d1d5db', borderRadius: 6,
-              background: '#fff', fontSize: 13, cursor: 'pointer', color: '#374151',
+              padding: '5px 14px', border: '1px solid #1e2d45', borderRadius: 6,
+              background: '#0f1729', fontSize: 13, cursor: 'pointer', color: '#64748b',
+              fontFamily: 'inherit', fontWeight: 500,
             }}
           >
             Sign out

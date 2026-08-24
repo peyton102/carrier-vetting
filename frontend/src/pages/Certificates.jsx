@@ -2,15 +2,15 @@ import { useState } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:       { fontSize: 22, fontWeight: 800, color: '#1e3a5f', margin: '0 0 4px' },
-  sub:      { fontSize: 13, color: '#6b7280', marginBottom: 24 },
-  card:     { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '20px 24px' },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#1e3a5f', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', paddingBottom: 10, marginBottom: 16 },
-  btn:      { padding: '8px 18px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', background: '#1e3a5f', color: '#fff' },
-  btnSm:    { padding: '4px 12px', border: 'none', borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', background: '#1e3a5f', color: '#fff' },
+  h1:       { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  sub:      { fontSize: 13, color: '#64748b', marginBottom: 24 },
+  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px' },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
+  btn:      { padding: '8px 18px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff', boxShadow: '0 2px 8px rgba(249,115,22,.25)' },
+  btnSm:    { padding: '4px 12px', border: 'none', borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff' },
   table:    { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  th:       { textAlign: 'left', padding: '8px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb' },
-  td:       { padding: '7px 10px', borderBottom: '1px solid #f3f4f6', color: '#374151' },
+  th:       { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45' },
+  td:       { padding: '7px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8' },
 };
 
 function verdictColor(v) {
@@ -92,7 +92,7 @@ export default function Certificates() {
                             href={`/api/certificates/${c.id}/download`}
                             target="_blank"
                             rel="noreferrer"
-                            style={{ color: '#1e3a5f', fontWeight: 600, fontSize: 12 }}
+                            style={{ color: '#f97316', fontWeight: 600, fontSize: 12 }}
                           >
                             Download
                           </a>

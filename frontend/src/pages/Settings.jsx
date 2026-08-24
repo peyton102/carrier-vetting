@@ -2,22 +2,23 @@ import { useState, useEffect } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:       { fontSize: 22, fontWeight: 800, color: '#1e3a5f', margin: '0 0 4px' },
-  sub:      { fontSize: 13, color: '#6b7280', marginBottom: 24, lineHeight: 1.6 },
-  card:     { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#1e3a5f', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', paddingBottom: 10, marginBottom: 16 },
-  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
-  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#fff' },
-  select:   { width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#fff' },
-  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer', marginBottom: 10 },
+  h1:       { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  sub:      { fontSize: 13, color: '#64748b', marginBottom: 24, lineHeight: 1.6 },
+  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
+  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
+  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
+  select:   { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#94a3b8', cursor: 'pointer', marginBottom: 10 },
   btnRow:   { display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' },
   btn:      (disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#d1d5db' : '#1e3a5f', color: '#fff',
-    opacity: disabled ? 0.7 : 1,
+    background: disabled ? '#243044' : '#f97316', color: '#fff',
+    opacity: disabled ? 0.6 : 1,
+    boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
-  notice: { background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#1e40af', marginBottom: 20 },
+  notice: { background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#93c5fd', marginBottom: 20 },
 };
 
 // Definition of the 6 BASICs with their field keys and display names
@@ -98,7 +99,7 @@ export default function Settings({ settings, onSave }) {
         {/* ── BASIC Score Thresholds ── */}
         <div style={s.card}>
           <div style={s.cardHead}>BASIC Score Thresholds</div>
-          <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 16, marginTop: 0 }}>
+          <p style={{ fontSize: 12, color: '#475569', marginBottom: 16, marginTop: 0 }}>
             For each BASIC, set the percentile threshold that triggers a flag, and choose whether
             exceeding it causes a hard <strong>Reject</strong> (no override) or a <strong>Hold</strong> (manager override allowed).
           </p>
@@ -107,16 +108,16 @@ export default function Settings({ settings, onSave }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb', width: '40%' }}>BASIC</th>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb', width: '30%' }}>Alert threshold (%)</th>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb', width: '30%' }}>Action when exceeded</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '40%' }}>BASIC</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '30%' }}>Alert threshold (%)</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '30%' }}>Action when exceeded</th>
                 </tr>
               </thead>
               <tbody>
                 {BASICS.map(({ key, label }) => (
                   <tr key={key}>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6', fontWeight: 600, color: '#374151' }}>{label}</td>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30', fontWeight: 600, color: '#94a3b8' }}>{label}</td>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
                           type="number"
@@ -128,7 +129,7 @@ export default function Settings({ settings, onSave }) {
                         <span style={{ color: '#6b7280', fontSize: 12 }}>%</span>
                       </div>
                     </td>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30' }}>
                       <select
                         value={form[`${key}Action`] ?? 'hold'}
                         onChange={e => set(`${key}Action`, e.target.value)}
@@ -157,7 +158,7 @@ export default function Settings({ settings, onSave }) {
                 onChange={e => set('autoLiabilityMin', parseInt(e.target.value, 10))}
                 style={s.input}
               />
-              <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0' }}>
+              <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0', color: '#475569' }}>
                 Carriers below this amount are hard-rejected. Federal minimum is $750,000.
               </p>
             </div>
@@ -169,7 +170,7 @@ export default function Settings({ settings, onSave }) {
                 onChange={e => set('cargoMin', parseInt(e.target.value, 10))}
                 style={s.input}
               />
-              <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0' }}>
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
                 Carriers below this amount are hard-rejected.
               </p>
             </div>
@@ -206,7 +207,7 @@ export default function Settings({ settings, onSave }) {
         {/* ── Safety Ratings ── */}
         <div style={s.card}>
           <div style={s.cardHead}>Safety Rating Blocks</div>
-          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 0, marginBottom: 14 }}>
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 14 }}>
             Carriers with these FMCSA safety ratings will be hard-rejected. Unrated carriers are
             never blocked solely for being unrated.
           </p>
@@ -240,9 +241,9 @@ export default function Settings({ settings, onSave }) {
                 onChange={e => set('oosRateMultiplier', parseFloat(e.target.value))}
                 style={{ ...s.input, width: 80 }}
               />
-              <span style={{ fontSize: 13, color: '#374151' }}>× the national average</span>
+              <span style={{ fontSize: 13, color: '#94a3b8' }}>× the national average</span>
             </div>
-            <p style={{ fontSize: 11, color: '#6b7280', margin: '6px 0 0' }}>
+            <p style={{ fontSize: 11, color: '#475569', margin: '6px 0 0' }}>
               e.g., 2 = flag if carrier OOS% ≥ 2× national average. Applied to both Truck OOS and Driver OOS.
             </p>
           </div>
@@ -254,7 +255,7 @@ export default function Settings({ settings, onSave }) {
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
           {saved && (
-            <span style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
+            <span style={{ fontSize: 13, color: '#4ade80', fontWeight: 600 }}>
               ✓ Settings saved — active on next vetting run
             </span>
           )}
