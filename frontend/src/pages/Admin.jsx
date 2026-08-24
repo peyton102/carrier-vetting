@@ -10,14 +10,22 @@ const s = {
   input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #d1d5db', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#111827', background: '#fff' },
   hint:     { fontSize: 11, color: '#9ca3af', marginTop: 3 },
   grid2:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' },
-  btn:      (disabled) => ({
+  btn: (disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
     background: disabled ? '#d1d5db' : '#1e3a5f', color: '#fff', opacity: disabled ? 0.7 : 1,
   }),
+  btnSm: (variant, disabled) => ({
+    padding: '4px 10px', border: variant === 'danger' ? 'none' : '1px solid #d1d5db',
+    borderRadius: 5, fontWeight: 700, fontSize: 11,
+    cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+    background: disabled ? '#f3f4f6' : variant === 'danger' ? '#dc2626' : '#fff',
+    color: disabled ? '#9ca3af' : variant === 'danger' ? '#fff' : '#374151',
+    opacity: disabled ? 0.6 : 1,
+  }),
   success: { background: '#f0fdf4', border: '2px solid #16a34a', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
   th:      { textAlign: 'left', padding: '8px 10px', background: '#f3f4f6', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e5e7eb', fontSize: 12 },
-  td:      { padding: '7px 10px', borderBottom: '1px solid #f3f4f6', color: '#374151', fontSize: 12 },
+  td:      { padding: '7px 10px', borderBottom: '1px solid #f3f4f6', color: '#374151', fontSize: 12, verticalAlign: 'middle' },
 };
 
 function toSlug(name) {
@@ -33,6 +41,9 @@ export default function Admin() {
   const [tenants,     setTenants]     = useState(null);
   const [loadingOrgs, setLoadingOrgs] = useState(false);
 
+  // Per-row action state: { [slug]: 'confirm-delete' | 'deleting' | 'resending' | 'resent' | 'deleted' | { error } }
+  const [rowState,    setRowState]    = useState({});
+
   useEffect(() => { loadTenants(); }, []);
 
   async function loadTenants() {
@@ -40,7 +51,7 @@ export default function Admin() {
     try {
       const res  = await fetch('/api/admin/tenants');
       const data = await res.json();
-      if (res.ok) setTenants(data);
+      if (res.ok) { setTenants(data); setRowState({}); }
     } catch {}
     finally { setLoadingOrgs(false); }
   }
@@ -78,18 +89,119 @@ export default function Admin() {
     }
   }
 
+  function setRow(slug, state) {
+    setRowState(rs => ({ ...rs, [slug]: state }));
+  }
+
+  async function handleDelete(slug) {
+    setRow(slug, 'deleting');
+    try {
+      const res  = await fetch(`/api/admin/tenants/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Delete failed');
+      // Remove row from local state immediately
+      setTenants(ts => ts.filter(t => t.slug !== slug));
+      setRowState(rs => { const next = { ...rs }; delete next[slug]; return next; });
+    } catch (e) {
+      setRow(slug, { error: e.message });
+    }
+  }
+
+  async function handleResend(slug) {
+    setRow(slug, 'resending');
+    try {
+      const res  = await fetch(`/api/admin/tenants/${encodeURIComponent(slug)}/resend-invite`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Resend failed');
+      setRow(slug, 'resent');
+    } catch (e) {
+      setRow(slug, { error: e.message });
+    }
+  }
+
+  function RowActions({ t }) {
+    const state = rowState[t.slug];
+    const busy  = state === 'deleting' || state === 'resending';
+
+    if (state === 'confirm-delete') {
+      return (
+        <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#dc2626', fontWeight: 600 }}>Delete all data?</span>
+          <button style={s.btnSm('danger', false)} onClick={() => handleDelete(t.slug)}>Yes, delete</button>
+          <button style={s.btnSm('default', false)} onClick={() => setRow(t.slug, null)}>Cancel</button>
+        </span>
+      );
+    }
+
+    if (state === 'resent') {
+      return <span style={{ fontSize: 11, color: '#166534', fontWeight: 700 }}>Invite sent</span>;
+    }
+
+    if (state?.error) {
+      return (
+        <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: '#dc2626' }}>{state.error}</span>
+          <button style={s.btnSm('default', false)} onClick={() => setRow(t.slug, null)}>Dismiss</button>
+        </span>
+      );
+    }
+
+    return (
+      <span style={{ display: 'flex', gap: 6 }}>
+        {!t.is_active && (
+          <button
+            style={s.btnSm('default', busy)}
+            disabled={busy}
+            onClick={() => handleResend(t.slug)}
+          >
+            {state === 'resending' ? 'Sending…' : 'Resend invite'}
+          </button>
+        )}
+        <button
+          style={s.btnSm('danger', busy)}
+          disabled={busy}
+          onClick={() => setRow(t.slug, 'confirm-delete')}
+        >
+          {state === 'deleting' ? 'Deleting…' : 'Delete'}
+        </button>
+      </span>
+    );
+  }
+
+  function StatusBadge({ t }) {
+    if (t.is_active) {
+      return (
+        <span style={{ background: '#dcfce7', color: '#166534', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+          Active
+        </span>
+      );
+    }
+    if (t.invite_pending) {
+      return (
+        <span style={{ background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+          Invite pending
+        </span>
+      );
+    }
+    return (
+      <span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>
+        Invite expired
+      </span>
+    );
+  }
+
   return (
     <div style={s.page}>
-      <h1 style={s.h1}>Admin — Create Org</h1>
+      <h1 style={s.h1}>Admin — Org Management</h1>
       <p style={s.sub}>
-        Invite a new brokerage customer. They'll receive an email with a link to set their own password.
+        Invite new brokerage customers. They'll receive an email with a link to set their own password.
         No password is set until they click the link.
       </p>
 
       {result && (
         <div style={s.success}>
           <div style={{ fontWeight: 700, color: '#166534', fontSize: 15, marginBottom: 8 }}>
-            ✓ Invite sent to {result.email}
+            Invite sent to {result.email}
           </div>
           <div style={{ fontSize: 13, color: '#166534' }}>
             <strong>Org:</strong> {result.name}<br />
@@ -97,7 +209,7 @@ export default function Admin() {
             <strong>Email:</strong> {result.email}
           </div>
           <p style={{ fontSize: 12, color: '#166534', marginTop: 10, marginBottom: 0 }}>
-            They'll receive an invite email. Their account is inactive until they set a password.
+            Their account is inactive until they set a password via the invite link.
           </p>
         </div>
       )}
@@ -163,7 +275,7 @@ export default function Admin() {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      {['Name', 'Slug', 'Email', 'Status', 'Admin'].map(h => (
+                      {['Name', 'Slug', 'Email', 'Status', 'Admin', 'Actions'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
@@ -174,16 +286,9 @@ export default function Admin() {
                         <td style={s.td}>{t.name}</td>
                         <td style={s.td}><code style={{ fontSize: 11 }}>{t.slug}</code></td>
                         <td style={s.td}>{t.email}</td>
-                        <td style={s.td}>
-                          <span style={{
-                            background: t.is_active ? '#dcfce7' : '#fef3c7',
-                            color: t.is_active ? '#166534' : '#92400e',
-                            borderRadius: 4, padding: '1px 7px', fontSize: 11, fontWeight: 700,
-                          }}>
-                            {t.is_active ? 'Active' : 'Pending invite'}
-                          </span>
-                        </td>
+                        <td style={s.td}><StatusBadge t={t} /></td>
                         <td style={s.td}>{t.is_admin ? '✓' : '—'}</td>
+                        <td style={s.td}><RowActions t={t} /></td>
                       </tr>
                     ))}
                   </tbody>

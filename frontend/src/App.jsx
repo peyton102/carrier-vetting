@@ -23,7 +23,7 @@ function LoginScreen({ onLogin }) {
       });
       const data = await res.json();
       if (res.ok) {
-        onLogin({ email: data.email, name: data.name, tenant: data.tenant });
+        onLogin({ email: data.email, name: data.name, tenant: data.tenant, isAdmin: data.isAdmin });
       } else {
         setError(data.error || 'Invalid email or password');
       }
