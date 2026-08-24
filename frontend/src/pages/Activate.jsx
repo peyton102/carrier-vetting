@@ -57,7 +57,7 @@ export default function Activate({ onActivate }) {
       if (!res.ok) throw new Error(data.error ?? 'Activation failed');
       setStatus('done');
       // Let the parent App know so it can set user state and redirect
-      if (onActivate) onActivate({ email: data.email, name: data.name, tenant: data.tenant });
+      if (onActivate) onActivate({ email: data.email, name: data.name, tenant: data.tenant, isAdmin: data.isAdmin });
     } catch (e) {
       setErr(e.message);
     } finally {

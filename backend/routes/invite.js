@@ -81,13 +81,13 @@ router.post('/activate', async (req, res, next) => {
     // Fetch slug and log them in automatically
     const { data: tenant } = await supabase
       .from('tenants')
-      .select('slug, email, name')
+      .select('slug, email, name, is_admin')
       .eq('email', cleanEmail)
       .single();
 
     const authToken = signToken({ sub: tenant.email, tenant: tenant.slug });
     res.cookie('auth', authToken, { httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug });
+    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin });
   } catch (e) { next(e); }
 });
 

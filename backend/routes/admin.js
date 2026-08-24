@@ -85,6 +85,7 @@ router.get('/tenants', async (req, res, next) => {
           .select('email, expires_at')
           .in('email', emails)
           .is('used_at', null)
+          .gt('expires_at', new Date().toISOString())
       : { data: [] };
 
     const pendingByEmail = new Map((invites ?? []).map(i => [i.email, i]));
