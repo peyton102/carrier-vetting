@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
@@ -30,6 +30,123 @@ const BASICS = [
   { key: 'basicDriverFitness',       label: 'Driver Fitness'               },
   { key: 'basicControlledSubstance', label: 'Controlled Substances/Alcohol'},
 ];
+
+// ── SaferWatch Credentials Card ───────────────────────────────────────────────
+function SwCredentialsCard() {
+  const [status,   setStatus]   = useState(null);  // { configured, configuredAt }
+  const [keys,     setKeys]     = useState({ serviceKey: '', customerKey: '' });
+  const [saving,   setSaving]   = useState(false);
+  const [verifying,setVerifying]= useState(false);
+  const [msg,      setMsg]      = useState(null);  // { type: 'ok'|'err'|'info', text }
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/credentials/saferwatch');
+      if (r.ok) setStatus(await r.json());
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!keys.serviceKey.trim() || !keys.customerKey.trim()) {
+      setMsg({ type: 'err', text: 'Both Service Key and Customer Key are required.' });
+      return;
+    }
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch('/api/credentials/saferwatch', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(keys),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? 'Save failed');
+      setMsg({ type: 'ok', text: 'Credentials saved.' });
+      setKeys({ serviceKey: '', customerKey: '' });
+      await load();
+    } catch (e) { setMsg({ type: 'err', text: e.message }); }
+    finally { setSaving(false); }
+  }
+
+  async function handleVerify() {
+    setVerifying(true); setMsg(null);
+    try {
+      const r = await fetch('/api/credentials/saferwatch/verify', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? 'Verify failed');
+      const type = d.status === 'verified' ? 'ok' : d.status === 'invalid' ? 'err' : 'info';
+      setMsg({ type, text: d.message });
+    } catch (e) { setMsg({ type: 'err', text: e.message }); }
+    finally { setVerifying(false); }
+  }
+
+  const msgColors = { ok: '#4ade80', err: '#f87171', info: '#93c5fd' };
+
+  return (
+    <div style={s.card}>
+      <div style={s.cardHead}>SaferWatch API Credentials</div>
+      <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 14 }}>
+        Enter your SaferWatch Service Key and Customer Key. Credentials are encrypted before storage
+        and never returned in plaintext. Leave blank to continue using the shared platform keys.
+      </p>
+
+      {status && (
+        <p style={{ fontSize: 12, color: status.configured ? '#4ade80' : '#64748b', marginBottom: 14 }}>
+          {status.configured
+            ? `✓ Tenant credentials configured${status.configuredAt ? ` on ${new Date(status.configuredAt).toLocaleDateString()}` : ''}`
+            : 'No tenant credentials — using shared platform keys'}
+        </p>
+      )}
+
+      <form onSubmit={handleSave}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px', marginBottom: 14 }}>
+          <div>
+            <label style={s.label}>Service Key</label>
+            <input
+              type="password" autoComplete="off"
+              placeholder="Enter service key…"
+              value={keys.serviceKey}
+              onChange={e => setKeys(k => ({ ...k, serviceKey: e.target.value }))}
+              style={s.input}
+            />
+          </div>
+          <div>
+            <label style={s.label}>Customer Key</label>
+            <input
+              type="password" autoComplete="off"
+              placeholder="Enter customer key…"
+              value={keys.customerKey}
+              onChange={e => setKeys(k => ({ ...k, customerKey: e.target.value }))}
+              style={s.input}
+            />
+          </div>
+        </div>
+
+        <div style={s.btnRow}>
+          <button type="submit" style={s.btn(saving)} disabled={saving}>
+            {saving ? 'Saving…' : 'Save Credentials'}
+          </button>
+          {status?.configured && (
+            <button
+              type="button"
+              onClick={handleVerify}
+              disabled={verifying}
+              style={{ ...s.btn(verifying), background: verifying ? '#243044' : '#162032', boxShadow: 'none' }}
+            >
+              {verifying ? 'Verifying…' : 'Verify Saved Keys'}
+            </button>
+          )}
+          {msg && (
+            <span style={{ fontSize: 13, fontWeight: 600, color: msgColors[msg.type] }}>
+              {msg.text}
+            </span>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
 
 export default function Settings({ settings, onSave }) {
   const [form,    setForm]    = useState(null);
@@ -265,6 +382,10 @@ export default function Settings({ settings, onSave }) {
         </div>
 
       </form>
+
+      {/* ── SaferWatch Credentials (separate form — cannot nest) ── */}
+      <SwCredentialsCard />
+
     </div>
   );
 }

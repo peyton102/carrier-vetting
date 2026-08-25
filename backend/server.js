@@ -18,6 +18,8 @@ import certificatesRouter from './routes/certificates.js';
 import settingsRouter     from './routes/settings.js';
 import adminRouter        from './routes/admin.js';
 import inviteRouter       from './routes/invite.js';
+import credentialsRouter  from './routes/credentials.js';
+import brokerCheckRouter  from './routes/broker_check.js';
 
 const app = express();
 app.use(cors());
@@ -92,12 +94,14 @@ app.get('/api/me', async (req, res, next) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.use('/api/vetting',      vettingRouter);
-app.use('/api/fmcsa',        fmcsaRouter);
-app.use('/api/saferwatch',   saferwatchRouter);
-app.use('/api/certificates', certificatesRouter);
-app.use('/api/settings',     settingsRouter);
-app.use('/api/admin',        adminRouter);
+app.use('/api/vetting',       vettingRouter);
+app.use('/api/fmcsa',         fmcsaRouter);
+app.use('/api/saferwatch',    saferwatchRouter);
+app.use('/api/certificates',  certificatesRouter);
+app.use('/api/settings',      settingsRouter);
+app.use('/api/admin',         adminRouter);
+app.use('/api/credentials',   credentialsRouter);
+app.use('/api/broker-check',  brokerCheckRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');

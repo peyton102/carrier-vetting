@@ -11,6 +11,37 @@
 
 import express       from 'express';
 import { XMLParser } from 'fast-xml-parser';
+import { createClient } from '@supabase/supabase-js';
+import { decrypt } from '../lib/encryption.js';
+
+function getSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+// Resolve SaferWatch keys: prefer tenant's own stored credentials, fall back to shared env keys.
+async function resolveSwKeys(tenantSlug) {
+  try {
+    const { data } = await getSupabase()
+      .from('tenant_credentials')
+      .select('sw_service_key, sw_customer_key')
+      .eq('tenant_slug', tenantSlug)
+      .single();
+
+    if (data?.sw_service_key && data?.sw_customer_key) {
+      return {
+        serviceKey:  decrypt(data.sw_service_key),
+        customerKey: decrypt(data.sw_customer_key),
+        source: 'tenant',
+      };
+    }
+  } catch (_) { /* fall through to shared keys */ }
+
+  return {
+    serviceKey:  process.env.SAFERWATCH_SERVICE_KEY,
+    customerKey: process.env.SAFERWATCH_CUSTOMER_KEY,
+    source: 'shared',
+  };
+}
 
 const router  = express.Router();
 const SW_BASE = 'https://www.saferwatch.com/webservices/CarrierService32.php';
@@ -115,13 +146,12 @@ function extractCargo(certData) {
 
 router.get('/:dot', async (req, res, next) => {
   try {
-    const serviceKey  = process.env.SAFERWATCH_SERVICE_KEY;
-    const customerKey = process.env.SAFERWATCH_CUSTOMER_KEY;
+    const { serviceKey, customerKey } = await resolveSwKeys(req.auth.tenant);
 
     if (!serviceKey || !customerKey) {
       return res.status(503).json({
         ok: false,
-        error: 'SAFERWATCH_SERVICE_KEY / SAFERWATCH_CUSTOMER_KEY not configured — add to .env and restart',
+        error: 'SaferWatch keys not configured — add SAFERWATCH_SERVICE_KEY / SAFERWATCH_CUSTOMER_KEY to .env or configure tenant credentials in Settings',
       });
     }
 
