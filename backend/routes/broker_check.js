@@ -96,8 +96,11 @@ router.get('/:mc', async (req, res, next) => {
     const insRes  = await fetch(fmcsaUrl(`/carriers/${dot}/insurance`, webKey), {
       signal: AbortSignal.timeout(12_000),
     });
-    const insData = insRes.ok ? await insRes.json() : null;
-    console.log('[BROKER INS RAW]', JSON.stringify(insData)?.slice(0, 1000));
+    console.log('[BROKER INS STATUS]', insRes.status);
+    const insText = await insRes.text();
+    console.log('[BROKER INS RAW]', insText.slice(0, 1000));
+    let insData = null;
+    try { insData = JSON.parse(insText); } catch (_) {};
     const bond    = extractBmc84Bond(insData);
 
     // ── Verdict logic ──────────────────────────────────────────────────────
