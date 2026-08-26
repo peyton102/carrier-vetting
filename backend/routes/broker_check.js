@@ -19,29 +19,12 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-// Extract BMC-84 surety bond from FMCSA insurance response.
-// Returns null if not found.
-function extractBmc84Bond(insuranceJson) {
-  const items = insuranceJson?.content;
-  if (!Array.isArray(items)) return null;
-
-  const entry = items.find(i =>
-    /BMC.?84/i.test(i.typeDesc || '') ||
-    /surety.*bond/i.test(i.typeDesc || '') ||
-    /BMC.?84/i.test(i.insuranceType || '')
-  );
-
-  if (!entry) return null;
-
-  const amount = parseFloat(String(entry.insuranceAmount || '0').replace(/[$,\s]/g, '')) || 0;
-  return {
-    amount,
-    insurer:        entry.insurerName    || entry.companyName || '',
-    policyNumber:   entry.policyNumber   || '',
-    effectiveDate:  entry.effectiveDate  || '',
-    expirationDate: entry.expirationDate || '',
-    typeDesc:       entry.typeDesc       || '',
-  };
+// Bond data lives directly on the carrier record.
+// FMCSA stores bondInsuranceOnFile in thousands (e.g. "75" = $75,000).
+function extractBond(c) {
+  const raw = parseFloat(c.bondInsuranceOnFile || '0');
+  if (raw <= 0) return null;
+  return { amount: raw * 1000 };
 }
 
 // Normalize single-letter FMCSA broker authority code to readable string
@@ -78,40 +61,27 @@ router.get('/:mc', async (req, res, next) => {
 
     const docketJson = await docketRes.json();
 
-    // FMCSA returns carrier data under content.carrier for dual-registered entities,
-    // or directly under content for broker-only entities.
-    const content = docketJson?.content;
     // FMCSA returns content as an array of { _links, carrier } objects
+    const content = docketJson?.content;
     const c = Array.isArray(content)
       ? content[0]?.carrier
       : content?.carrier ?? (content?.dotNumber ? content : null);
+
     if (!c || !c.dotNumber) {
       return res.status(404).json({ ok: false, error: 'FMCSA returned no record for that MC number' });
     }
-    console.log('[BROKER CARRIER FULL]', JSON.stringify(c));
 
     const dot = String(c.dotNumber);
 
-    // ── Fetch insurance (BMC-84) in parallel ───────────────────────────────
-    // Try both the insurance endpoint and authority endpoint for bond data
-    const [insRes, authRes] = await Promise.all([
-      fetch(fmcsaUrl(`/carriers/${dot}/insurance`, webKey), { signal: AbortSignal.timeout(12_000) }),
-      fetch(fmcsaUrl(`/carriers/${dot}/authority`, webKey),  { signal: AbortSignal.timeout(12_000) }),
-    ]);
-    const insText  = await insRes.text();
-    const authText = await authRes.text();
-    console.log('[BROKER INS STATUS]', insRes.status, insText.slice(0, 500));
-    console.log('[BROKER AUTH RAW]', authText.slice(0, 1000));
-    let insData = null;
-    try { insData = JSON.parse(insText); } catch (_) {};
-    const bond    = extractBmc84Bond(insData);
-
-    // ── Verdict logic ──────────────────────────────────────────────────────
+    // ── Bond and authority from carrier record ─────────────────────────────
+    // bondInsuranceOnFile is stored in thousands (75 = $75,000)
+    const bond               = extractBond(c);
     const BOND_REQUIRED      = 75_000;
     const brokerAuthStatus   = normalizeBrokerAuth(c.brokerAuthorityStatus);
     const hasActiveBrokerAuth = brokerAuthStatus === 'Active';
     const hasBond            = bond && bond.amount >= BOND_REQUIRED;
 
+    // ── Verdict logic ──────────────────────────────────────────────────────
     const reasons = [];
     if (!hasActiveBrokerAuth) {
       reasons.push(`Broker authority is "${brokerAuthStatus}" — must be Active`);
@@ -137,14 +107,14 @@ router.get('/:mc', async (req, res, next) => {
         verdict,
         reasons:     reasons.length ? reasons : null,
         broker_data: {
-          legalName:            c.legalName,
-          dbaName:              c.dbaName,
-          dotNumber:            dot,
-          mcNumber:             mc,
+          legalName:             c.legalName,
+          dbaName:               c.dbaName,
+          dotNumber:             dot,
+          mcNumber:              mc,
           brokerAuthorityStatus: c.brokerAuthorityStatus,
-          allowedToOperate:     c.allowedToOperate,
-          phyCity:              c.phyCity,
-          phyState:             c.phyState,
+          allowedToOperate:      c.allowedToOperate,
+          phyCity:               c.phyCity,
+          phyState:              c.phyState,
         },
         bond_data: bond,
       });
@@ -154,14 +124,14 @@ router.get('/:mc', async (req, res, next) => {
       verdict,
       reasons,
       broker: {
-        legalName:            c.legalName   || '',
-        dbaName:              c.dbaName     || '',
-        dotNumber:            dot,
-        mcNumber:             mc,
+        legalName:             c.legalName   || '',
+        dbaName:               c.dbaName     || '',
+        dotNumber:             dot,
+        mcNumber:              mc,
         brokerAuthorityStatus: brokerAuthStatus,
-        allowedToOperate:     c.allowedToOperate,
-        phyCity:              c.phyCity     || '',
-        phyState:             c.phyState    || '',
+        allowedToOperate:      c.allowedToOperate,
+        phyCity:               c.phyCity     || '',
+        phyState:              c.phyState    || '',
       },
       bond: bond
         ? { ...bond, meetsRequirement: hasBond, required: BOND_REQUIRED }
@@ -169,7 +139,6 @@ router.get('/:mc', async (req, res, next) => {
     });
 
   } catch (e) {
-    // Best-effort error log
     try {
       await getSupabase()
         .from('broker_check_logs')
