@@ -77,7 +77,6 @@ router.get('/:mc', async (req, res, next) => {
     if (!docketRes.ok) throw new Error(`FMCSA API HTTP ${docketRes.status}`);
 
     const docketJson = await docketRes.json();
-    console.log('[BROKER CARRIER FULL]', JSON.stringify(c));
 
     // FMCSA returns carrier data under content.carrier for dual-registered entities,
     // or directly under content for broker-only entities.
@@ -89,6 +88,7 @@ router.get('/:mc', async (req, res, next) => {
     if (!c || !c.dotNumber) {
       return res.status(404).json({ ok: false, error: 'FMCSA returned no record for that MC number' });
     }
+    console.log('[BROKER CARRIER FULL]', JSON.stringify(c));
 
     const dot = String(c.dotNumber);
 
