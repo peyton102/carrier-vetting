@@ -77,7 +77,7 @@ router.get('/:mc', async (req, res, next) => {
     if (!docketRes.ok) throw new Error(`FMCSA API HTTP ${docketRes.status}`);
 
     const docketJson = await docketRes.json();
-    console.log('[BROKER CHECK RAW]', JSON.stringify(docketJson)?.slice(0, 600));
+    console.log('[BROKER CARRIER FULL]', JSON.stringify(c));
 
     // FMCSA returns carrier data under content.carrier for dual-registered entities,
     // or directly under content for broker-only entities.
@@ -93,12 +93,15 @@ router.get('/:mc', async (req, res, next) => {
     const dot = String(c.dotNumber);
 
     // ── Fetch insurance (BMC-84) in parallel ───────────────────────────────
-    const insRes  = await fetch(fmcsaUrl(`/carriers/${dot}/insurance`, webKey), {
-      signal: AbortSignal.timeout(12_000),
-    });
-    console.log('[BROKER INS STATUS]', insRes.status);
-    const insText = await insRes.text();
-    console.log('[BROKER INS RAW]', insText.slice(0, 1000));
+    // Try both the insurance endpoint and authority endpoint for bond data
+    const [insRes, authRes] = await Promise.all([
+      fetch(fmcsaUrl(`/carriers/${dot}/insurance`, webKey), { signal: AbortSignal.timeout(12_000) }),
+      fetch(fmcsaUrl(`/carriers/${dot}/authority`, webKey),  { signal: AbortSignal.timeout(12_000) }),
+    ]);
+    const insText  = await insRes.text();
+    const authText = await authRes.text();
+    console.log('[BROKER INS STATUS]', insRes.status, insText.slice(0, 500));
+    console.log('[BROKER AUTH RAW]', authText.slice(0, 1000));
     let insData = null;
     try { insData = JSON.parse(insText); } catch (_) {};
     const bond    = extractBmc84Bond(insData);
