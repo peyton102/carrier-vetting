@@ -1,6 +1,5 @@
 // ── Broker Authority Checker ──────────────────────────────────────────────────
 // Uses ONLY FMCSA public API data — zero SaferWatch / Truckstop.
-// Checks broker operating authority and BMC-84 surety bond ($75k requirement).
 
 import { useState } from 'react';
 
@@ -18,47 +17,46 @@ const s = {
     opacity: disabled ? 0.6 : 1,
     boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
-  row2:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' },
-  metaKey:  { fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' },
-  metaVal:  { fontSize: 14, color: '#e2e8f0', marginTop: 2 },
-  dataGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px', marginBottom: 0 },
+  grid2:   { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 24px' },
+  grid3:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px 24px' },
+  metaKey: { fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 },
+  metaVal: { fontSize: 14, color: '#e2e8f0', fontWeight: 500 },
+  divider: { borderTop: '1px solid #1e2d45', margin: '16px 0' },
 };
 
-function MetaCell({ label, value }) {
+function MetaCell({ label, value, mono }) {
+  if (value === '' || value == null) return null;
   return (
     <div>
       <div style={s.metaKey}>{label}</div>
-      <div style={s.metaVal}>{value || '—'}</div>
+      <div style={{ ...s.metaVal, fontFamily: mono ? 'monospace' : 'inherit' }}>{value}</div>
     </div>
   );
 }
 
-function VerdictBanner({ verdict, reasons }) {
-  const isPass = verdict === 'PASS';
-  const bg     = isPass ? '#0a1f0e' : '#1a0808';
-  const border = isPass ? '#16a34a' : '#dc2626';
-  const badge  = isPass ? '#16a34a' : '#dc2626';
-
+function StatusBadge({ ok, label }) {
   return (
-    <div style={{ background: bg, border: `2px solid ${border}`, borderRadius: 10, padding: '20px 24px', marginBottom: 20 }}>
-      <span style={{
-        display: 'inline-block', padding: '6px 18px', borderRadius: 20, fontWeight: 800,
-        fontSize: 18, letterSpacing: '0.05em', background: badge, color: '#fff', marginBottom: 14,
-      }}>
-        {isPass ? '✓ PASS' : '✗ FAIL'}
-      </span>
-      <div style={{ fontSize: 13, color: isPass ? '#4ade80' : '#f87171', fontWeight: 600, marginBottom: isPass ? 0 : 12 }}>
-        {isPass
-          ? 'Broker has active authority and a compliant BMC-84 surety bond.'
-          : 'This broker does not meet all requirements.'}
+    <span style={{
+      display: 'inline-block', padding: '3px 12px', borderRadius: 20, fontWeight: 700,
+      fontSize: 12, background: ok ? '#16a34a' : '#dc2626', color: '#fff',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function CheckRow({ label, pass, detail }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0',
+      borderBottom: '1px solid #1e2d45',
+    }}>
+      <span style={{ fontSize: 16, lineHeight: 1, marginTop: 1 }}>{pass ? '✓' : '✗'}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: pass ? '#4ade80' : '#f87171' }}>{label}</div>
+        {detail && <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{detail}</div>}
       </div>
-      {!isPass && reasons?.length > 0 && (
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          {reasons.map((r, i) => (
-            <li key={i} style={{ fontSize: 13, color: '#f87171', marginBottom: 4 }}>{r}</li>
-          ))}
-        </ul>
-      )}
+      <StatusBadge ok={pass} label={pass ? 'PASS' : 'FAIL'} />
     </div>
   );
 }
@@ -73,7 +71,6 @@ export default function BrokerCheck() {
     e.preventDefault();
     const clean = mc.replace(/^MC/i, '').replace(/\D/g, '');
     if (!clean) { setErr('Enter a valid MC number.'); return; }
-
     setLoading(true); setErr(''); setResult(null);
     try {
       const r = await fetch(`/api/broker-check/${encodeURIComponent(clean)}`);
@@ -89,18 +86,22 @@ export default function BrokerCheck() {
 
   const broker = result?.broker;
   const bond   = result?.bond;
+  const isPass = result?.verdict === 'PASS';
 
-  const bondColor = !bond             ? '#f87171'
-                  : bond.meetsRequirement ? '#4ade80'
-                  : '#f87171';
+  const hasActiveBrokerAuth = broker?.brokerAuthorityStatus === 'Active';
+  const hasBond             = bond?.meetsRequirement;
+
+  const address = broker
+    ? [broker.phyStreet, broker.phyCity, broker.phyState, broker.phyZipcode].filter(Boolean).join(', ')
+    : '';
 
   return (
     <div>
       {/* ── Lookup ── */}
       <div style={s.card}>
         <div style={s.cardHead}>Broker MC Lookup</div>
-        <p style={{ fontSize: 12, color: '#475569', margin: '0 0 14px' }}>
-          Enter the broker's MC number to verify operating authority and BMC-84 surety bond status.
+        <p style={{ fontSize: 12, color: '#475569', margin: '0 0 16px' }}>
+          Verify a broker's operating authority and BMC-84 surety bond status.
           Data source: <strong style={{ color: '#64748b' }}>FMCSA public API only.</strong>
         </p>
         <form onSubmit={handleLookup} style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
@@ -108,7 +109,7 @@ export default function BrokerCheck() {
             <label style={s.label}>MC Number</label>
             <input
               style={s.input}
-              placeholder="e.g. 1234567"
+              placeholder="e.g. 1234567 or MC1234567"
               value={mc}
               onChange={e => { setMc(e.target.value); setErr(''); setResult(null); }}
             />
@@ -120,80 +121,126 @@ export default function BrokerCheck() {
         {err && <p style={{ fontSize: 13, color: '#f87171', marginTop: 10, marginBottom: 0 }}>{err}</p>}
       </div>
 
-      {result && (
+      {result && broker && (
         <>
-          {/* ── Verdict ── */}
-          <VerdictBanner verdict={result.verdict} reasons={result.reasons} />
-
-          {/* ── Entity Info ── */}
-          <div style={s.card}>
-            <div style={s.cardHead}>Entity Information</div>
-            <div style={s.dataGrid}>
-              <MetaCell label="Legal Name"   value={broker.legalName} />
-              <MetaCell label="DBA"          value={broker.dbaName} />
-              <MetaCell label="MC Number"    value={broker.mcNumber ? `MC${broker.mcNumber}` : '—'} />
-              <MetaCell label="DOT Number"   value={broker.dotNumber} />
-              <MetaCell label="Location"     value={[broker.phyCity, broker.phyState].filter(Boolean).join(', ')} />
-              <MetaCell label="Allowed to Operate" value={broker.allowedToOperate === 'Y' ? 'Yes' : broker.allowedToOperate === 'N' ? 'No' : '—'} />
-            </div>
-          </div>
-
-          {/* ── Authority ── */}
-          <div style={s.card}>
-            <div style={s.cardHead}>Broker Authority</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+          {/* ── Verdict Banner ── */}
+          <div style={{
+            background: isPass ? '#0a1f0e' : '#1a0808',
+            border: `2px solid ${isPass ? '#16a34a' : '#dc2626'}`,
+            borderRadius: 10, padding: '20px 24px', marginBottom: 20,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
               <span style={{
-                padding: '4px 14px', borderRadius: 20, fontWeight: 700, fontSize: 13,
-                background: broker.brokerAuthorityStatus === 'Active' ? '#16a34a' : '#dc2626',
-                color: '#fff',
+                padding: '8px 22px', borderRadius: 20, fontWeight: 800, fontSize: 20,
+                letterSpacing: '0.05em',
+                background: isPass ? '#16a34a' : '#dc2626', color: '#fff',
               }}>
-                {broker.brokerAuthorityStatus}
+                {isPass ? '✓ PASS' : '✗ FAIL'}
               </span>
-              <span style={{ fontSize: 13, color: '#64748b' }}>
-                FMCSA broker operating authority
-              </span>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: isPass ? '#4ade80' : '#f87171' }}>
+                  {broker.legalName}
+                </div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                  MC{broker.mcNumber} · DOT {broker.dotNumber}
+                </div>
+              </div>
             </div>
-            <p style={{ fontSize: 12, color: '#475569', margin: 0 }}>
-              Brokers must hold active FMCSA broker authority to legally arrange transportation for
-              compensation. Carriers found operating as unlicensed brokers are subject to civil
-              penalties under 49 U.S.C. § 13901.
-            </p>
           </div>
 
-          {/* ── Bond ── */}
+          {/* ── Compliance Checklist ── */}
+          <div style={s.card}>
+            <div style={s.cardHead}>Compliance Checklist</div>
+            <CheckRow
+              label="Broker Operating Authority"
+              pass={hasActiveBrokerAuth}
+              detail={hasActiveBrokerAuth
+                ? 'Active FMCSA broker authority on file'
+                : `Authority status: ${broker.brokerAuthorityStatus} — must be Active`}
+            />
+            <CheckRow
+              label="BMC-84 Surety Bond"
+              pass={hasBond}
+              detail={hasBond
+                ? `$${bond.amount.toLocaleString()} on file — meets $${BOND_REQUIRED.toLocaleString()} federal requirement`
+                : bond
+                  ? `$${bond.amount.toLocaleString()} on file — below $${BOND_REQUIRED.toLocaleString()} requirement`
+                  : 'No bond found in FMCSA records'}
+            />
+            <CheckRow
+              label="Allowed to Operate"
+              pass={broker.allowedToOperate === 'Y'}
+              detail={broker.allowedToOperate === 'Y'
+                ? 'FMCSA confirms entity is permitted to operate'
+                : 'FMCSA has flagged this entity as not permitted to operate'}
+            />
+          </div>
+
+          {/* ── Entity Details ── */}
+          <div style={s.card}>
+            <div style={s.cardHead}>Entity Details</div>
+            <div style={s.grid3}>
+              <MetaCell label="Legal Name"   value={broker.legalName} />
+              <MetaCell label="DBA Name"     value={broker.dbaName} />
+              <MetaCell label="MC Number"    value={`MC${broker.mcNumber}`} />
+              <MetaCell label="DOT Number"   value={broker.dotNumber} mono />
+              <MetaCell label="FMCSA Status" value={broker.statusCode === 'A' ? 'Active' : broker.statusCode} />
+              <MetaCell label="Operation"    value={broker.carrierOperation} />
+            </div>
+            {address && (
+              <>
+                <div style={s.divider} />
+                <MetaCell label="Physical Address" value={address} />
+              </>
+            )}
+            {(broker.totalPowerUnits !== '' || broker.totalDrivers !== '') && (
+              <>
+                <div style={s.divider} />
+                <div style={s.grid2}>
+                  <MetaCell label="Power Units" value={broker.totalPowerUnits !== '' ? String(broker.totalPowerUnits) : null} />
+                  <MetaCell label="Drivers"     value={broker.totalDrivers     !== '' ? String(broker.totalDrivers)    : null} />
+                </div>
+              </>
+            )}
+            {broker.mcs150Outdated === 'Y' && (
+              <>
+                <div style={s.divider} />
+                <div style={{ fontSize: 12, color: '#f97316', fontWeight: 600 }}>
+                  ⚠ MCS-150 filing is outdated
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── Bond Details ── */}
           <div style={s.card}>
             <div style={s.cardHead}>BMC-84 Surety Bond</div>
             {bond ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                  <span style={{
-                    padding: '4px 14px', borderRadius: 20, fontWeight: 700, fontSize: 13,
-                    background: bond.meetsRequirement ? '#16a34a' : '#dc2626', color: '#fff',
-                  }}>
-                    ${bond.amount.toLocaleString()}
-                  </span>
-                  <span style={{ fontSize: 13, color: bondColor, fontWeight: 600 }}>
-                    {bond.meetsRequirement
-                      ? `Meets $${BOND_REQUIRED.toLocaleString()} requirement`
-                      : `Below required $${BOND_REQUIRED.toLocaleString()}`}
-                  </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <span style={{
+                  fontSize: 28, fontWeight: 800,
+                  color: hasBond ? '#4ade80' : '#f87171',
+                }}>
+                  ${bond.amount.toLocaleString()}
+                </span>
+                <div>
+                  <StatusBadge ok={hasBond} label={hasBond ? `Meets $${BOND_REQUIRED.toLocaleString()} requirement` : `Below $${BOND_REQUIRED.toLocaleString()} requirement`} />
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>
+                    Bond amount per FMCSA carrier record · Full bond details (insurer, policy, expiry)
+                    available on <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>FMCSA L&amp;I</a>
+                  </div>
                 </div>
-                <div style={s.row2}>
-                  <MetaCell label="Bond Type"       value={bond.typeDesc} />
-                  <MetaCell label="Surety Company"  value={bond.insurer} />
-                  <MetaCell label="Policy Number"   value={bond.policyNumber} />
-                  <MetaCell label="Effective Date"  value={bond.effectiveDate} />
-                  <MetaCell label="Expiration Date" value={bond.expirationDate} />
-                </div>
-              </>
+              </div>
             ) : (
-              <div style={{ fontSize: 13, color: '#f87171', fontWeight: 600 }}>
-                No BMC-84 surety bond found in FMCSA records.
-                <p style={{ fontSize: 12, color: '#475569', fontWeight: 400, marginTop: 8, marginBottom: 0 }}>
-                  Brokers are required to maintain a $75,000 surety bond (BMC-84) or trust fund
-                  (BMC-85) under 49 CFR Part 387. Operating without a valid bond is a federal
-                  violation.
-                </p>
+              <div>
+                <div style={{ fontSize: 13, color: '#f87171', fontWeight: 700, marginBottom: 8 }}>
+                  No BMC-84 surety bond found in FMCSA records
+                </div>
+                <div style={{ fontSize: 12, color: '#475569' }}>
+                  Brokers must maintain a $75,000 surety bond (BMC-84) or trust fund (BMC-85)
+                  under 49 CFR Part 387. Verify directly on{' '}
+                  <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>FMCSA L&amp;I</a>.
+                </div>
               </div>
             )}
           </div>
