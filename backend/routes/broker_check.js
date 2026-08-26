@@ -97,6 +97,7 @@ router.get('/:mc', async (req, res, next) => {
       signal: AbortSignal.timeout(12_000),
     });
     const insData = insRes.ok ? await insRes.json() : null;
+    console.log('[BROKER INS RAW]', JSON.stringify(insData)?.slice(0, 1000));
     const bond    = extractBmc84Bond(insData);
 
     // ── Verdict logic ──────────────────────────────────────────────────────
