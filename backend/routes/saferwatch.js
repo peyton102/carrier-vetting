@@ -166,8 +166,6 @@ router.get('/:dot', async (req, res, next) => {
     if (!swRes.ok) throw new Error(`SaferWatch HTTP ${swRes.status}`);
 
     const xmlText = await swRes.text();
-    // Log first 1000 chars for debugging — remove once confirmed working
-    console.log('[SW RAW XML]', xmlText.slice(0, 1000));
 
     // ── Parse XML ──────────────────────────────────────────────────────────
     const parser = new XMLParser({

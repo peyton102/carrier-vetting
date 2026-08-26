@@ -18,14 +18,6 @@ function fmcsaUrl(path, webKey) {
 // allowedToOperate: Y=carrier is legally permitted to operate, N=not permitted (master flag)
 // *AuthorityStatus codes: A=Active, I=Inactive/Revoked, R=Revocation Pending, N=None/Not Registered
 function normalizeAuthorityStatus(c) {
-  // DEBUG — remove after confirming fix
-  console.log('[FMCSA AUTH DEBUG]', {
-    allowedToOperate:        c.allowedToOperate,
-    commonAuthorityStatus:   c.commonAuthorityStatus,
-    contractAuthorityStatus: c.contractAuthorityStatus,
-    allKeys: Object.keys(c).filter(k => /allow|auth|operat|status/i.test(k)),
-  });
-
   // Master flag must be checked first — if N the carrier cannot legally operate regardless of
   // what the individual authority-type statuses show (e.g. commonAuthorityStatus may still read
   // "A" in the L&I record while the carrier is under an OOS order or pending revocation enforcement).
@@ -57,7 +49,6 @@ function normalizeSafetyRating(raw) {
 
 // Resolve MC number from docket-numbers endpoint response
 function extractMcNumber(docketJson) {
-  console.log('[FMCSA DOCKET DEBUG]', JSON.stringify(docketJson)?.slice(0, 500));
 
   // Structure 1: content.item[] with prefix field
   const items = docketJson?.content?.item;
