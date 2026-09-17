@@ -33,17 +33,17 @@ const BASICS = [
   { key: 'basicControlledSubstance',      label: 'Controlled Substances/Alcohol' },
 ];
 
-// ── SaferWatch Credentials Card ───────────────────────────────────────────────
-function SwCredentialsCard() {
-  const [status,   setStatus]   = useState(null);  // { configured, configuredAt }
-  const [keys,     setKeys]     = useState({ serviceKey: '', customerKey: '' });
-  const [saving,   setSaving]   = useState(false);
-  const [verifying,setVerifying]= useState(false);
-  const [msg,      setMsg]      = useState(null);  // { type: 'ok'|'err'|'info', text }
+// ── FMCSA Credentials Card ────────────────────────────────────────────────────
+function FmcsaCredentialsCard() {
+  const [status,    setStatus]    = useState(null);
+  const [webKey,    setWebKey]    = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [msg,       setMsg]       = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch('/api/credentials/saferwatch');
+      const r = await fetch('/api/credentials/fmcsa');
       if (r.ok) setStatus(await r.json());
     } catch (_) {}
   }, []);
@@ -52,20 +52,20 @@ function SwCredentialsCard() {
 
   async function handleSave(e) {
     e.preventDefault();
-    if (!keys.serviceKey.trim() || !keys.customerKey.trim()) {
-      setMsg({ type: 'err', text: 'Both Service Key and Customer Key are required.' });
+    if (!webKey.trim()) {
+      setMsg({ type: 'err', text: 'Web key is required.' });
       return;
     }
     setSaving(true); setMsg(null);
     try {
-      const r = await fetch('/api/credentials/saferwatch', {
+      const r = await fetch('/api/credentials/fmcsa', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(keys),
+        body: JSON.stringify({ webKey }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error ?? 'Save failed');
-      setMsg({ type: 'ok', text: 'Credentials saved.' });
-      setKeys({ serviceKey: '', customerKey: '' });
+      setMsg({ type: 'ok', text: 'FMCSA web key saved.' });
+      setWebKey('');
       await load();
     } catch (e) { setMsg({ type: 'err', text: e.message }); }
     finally { setSaving(false); }
@@ -74,7 +74,7 @@ function SwCredentialsCard() {
   async function handleVerify() {
     setVerifying(true); setMsg(null);
     try {
-      const r = await fetch('/api/credentials/saferwatch/verify', { method: 'POST' });
+      const r = await fetch('/api/credentials/fmcsa/verify', { method: 'POST' });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error ?? 'Verify failed');
       const type = d.status === 'verified' ? 'ok' : d.status === 'invalid' ? 'err' : 'info';
@@ -87,39 +87,33 @@ function SwCredentialsCard() {
 
   return (
     <div style={s.card}>
-      <div style={s.cardHead}>SaferWatch API Credentials</div>
-      <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 14 }}>
-        Enter your SaferWatch Service Key and Customer Key. Credentials are encrypted before storage
-        and never returned in plaintext. Leave blank to continue using the shared platform keys.
+      <div style={s.cardHead}>FMCSA API Key (required for DOT/MC lookup)</div>
+      <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 8 }}>
+        Each account must use its own free FMCSA web key — shared keys may get rate-limited or revoked.
       </p>
+      <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fed7aa', marginBottom: 14 }}>
+        <strong>How to get your free key:</strong> Go to{' '}
+        <span style={{ color: '#fb923c', fontFamily: 'monospace' }}>mobile.fmcsa.dot.gov/qc/services/users/register</span>
+        {' '}— fill in your name, email, and company. FMCSA emails your key within minutes. It never expires and has no cost.
+      </div>
 
       {status && (
-        <p style={{ fontSize: 12, color: status.configured ? '#4ade80' : '#64748b', marginBottom: 14 }}>
+        <p style={{ fontSize: 12, color: status.configured ? '#4ade80' : '#f87171', marginBottom: 14 }}>
           {status.configured
-            ? `✓ Tenant credentials configured${status.configuredAt ? ` on ${new Date(status.configuredAt).toLocaleDateString()}` : ''}`
-            : 'No tenant credentials — using shared platform keys'}
+            ? `✓ FMCSA key configured${status.configuredAt ? ` on ${new Date(status.configuredAt).toLocaleDateString()}` : ''}`
+            : '✗ No FMCSA key — DOT/MC lookup will not work until a key is saved'}
         </p>
       )}
 
       <form onSubmit={handleSave}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px', marginBottom: 14 }}>
-          <div>
-            <label style={s.label}>Service Key</label>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={s.label}>FMCSA Web Key</label>
             <input
               type="password" autoComplete="off"
-              placeholder="Enter service key…"
-              value={keys.serviceKey}
-              onChange={e => setKeys(k => ({ ...k, serviceKey: e.target.value }))}
-              style={s.input}
-            />
-          </div>
-          <div>
-            <label style={s.label}>Customer Key</label>
-            <input
-              type="password" autoComplete="off"
-              placeholder="Enter customer key…"
-              value={keys.customerKey}
-              onChange={e => setKeys(k => ({ ...k, customerKey: e.target.value }))}
+              placeholder="Paste your FMCSA web key…"
+              value={webKey}
+              onChange={e => setWebKey(e.target.value)}
               style={s.input}
             />
           </div>
@@ -127,7 +121,7 @@ function SwCredentialsCard() {
 
         <div style={s.btnRow}>
           <button type="submit" style={s.btn(saving)} disabled={saving}>
-            {saving ? 'Saving…' : 'Save Credentials'}
+            {saving ? 'Saving…' : 'Save Key'}
           </button>
           {status?.configured && (
             <button
@@ -136,7 +130,7 @@ function SwCredentialsCard() {
               disabled={verifying}
               style={{ ...s.btn(verifying), background: verifying ? '#243044' : '#162032', boxShadow: 'none' }}
             >
-              {verifying ? 'Verifying…' : 'Verify Saved Keys'}
+              {verifying ? 'Verifying…' : 'Verify Key'}
             </button>
           )}
           {msg && (
@@ -433,8 +427,8 @@ export default function Settings({ settings, onSave }) {
 
       </form>
 
-      {/* ── SaferWatch Credentials (separate form — cannot nest) ── */}
-      <SwCredentialsCard />
+      {/* ── FMCSA Credentials (separate form — cannot nest) ── */}
+      <FmcsaCredentialsCard />
 
     </div>
   );
