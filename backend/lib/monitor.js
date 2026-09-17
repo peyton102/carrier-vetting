@@ -2,12 +2,11 @@
 // Re-checks FMCSA + SaferWatch for every active (in-transit) monitored load.
 // Runs on a configurable interval (default 4 h). Alerts via email + DB on change.
 // FMCSA unreachable → "Cannot Verify" alert (never a silent pass).
-// Multi-tenant: each tenant's own FMCSA web key + configurable OOS thresholds.
+// FMCSA uses operator env key (FMCSA_WEBKEY). SaferWatch uses operator env keys.
 
 import nodemailer    from 'nodemailer';
 import { XMLParser } from 'fast-xml-parser';
 import { fetchSettings } from './settings.js';
-import { decrypt } from './encryption.js';
 
 const FMCSA_BASE = 'https://mobile.fmcsa.dot.gov/qc/services';
 const SW_BASE    = 'https://www.saferwatch.com/webservices/CarrierService32.php';
@@ -243,9 +242,15 @@ async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey) {
 
 /**
  * Check all active monitored loads (or only loads for a specific tenant).
- * Each tenant's FMCSA web key is fetched from their credentials record.
+ * Uses the operator FMCSA_WEBKEY env var for all tenants.
  */
 export async function runMonitoringCheck(supabase, tenantId = null) {
+  const webKey = process.env.FMCSA_WEBKEY;
+  if (!webKey) {
+    console.warn('[MONITOR] FMCSA_WEBKEY not configured — skipping monitoring check');
+    return;
+  }
+
   let query = supabase.from('monitored_loads').select('*').is('delivered_at', null);
   if (tenantId) query = query.eq('tenant_id', tenantId);
   const { data: loads, error } = await query;
@@ -255,31 +260,20 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
 
   console.log(`[MONITOR] Checking ${loads.length} active load(s)…`);
 
-  // Group loads by tenant to fetch credentials + settings once per tenant
+  // Group loads by tenant to fetch settings + email once per tenant
   const byTenant = {};
   for (const load of loads) {
     (byTenant[load.tenant_id] ??= []).push(load);
   }
 
   for (const [tid, tenantLoads] of Object.entries(byTenant)) {
-    let settings, tenantEmail, webKey;
+    let settings, tenantEmail;
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
-
-      const [tenantRow, credRow] = await Promise.all([
-        supabase.from('tenants').select('email').eq('slug', tid).single(),
-        supabase.from('tenant_credentials').select('fmcsa_webkey').eq('tenant_slug', tid).single(),
-      ]);
-
+      const tenantRow = await supabase.from('tenants').select('email').eq('slug', tid).single();
       tenantEmail = tenantRow.data?.email ?? null;
-      webKey      = credRow.data?.fmcsa_webkey ? decrypt(credRow.data.fmcsa_webkey) : null;
     } catch (e) {
       console.warn(`[MONITOR] Could not fetch data for tenant ${tid}: ${e.message}`);
-      continue;
-    }
-
-    if (!webKey) {
-      console.warn(`[MONITOR] Tenant ${tid} has no FMCSA web key — skipping ${tenantLoads.length} load(s)`);
       continue;
     }
 
@@ -293,7 +287,7 @@ export function startMonitoringJob(supabase) {
   const intervalHours = parseFloat(process.env.MONITOR_INTERVAL_HOURS || '4');
   const intervalMs    = intervalHours * 60 * 60 * 1000;
 
-  console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h (per-tenant FMCSA keys)`);
+  console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h`);
   // First run 60s after startup to let connections settle
   setTimeout(() => runMonitoringCheck(supabase), 60_000);
   setInterval(() => runMonitoringCheck(supabase), intervalMs);

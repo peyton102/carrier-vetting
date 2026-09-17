@@ -33,118 +33,6 @@ const BASICS = [
   { key: 'basicControlledSubstance',      label: 'Controlled Substances/Alcohol' },
 ];
 
-// ── FMCSA Credentials Card ────────────────────────────────────────────────────
-function FmcsaCredentialsCard() {
-  const [status,    setStatus]    = useState(null);
-  const [webKey,    setWebKey]    = useState('');
-  const [saving,    setSaving]    = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [msg,       setMsg]       = useState(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch('/api/credentials/fmcsa');
-      if (r.ok) setStatus(await r.json());
-    } catch (_) {}
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  async function handleSave(e) {
-    e.preventDefault();
-    if (!webKey.trim()) {
-      setMsg({ type: 'err', text: 'Web key is required.' });
-      return;
-    }
-    setSaving(true); setMsg(null);
-    try {
-      const r = await fetch('/api/credentials/fmcsa', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webKey }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error ?? 'Save failed');
-      setMsg({ type: 'ok', text: 'FMCSA web key saved.' });
-      setWebKey('');
-      await load();
-    } catch (e) { setMsg({ type: 'err', text: e.message }); }
-    finally { setSaving(false); }
-  }
-
-  async function handleVerify() {
-    setVerifying(true); setMsg(null);
-    try {
-      const r = await fetch('/api/credentials/fmcsa/verify', { method: 'POST' });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error ?? 'Verify failed');
-      const type = d.status === 'verified' ? 'ok' : d.status === 'invalid' ? 'err' : 'info';
-      setMsg({ type, text: d.message });
-    } catch (e) { setMsg({ type: 'err', text: e.message }); }
-    finally { setVerifying(false); }
-  }
-
-  const msgColors = { ok: '#4ade80', err: '#f87171', info: '#93c5fd' };
-
-  return (
-    <div style={s.card}>
-      <div style={s.cardHead}>FMCSA API Key (required for DOT/MC lookup)</div>
-      <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 8 }}>
-        Each account must use its own free FMCSA web key — shared keys may get rate-limited or revoked.
-      </p>
-      <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fed7aa', marginBottom: 14 }}>
-        <strong>How to get your free key:</strong> Visit{' '}
-        <span style={{ color: '#fb923c', fontFamily: 'monospace' }}>mobile.fmcsa.dot.gov/qc/services/users/register</span>
-        {' '}— fill in your name, email, and company. FMCSA emails your key within minutes. It never expires.
-        See <em>Settings → FMCSA Setup Guide</em> below for step-by-step instructions.
-      </div>
-
-      {status && (
-        <p style={{ fontSize: 12, color: status.configured ? '#4ade80' : '#f87171', marginBottom: 14 }}>
-          {status.configured
-            ? `✓ FMCSA key configured${status.configuredAt ? ` on ${new Date(status.configuredAt).toLocaleDateString()}` : ''}`
-            : '✗ No FMCSA key — DOT/MC lookup will not work until a key is saved'}
-        </p>
-      )}
-
-      <form onSubmit={handleSave}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 14 }}>
-          <div style={{ flex: 1 }}>
-            <label style={s.label}>FMCSA Web Key</label>
-            <input
-              type="password" autoComplete="off"
-              placeholder="Paste your FMCSA web key…"
-              value={webKey}
-              onChange={e => setWebKey(e.target.value)}
-              style={s.input}
-            />
-          </div>
-        </div>
-
-        <div style={s.btnRow}>
-          <button type="submit" style={s.btn(saving)} disabled={saving}>
-            {saving ? 'Saving…' : 'Save Key'}
-          </button>
-          {status?.configured && (
-            <button
-              type="button"
-              onClick={handleVerify}
-              disabled={verifying}
-              style={{ ...s.btn(verifying), background: verifying ? '#243044' : '#162032', boxShadow: 'none' }}
-            >
-              {verifying ? 'Verifying…' : 'Verify Key'}
-            </button>
-          )}
-          {msg && (
-            <span style={{ fontSize: 13, fontWeight: 600, color: msgColors[msg.type] }}>
-              {msg.text}
-            </span>
-          )}
-        </div>
-      </form>
-    </div>
-  );
-}
-
 // ── SaferWatch Credentials Card ───────────────────────────────────────────────
 function SwCredentialsCard() {
   const [status,   setStatus]   = useState(null);  // { configured, configuredAt }
@@ -544,9 +432,6 @@ export default function Settings({ settings, onSave }) {
         </div>
 
       </form>
-
-      {/* ── FMCSA Credentials (separate form — cannot nest) ── */}
-      <FmcsaCredentialsCard />
 
       {/* ── SaferWatch Credentials (separate form — cannot nest) ── */}
       <SwCredentialsCard />

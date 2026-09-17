@@ -5,6 +5,7 @@ import Certificates   from './pages/Certificates.jsx';
 import Settings       from './pages/Settings.jsx';
 import Admin          from './pages/Admin.jsx';
 import Activate       from './pages/Activate.jsx';
+import Monitoring     from './pages/Monitoring.jsx';
 
 function LoginScreen({ onLogin }) {
   const [email,    setEmail]    = useState('');
@@ -126,6 +127,7 @@ export default function App() {
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
           {navLink('/vetting',      'Vetting')}
+          {navLink('/monitoring',   'Monitoring')}
           {navLink('/certificates', 'Certificates')}
           {navLink('/settings',     'Settings')}
           {user.isAdmin && navLink('/admin', 'Admin')}
@@ -148,6 +150,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/vetting" replace />} />
           <Route path="/vetting"      element={<CarrierVetting settings={settings} />} />
+          <Route path="/monitoring"   element={<Monitoring />} />
           <Route path="/certificates" element={<Certificates />} />
           <Route path="/settings"     element={<Settings settings={settings} onSave={setSettings} />} />
           <Route path="/admin"        element={user.isAdmin ? <Admin /> : <Navigate to="/vetting" replace />} />

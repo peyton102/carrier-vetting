@@ -2,32 +2,15 @@
 // GET /api/fmcsa/dot/:dot  — look up by DOT number
 // GET /api/fmcsa/mc/:mc   — look up by MC number
 //
-// Each tenant uses their own FMCSA web key stored in tenant_credentials.
-// Register your key at: https://mobile.fmcsa.dot.gov/qc/services/users/register
+// Uses the operator's FMCSA_WEBKEY from .env (set FMCSA_WEBKEY in Render env vars).
 
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { decrypt } from '../lib/encryption.js';
 
 const router = express.Router();
 const BASE   = 'https://mobile.fmcsa.dot.gov/qc/services';
 
-function getSupabase() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
 function fmcsaUrl(path, webKey) {
   return `${BASE}${path}?webKey=${encodeURIComponent(webKey)}`;
-}
-
-async function getTenantWebKey(tenantSlug) {
-  const { data } = await getSupabase()
-    .from('tenant_credentials')
-    .select('fmcsa_webkey')
-    .eq('tenant_slug', tenantSlug)
-    .single();
-  if (!data?.fmcsa_webkey) return null;
-  return decrypt(data.fmcsa_webkey);
 }
 
 // allowedToOperate: Y=carrier may operate, N=not permitted
@@ -144,22 +127,12 @@ async function fetchGrantDate(dot, webKey) {
   } catch (_) { return ''; }
 }
 
-// ── Middleware: resolve and attach tenant's FMCSA web key ─────────────────────
-async function withWebKey(req, res, next) {
-  const webKey = await getTenantWebKey(req.auth.tenant);
-  if (!webKey) {
-    return res.status(503).json({
-      error: 'FMCSA web key not configured. Go to Settings → FMCSA API Key to add your key.',
-    });
-  }
-  req.fmcsaWebKey = webKey;
-  next();
-}
-
 // ── DOT lookup ────────────────────────────────────────────────────────────────
-router.get('/dot/:dot', withWebKey, async (req, res, next) => {
+router.get('/dot/:dot', async (req, res, next) => {
   try {
-    const webKey = req.fmcsaWebKey;
+    const webKey = process.env.FMCSA_WEBKEY;
+    if (!webKey) return res.status(503).json({ error: 'FMCSA_WEBKEY not configured on server' });
+
     const dot = req.params.dot.replace(/\D/g, '');
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
 
@@ -174,7 +147,7 @@ router.get('/dot/:dot', withWebKey, async (req, res, next) => {
     const c = (await carrierRes.json())?.content?.carrier;
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
-    const docketJson       = docketRes.ok ? await docketRes.json() : null;
+    const docketJson         = docketRes.ok ? await docketRes.json() : null;
     const authorityGrantDate = await fetchGrantDate(dot, webKey);
 
     res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
@@ -182,9 +155,11 @@ router.get('/dot/:dot', withWebKey, async (req, res, next) => {
 });
 
 // ── MC number lookup ──────────────────────────────────────────────────────────
-router.get('/mc/:mc', withWebKey, async (req, res, next) => {
+router.get('/mc/:mc', async (req, res, next) => {
   try {
-    const webKey = req.fmcsaWebKey;
+    const webKey = process.env.FMCSA_WEBKEY;
+    if (!webKey) return res.status(503).json({ error: 'FMCSA_WEBKEY not configured on server' });
+
     const mc = req.params.mc.replace(/^(MC|FF)/i, '').replace(/\D/g, '');
     if (!mc) return res.status(400).json({ error: 'Invalid MC number' });
 
@@ -206,9 +181,11 @@ router.get('/mc/:mc', withWebKey, async (req, res, next) => {
 });
 
 // ── Legacy: keep /:dot working so existing bookmarks don't break ──────────────
-router.get('/:dot', withWebKey, async (req, res, next) => {
+router.get('/:dot', async (req, res, next) => {
   try {
-    const webKey = req.fmcsaWebKey;
+    const webKey = process.env.FMCSA_WEBKEY;
+    if (!webKey) return res.status(503).json({ error: 'FMCSA_WEBKEY not configured on server' });
+
     const dot = req.params.dot.replace(/\D/g, '');
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
 
@@ -223,7 +200,7 @@ router.get('/:dot', withWebKey, async (req, res, next) => {
     const c = (await carrierRes.json())?.content?.carrier;
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
-    const docketJson       = docketRes.ok ? await docketRes.json() : null;
+    const docketJson         = docketRes.ok ? await docketRes.json() : null;
     const authorityGrantDate = await fetchGrantDate(dot, webKey);
 
     res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
