@@ -144,8 +144,14 @@ export function generateVettingPDF(opts) {
       `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold);
     basicRow(doc, L, W,
+      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleDriverObservedThreshold}%)`,
+      d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold);
+    basicRow(doc, L, W,
       `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold);
+    basicRow(doc, L, W,
+      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHazmatThreshold}%)`,
+      d.hazmatBasic, cfg.basicHazmatThreshold);
     basicRow(doc, L, W,
       `Controlled Substances BASIC (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicControlledSubstanceThreshold}%)`,
       d.controlledSubstancesBasic, cfg.basicControlledSubstanceThreshold);

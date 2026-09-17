@@ -21,15 +21,129 @@ const s = {
   notice: { background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#93c5fd', marginBottom: 20 },
 };
 
-// Definition of the 6 BASICs with their field keys and display names
+// All 8 FMCSA CSA BASICs with configurable threshold + action
 const BASICS = [
-  { key: 'basicUnsafeDriving',       label: 'Unsafe Driving'               },
-  { key: 'basicCrashIndicator',      label: 'Crash Indicator'              },
-  { key: 'basicHos',                 label: 'Hours of Service'             },
-  { key: 'basicVehicleMaintenance',  label: 'Vehicle Maintenance'          },
-  { key: 'basicDriverFitness',       label: 'Driver Fitness'               },
-  { key: 'basicControlledSubstance', label: 'Controlled Substances/Alcohol'},
+  { key: 'basicUnsafeDriving',            label: 'Unsafe Driving'                },
+  { key: 'basicCrashIndicator',           label: 'Crash Indicator'               },
+  { key: 'basicHos',                      label: 'Hours of Service'              },
+  { key: 'basicVehicleMaintenance',       label: 'Vehicle Maintenance'           },
+  { key: 'basicVehicleDriverObserved',    label: 'Vehicle Driver-Observed'       },
+  { key: 'basicDriverFitness',            label: 'Driver Fitness'                },
+  { key: 'basicHazmat',                   label: 'Hazardous Materials'           },
+  { key: 'basicControlledSubstance',      label: 'Controlled Substances/Alcohol' },
 ];
+
+// ── FMCSA Credentials Card ────────────────────────────────────────────────────
+function FmcsaCredentialsCard() {
+  const [status,    setStatus]    = useState(null);
+  const [webKey,    setWebKey]    = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [msg,       setMsg]       = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/credentials/fmcsa');
+      if (r.ok) setStatus(await r.json());
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!webKey.trim()) {
+      setMsg({ type: 'err', text: 'Web key is required.' });
+      return;
+    }
+    setSaving(true); setMsg(null);
+    try {
+      const r = await fetch('/api/credentials/fmcsa', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webKey }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? 'Save failed');
+      setMsg({ type: 'ok', text: 'FMCSA web key saved.' });
+      setWebKey('');
+      await load();
+    } catch (e) { setMsg({ type: 'err', text: e.message }); }
+    finally { setSaving(false); }
+  }
+
+  async function handleVerify() {
+    setVerifying(true); setMsg(null);
+    try {
+      const r = await fetch('/api/credentials/fmcsa/verify', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? 'Verify failed');
+      const type = d.status === 'verified' ? 'ok' : d.status === 'invalid' ? 'err' : 'info';
+      setMsg({ type, text: d.message });
+    } catch (e) { setMsg({ type: 'err', text: e.message }); }
+    finally { setVerifying(false); }
+  }
+
+  const msgColors = { ok: '#4ade80', err: '#f87171', info: '#93c5fd' };
+
+  return (
+    <div style={s.card}>
+      <div style={s.cardHead}>FMCSA API Key (required for DOT/MC lookup)</div>
+      <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 8 }}>
+        Each account must use its own free FMCSA web key — shared keys may get rate-limited or revoked.
+      </p>
+      <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fed7aa', marginBottom: 14 }}>
+        <strong>How to get your free key:</strong> Visit{' '}
+        <span style={{ color: '#fb923c', fontFamily: 'monospace' }}>mobile.fmcsa.dot.gov/qc/services/users/register</span>
+        {' '}— fill in your name, email, and company. FMCSA emails your key within minutes. It never expires.
+        See <em>Settings → FMCSA Setup Guide</em> below for step-by-step instructions.
+      </div>
+
+      {status && (
+        <p style={{ fontSize: 12, color: status.configured ? '#4ade80' : '#f87171', marginBottom: 14 }}>
+          {status.configured
+            ? `✓ FMCSA key configured${status.configuredAt ? ` on ${new Date(status.configuredAt).toLocaleDateString()}` : ''}`
+            : '✗ No FMCSA key — DOT/MC lookup will not work until a key is saved'}
+        </p>
+      )}
+
+      <form onSubmit={handleSave}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={s.label}>FMCSA Web Key</label>
+            <input
+              type="password" autoComplete="off"
+              placeholder="Paste your FMCSA web key…"
+              value={webKey}
+              onChange={e => setWebKey(e.target.value)}
+              style={s.input}
+            />
+          </div>
+        </div>
+
+        <div style={s.btnRow}>
+          <button type="submit" style={s.btn(saving)} disabled={saving}>
+            {saving ? 'Saving…' : 'Save Key'}
+          </button>
+          {status?.configured && (
+            <button
+              type="button"
+              onClick={handleVerify}
+              disabled={verifying}
+              style={{ ...s.btn(verifying), background: verifying ? '#243044' : '#162032', boxShadow: 'none' }}
+            >
+              {verifying ? 'Verifying…' : 'Verify Key'}
+            </button>
+          )}
+          {msg && (
+            <span style={{ fontSize: 13, fontWeight: 600, color: msgColors[msg.type] }}>
+              {msg.text}
+            </span>
+          )}
+        </div>
+      </form>
+    </div>
+  );
+}
 
 // ── SaferWatch Credentials Card ───────────────────────────────────────────────
 function SwCredentialsCard() {
@@ -348,20 +462,68 @@ export default function Settings({ settings, onSave }) {
 
         {/* ── OOS Rate ── */}
         <div style={s.card}>
-          <div style={s.cardHead}>Out-of-Service Rate</div>
-          <div style={{ maxWidth: 320 }}>
-            <label style={s.label}>Flag when carrier OOS rate exceeds national average by</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={s.cardHead}>Out-of-Service Rates</div>
+
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 16 }}>
+            Two independent OOS checks. The hard block triggers an immediate <strong>Reject</strong> with no override path.
+            The multiplier check triggers a <strong>Hold</strong> for manager review.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px', marginBottom: 16 }}>
+            <div>
+              <label style={s.label}>Vehicle OOS Hard Block (%)</label>
+              <input
+                type="number" min={1} max={100}
+                value={form.oosHardBlockTruck ?? ''}
+                onChange={e => set('oosHardBlockTruck', parseFloat(e.target.value))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Carrier above this → auto-REJECT, no override. Default: 35%.
+              </p>
+            </div>
+            <div>
+              <label style={s.label}>Driver OOS Hard Block (%)</label>
+              <input
+                type="number" min={1} max={100}
+                value={form.oosHardBlockDriver ?? ''}
+                onChange={e => set('oosHardBlockDriver', parseFloat(e.target.value))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Carrier above this → auto-REJECT, no override. Default: 7%.
+              </p>
+            </div>
+            <div>
+              <label style={s.label}>Yellow-flag multiplier (× national avg)</label>
               <input
                 type="number" min={1} step={0.5}
                 value={form.oosRateMultiplier ?? ''}
                 onChange={e => set('oosRateMultiplier', parseFloat(e.target.value))}
-                style={{ ...s.input, width: 80 }}
+                style={s.input}
               />
-              <span style={{ fontSize: 13, color: '#94a3b8' }}>× the national average</span>
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                e.g., 2 = Hold if OOS% ≥ 2× national average.
+              </p>
             </div>
+          </div>
+        </div>
+
+        {/* ── Inspection Volume ── */}
+        <div style={s.card}>
+          <div style={s.cardHead}>Inspection Volume Minimum</div>
+          <div style={{ maxWidth: 320 }}>
+            <label style={s.label}>Minimum inspections (24 months) for reliable BASIC data</label>
+            <input
+              type="number" min={0}
+              value={form.inspectionVolumeMin ?? ''}
+              onChange={e => set('inspectionVolumeMin', parseInt(e.target.value, 10))}
+              style={{ ...s.input, width: 100 }}
+            />
             <p style={{ fontSize: 11, color: '#475569', margin: '6px 0 0' }}>
-              e.g., 2 = flag if carrier OOS% ≥ 2× national average. Applied to both Truck OOS and Driver OOS.
+              Carriers with fewer inspections than this are routed to supervisor review —
+              FMCSA percentile scores are not statistically reliable at low inspection volumes.
+              Default: 3.
             </p>
           </div>
         </div>
@@ -382,6 +544,9 @@ export default function Settings({ settings, onSave }) {
         </div>
 
       </form>
+
+      {/* ── FMCSA Credentials (separate form — cannot nest) ── */}
+      <FmcsaCredentialsCard />
 
       {/* ── SaferWatch Credentials (separate form — cannot nest) ── */}
       <SwCredentialsCard />

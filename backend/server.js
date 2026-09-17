@@ -20,6 +20,8 @@ import adminRouter        from './routes/admin.js';
 import inviteRouter       from './routes/invite.js';
 import credentialsRouter  from './routes/credentials.js';
 import brokerCheckRouter  from './routes/broker_check.js';
+import monitoringRouter   from './routes/monitoring.js';
+import { startMonitoringJob } from './lib/monitor.js';
 
 const app = express();
 app.use(cors());
@@ -102,6 +104,7 @@ app.use('/api/settings',      settingsRouter);
 app.use('/api/admin',         adminRouter);
 app.use('/api/credentials',   credentialsRouter);
 app.use('/api/broker-check',  brokerCheckRouter);
+app.use('/api/monitoring',    monitoringRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');
@@ -123,4 +126,9 @@ app.listen(PORT, () => {
   console.log(`  SUPABASE_URL              = ${url}`);
   console.log(`  SUPABASE_SERVICE_ROLE_KEY = ${mask(key)}`);
   console.log(`  JWT_SECRET                = ${jwt}\n`);
+
+  // Start carrier monitoring background job (per-tenant FMCSA keys, always starts)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    startMonitoringJob(getSupabase());
+  }
 });

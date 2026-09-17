@@ -2,22 +2,30 @@ import { useState, useCallback } from 'react';
 import BrokerCheck from './BrokerCheck.jsx';
 
 // Fallback defaults used only while settings are loading (replaced immediately by server values)
+// These match FMCSA's published SMS intervention thresholds for property carriers.
 const DEFAULTS = {
-  basicUnsafeDrivingThreshold:       55,
-  basicUnsafeDrivingAction:          'reject',
-  basicCrashIndicatorThreshold:      55,
-  basicCrashIndicatorAction:         'reject',
-  basicHosThreshold:                 55,
-  basicHosAction:                    'hold',
-  basicVehicleMaintenanceThreshold:  55,
-  basicVehicleMaintenanceAction:     'hold',
-  basicDriverFitnessThreshold:       55,
-  basicDriverFitnessAction:          'hold',
-  basicControlledSubstanceThreshold: 55,
-  basicControlledSubstanceAction:    'reject',
+  basicUnsafeDrivingThreshold:            65,
+  basicUnsafeDrivingAction:               'reject',
+  basicCrashIndicatorThreshold:           65,
+  basicCrashIndicatorAction:              'reject',
+  basicHosThreshold:                      65,
+  basicHosAction:                         'hold',
+  basicVehicleMaintenanceThreshold:       80,
+  basicVehicleMaintenanceAction:          'hold',
+  basicDriverFitnessThreshold:            80,
+  basicDriverFitnessAction:               'hold',
+  basicControlledSubstanceThreshold:      50,
+  basicControlledSubstanceAction:         'reject',
+  basicVehicleDriverObservedThreshold:    65,
+  basicVehicleDriverObservedAction:       'hold',
+  basicHazmatThreshold:                   80,
+  basicHazmatAction:                      'hold',
   autoLiabilityMin:  1_000_000,
   cargoMin:            100_000,
   authorityMinDays:      365,
+  oosHardBlockTruck:  35,
+  oosHardBlockDriver:  7,
+  inspectionVolumeMin: 3,
 };
 
 const INITIAL_FORM = {
@@ -45,12 +53,14 @@ const INITIAL_FORM = {
   // Federal OOS
   activeFederalOOS: false,
   // BASIC scores
-  unsafeDrivingBasic:        '',
-  crashIndicatorBasic:       '',
-  hosBasic:                  '',
-  vehicleMaintenanceBasic:   '',
-  driverFitnessBasic:        '',
-  controlledSubstancesBasic: '',
+  unsafeDrivingBasic:           '',
+  crashIndicatorBasic:          '',
+  hosBasic:                     '',
+  vehicleMaintenanceBasic:      '',
+  vehicleDriverObservedBasic:   '',
+  driverFitnessBasic:           '',
+  hazmatBasic:                  '',
+  controlledSubstancesBasic:    '',
   // Operations
   powerUnits:           '',
   inspections24mo:      '',
@@ -258,6 +268,7 @@ export default function CarrierVetting({ settings }) {
   const [logs,        setLogs]        = useState(null);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsErr,     setLogsErr]     = useState('');
+  const [monitoring,  setMonitoring]  = useState(new Set()); // vetting_log IDs being monitored
 
   // ── Auto-fill state ──────────────────────────────────────────────────────
   const [fmcsaData,    setFmcsaData]    = useState(null);
@@ -488,6 +499,27 @@ export default function CarrierVetting({ settings }) {
     finally { setLogsLoading(false); }
   }
 
+  // ── Start monitoring a booked load ───────────────────────────────────────────
+  async function startMonitoring(row) {
+    try {
+      const res = await fetch('/api/monitoring/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vetting_log_id: row.id,
+          load_ref:       row.load_ref,
+          dot_number:     row.dot_number,
+          carrier_name:   row.carrier_name,
+          mc_number:      row.mc_number,
+          started_by:     row.dispatcher,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to start monitoring');
+      setMonitoring(prev => new Set([...prev, row.id]));
+    } catch (e) { alert(`Could not start monitoring: ${e.message}`); }
+  }
+
   // ── Reset ───────────────────────────────────────────────────────────────────
   function reset() {
     setForm({ ...INITIAL_FORM });
@@ -647,8 +679,8 @@ export default function CarrierVetting({ settings }) {
           )}
           <div style={{ marginTop: 8, color: '#94a3b8' }}>
             <strong>Still requires manual entry:</strong>{' '}
-            Crash Indicator BASIC, Clean inspections count,
-            Pending insurance cancellation, Carrier Assure grade &amp; flags.
+            Crash Indicator BASIC, Vehicle Driver-Observed BASIC, Hazardous Materials BASIC,
+            Clean inspections count, Pending insurance cancellation, Carrier Assure grade &amp; flags.
           </div>
         </div>
       )}
@@ -765,11 +797,25 @@ export default function CarrierVetting({ settings }) {
               inputStyle={fi('vehicleMaintenanceBasic')}
             />
           </Field>
+          <Field label={`Vehicle Driver-Observed BASIC % (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleDriverObservedThreshold})`}>
+            <TextInput
+              type="number" name="vehicleDriverObservedBasic" value={form.vehicleDriverObservedBasic}
+              onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
+              inputStyle={fi('vehicleDriverObservedBasic')}
+            />
+          </Field>
           <Field label={`Driver Fitness BASIC % (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicDriverFitnessThreshold})`}>
             <TextInput
               type="number" name="driverFitnessBasic" value={form.driverFitnessBasic}
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('driverFitnessBasic')}
+            />
+          </Field>
+          <Field label={`Hazardous Materials BASIC % (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHazmatThreshold})`}>
+            <TextInput
+              type="number" name="hazmatBasic" value={form.hazmatBasic}
+              onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
+              inputStyle={fi('hazmatBasic')}
             />
           </Field>
           <Field label={`Controlled Substances/Alcohol BASIC % (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicControlledSubstanceThreshold})`}>
@@ -1027,7 +1073,7 @@ export default function CarrierVetting({ settings }) {
                 <table style={s.logTable}>
                   <thead>
                     <tr>
-                      {['Date', 'Load Ref', 'Dispatcher', 'Carrier', 'DOT', 'Verdict', 'PDF'].map(h => (
+                      {['Date', 'Load Ref', 'Dispatcher', 'Carrier', 'DOT', 'Verdict', 'PDF', 'Monitor'].map(h => (
                         <th key={h} style={s.logTh}>{h}</th>
                       ))}
                     </tr>
@@ -1044,6 +1090,18 @@ export default function CarrierVetting({ settings }) {
                         <td style={s.logTd}>
                           {row.pdf_url
                             ? <a href={`/api/certificates/${row.id}/download`} target="_blank" rel="noreferrer" style={{ color: '#f97316', fontWeight: 600 }}>Download</a>
+                            : <span style={{ color: '#475569' }}>—</span>}
+                        </td>
+                        <td style={s.logTd}>
+                          {(row.tier === 'GREEN' || row.verdict === 'APPROVED WITH OVERRIDE') && row.dot_number
+                            ? monitoring.has(row.id)
+                              ? <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>● Monitoring</span>
+                              : <button
+                                  style={{ ...s.btn('blue', false), fontSize: 11 }}
+                                  onClick={() => startMonitoring(row)}
+                                >
+                                  ▶ Monitor
+                                </button>
                             : <span style={{ color: '#475569' }}>—</span>}
                         </td>
                       </tr>
