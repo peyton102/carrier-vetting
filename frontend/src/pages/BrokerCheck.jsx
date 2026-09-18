@@ -6,22 +6,22 @@ import { useState } from 'react';
 const BOND_REQUIRED = 75_000;
 
 const s = {
-  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
-  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
-  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
+  card:     { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 4px rgba(0,0,0,.05)' },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
+  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
+  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0f172a', background: '#ffffff' },
   btn:      (disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#243044' : '#f97316', color: disabled ? '#64748b' : '#fff',
-    opacity: disabled ? 0.6 : 1,
+    background: disabled ? '#e2e8f0' : '#f97316', color: disabled ? '#94a3b8' : '#fff',
+    opacity: disabled ? 0.7 : 1,
     boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
   grid2:   { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 24px' },
   grid3:   { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px 24px' },
-  metaKey: { fontSize: 11, color: '#475569', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 },
-  metaVal: { fontSize: 14, color: '#e2e8f0', fontWeight: 500 },
-  divider: { borderTop: '1px solid #1e2d45', margin: '16px 0' },
+  metaKey: { fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 },
+  metaVal: { fontSize: 14, color: '#0f172a', fontWeight: 500 },
+  divider: { borderTop: '1px solid #e2e8f0', margin: '16px 0' },
 };
 
 function MetaCell({ label, value, mono }) {
@@ -49,11 +49,11 @@ function CheckRow({ label, pass, detail }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0',
-      borderBottom: '1px solid #1e2d45',
+      borderBottom: '1px solid #e2e8f0',
     }}>
       <span style={{ fontSize: 16, lineHeight: 1, marginTop: 1 }}>{pass ? '✓' : '✗'}</span>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: pass ? '#4ade80' : '#f87171' }}>{label}</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: pass ? '#166534' : '#991b1b' }}>{label}</div>
         {detail && <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{detail}</div>}
       </div>
       <StatusBadge ok={pass} label={pass ? 'PASS' : 'FAIL'} />
@@ -100,9 +100,9 @@ export default function BrokerCheck() {
       {/* ── Lookup ── */}
       <div style={s.card}>
         <div style={s.cardHead}>Broker MC Lookup</div>
-        <p style={{ fontSize: 12, color: '#475569', margin: '0 0 16px' }}>
+        <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 16px' }}>
           Verify a broker's operating authority and BMC-84 surety bond status.
-          Data source: <strong style={{ color: '#64748b' }}>FMCSA public API only.</strong>
+          Data source: <strong style={{ color: '#374151' }}>FMCSA public API only.</strong>
         </p>
         <form onSubmit={handleLookup} style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
           <div style={{ flex: 1, maxWidth: 300 }}>
@@ -118,14 +118,14 @@ export default function BrokerCheck() {
             {loading ? 'Looking up…' : 'Check Broker'}
           </button>
         </form>
-        {err && <p style={{ fontSize: 13, color: '#f87171', marginTop: 10, marginBottom: 0 }}>{err}</p>}
+        {err && <p style={{ fontSize: 13, color: '#dc2626', marginTop: 10, marginBottom: 0 }}>{err}</p>}
       </div>
 
       {result && broker && (
         <>
           {/* ── Verdict Banner ── */}
           <div style={{
-            background: isPass ? '#0a1f0e' : '#1a0808',
+            background: isPass ? '#f0fdf4' : '#fef2f2',
             border: `2px solid ${isPass ? '#16a34a' : '#dc2626'}`,
             borderRadius: 10, padding: '20px 24px', marginBottom: 20,
           }}>
@@ -138,7 +138,7 @@ export default function BrokerCheck() {
                 {isPass ? '✓ PASS' : '✗ FAIL'}
               </span>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: isPass ? '#4ade80' : '#f87171' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: isPass ? '#166534' : '#991b1b' }}>
                   {broker.legalName}
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
@@ -219,27 +219,27 @@ export default function BrokerCheck() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                 <span style={{
                   fontSize: 28, fontWeight: 800,
-                  color: hasBond ? '#4ade80' : '#f87171',
+                  color: hasBond ? '#16a34a' : '#dc2626',
                 }}>
                   ${bond.amount.toLocaleString()}
                 </span>
                 <div>
                   <StatusBadge ok={hasBond} label={hasBond ? `Meets $${BOND_REQUIRED.toLocaleString()} requirement` : `Below $${BOND_REQUIRED.toLocaleString()} requirement`} />
-                  <div style={{ fontSize: 11, color: '#475569', marginTop: 6 }}>
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
                     Bond amount per FMCSA carrier record · Full bond details (insurer, policy, expiry)
-                    available on <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>FMCSA L&amp;I</a>
+                    available on <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>FMCSA L&amp;I</a>
                   </div>
                 </div>
               </div>
             ) : (
               <div>
-                <div style={{ fontSize: 13, color: '#f87171', fontWeight: 700, marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: '#dc2626', fontWeight: 700, marginBottom: 8 }}>
                   No BMC-84 surety bond found in FMCSA records
                 </div>
-                <div style={{ fontSize: 12, color: '#475569' }}>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
                   Brokers must maintain a $75,000 surety bond (BMC-84) or trust fund (BMC-85)
                   under 49 CFR Part 387. Verify directly on{' '}
-                  <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#60a5fa' }}>FMCSA L&amp;I</a>.
+                  <a href="https://li-public.fmcsa.dot.gov" target="_blank" rel="noreferrer" style={{ color: '#2563eb' }}>FMCSA L&amp;I</a>.
                 </div>
               </div>
             )}
