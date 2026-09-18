@@ -2,15 +2,15 @@ import { useState } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:       { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  h1:       { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' },
   sub:      { fontSize: 13, color: '#64748b', marginBottom: 24 },
-  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px' },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
+  card:     { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,.05)' },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
   btn:      { padding: '8px 18px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff', boxShadow: '0 2px 8px rgba(249,115,22,.25)' },
   btnSm:    { padding: '4px 12px', border: 'none', borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff' },
   table:    { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  th:       { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45' },
-  td:       { padding: '7px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8' },
+  th:       { textAlign: 'left', padding: '8px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0' },
+  td:       { padding: '7px 10px', borderBottom: '1px solid #f1f5f9', color: '#374151' },
 };
 
 function verdictColor(v) {
@@ -56,7 +56,7 @@ export default function Certificates() {
 
         {certs && (
           certs.length === 0
-            ? <p style={{ fontSize: 13, color: '#6b7280' }}>No certificates yet.</p>
+            ? <p style={{ fontSize: 13, color: '#64748b' }}>No certificates yet.</p>
             : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={s.table}>
