@@ -92,9 +92,16 @@ function FmcsaCredentialsCard() {
       <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 8 }}>
         Each account must use its own free FMCSA web key — shared keys may get rate-limited or revoked.
       </p>
-      <div style={{ background: 'rgba(249,115,22,.08)', border: '1px solid rgba(249,115,22,.3)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#fed7aa', marginBottom: 14 }}>
-        <strong>How to get your free key:</strong> Go to{' '}
-        <span style={{ color: '#fb923c', fontFamily: 'monospace' }}>mobile.fmcsa.dot.gov/qc/services/users/register</span>
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#1e40af', marginBottom: 14 }}>
+        <strong>How to get your free key:</strong> Click{' '}
+        <a
+          href="https://mobile.fmcsa.dot.gov/qc/services/users/register"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: '#1d4ed8', fontWeight: 700 }}
+        >
+          here to open the FMCSA registration page
+        </a>
         {' '}— fill in your name, email, and company. FMCSA emails your key within minutes. It never expires and has no cost.
       </div>
 
