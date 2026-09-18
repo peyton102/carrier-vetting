@@ -549,7 +549,7 @@ export default function CarrierVetting({ settings }) {
       <h1 style={s.h1}>{mode === 'carrier' ? 'Carrier Vetting' : 'Broker Check'}</h1>
 
       {/* ── Mode Toggle ── */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 20, border: '1px solid #1e2d45', borderRadius: 8, overflow: 'hidden', width: 'fit-content' }}>
+      <div style={{ display: 'flex', gap: 0, marginBottom: 20, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', width: 'fit-content' }}>
         {['carrier', 'broker'].map(m => (
           <button
             key={m}
@@ -557,7 +557,7 @@ export default function CarrierVetting({ settings }) {
             style={{
               padding: '9px 22px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
               fontFamily: 'inherit',
-              background: mode === m ? '#f97316' : '#0a1220',
+              background: mode === m ? '#f97316' : '#ffffff',
               color: mode === m ? '#fff' : '#64748b',
               transition: 'background .15s, color .15s',
             }}
