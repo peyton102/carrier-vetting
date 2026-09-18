@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const STATUS_LABEL = {
-  pending:       { text: 'Pending first check', color: '#64748b', bg: '#0a1220' },
-  ok:            { text: 'OK',                  color: '#4ade80', bg: '#0a1f0e' },
-  alert:         { text: 'ALERT',               color: '#f87171', bg: '#1a0808' },
-  cannot_verify: { text: 'CANNOT VERIFY',       color: '#fbbf24', bg: '#1a1200' },
-  delivered:     { text: 'Delivered',            color: '#475569', bg: '#0a1220' },
+  pending:       { text: 'Pending first check', color: '#64748b',  bg: '#f8fafc' },
+  ok:            { text: 'OK',                  color: '#16a34a',  bg: '#f0fdf4' },
+  alert:         { text: 'ALERT',               color: '#dc2626',  bg: '#fef2f2' },
+  cannot_verify: { text: 'CANNOT VERIFY',       color: '#d97706',  bg: '#fffbeb' },
+  delivered:     { text: 'Delivered',            color: '#64748b',  bg: '#f1f5f9' },
 };
 
 function StatusBadge({ status }) {
@@ -30,30 +30,30 @@ function fmtDate(iso) {
 
 const s = {
   page:  { maxWidth: 960, margin: '0 auto', padding: '24px 20px' },
-  h1:    { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  h1:    { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' },
   sub:   { fontSize: 13, color: '#64748b', marginBottom: 24 },
-  card:  { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  head:  { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
-  th:    { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', fontSize: 12 },
-  td:    { padding: '8px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8', fontSize: 12 },
+  card:  { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 4px rgba(0,0,0,.05)' },
+  head:  { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
+  th:    { textAlign: 'left', padding: '8px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0', fontSize: 12 },
+  td:    { padding: '8px 10px', borderBottom: '1px solid #f1f5f9', color: '#374151', fontSize: 12 },
   btn:   (color, disabled) => ({
     padding: '4px 12px', border: 'none', borderRadius: 6,
     fontWeight: 700, fontSize: 11, cursor: disabled ? 'not-allowed' : 'pointer',
     fontFamily: 'inherit',
-    background: disabled ? '#243044'
+    background: disabled ? '#e2e8f0'
       : color === 'red'    ? '#dc2626'
       : color === 'green'  ? '#16a34a'
       : color === 'orange' ? '#d97706'
-      : '#1e3a5f',
-    color: disabled ? '#64748b' : '#fff',
-    opacity: disabled ? 0.6 : 1,
+      : '#3b82f6',
+    color: disabled ? '#94a3b8' : '#fff',
+    opacity: disabled ? 0.7 : 1,
   }),
   alertCard: {
-    background: '#1a0808', border: '2px solid #dc2626', borderRadius: 10,
+    background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 10,
     padding: '16px 20px', marginBottom: 12,
   },
   cannotCard: {
-    background: '#1a1200', border: '2px solid #d97706', borderRadius: 10,
+    background: '#fffbeb', border: '2px solid #d97706', borderRadius: 10,
     padding: '16px 20px', marginBottom: 12,
   },
 };

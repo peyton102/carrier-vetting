@@ -83,54 +83,57 @@ const CA_GRADES = ['A', 'B', 'C', 'D', 'F'];
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   page: { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:   { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  h1:   { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' },
   sub:  { fontSize: 13, color: '#64748b', marginBottom: 24 },
 
-  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
+  card:     { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 4px rgba(0,0,0,.05)' },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
 
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 20px' },
   grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px' },
 
-  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
+  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
   input: {
-    width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
-    background: '#0a1220',
+    width: '100%', padding: '8px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6,
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0f172a',
+    background: '#ffffff',
   },
   inputFilled: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #16a34a', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
-    background: '#0a1f0e',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#14532d',
+    background: '#f0fdf4',
   },
   inputFilledSW: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #0284c7', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0',
-    background: '#0a1525',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0c4a6e',
+    background: '#eff6ff',
   },
   select: {
-    width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220',
+    width: '100%', padding: '8px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6,
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0f172a', background: '#ffffff',
   },
   selectFilled: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #16a34a', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1f0e',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#14532d', background: '#f0fdf4',
   },
   selectFilledSW: {
     width: '100%', padding: '8px 10px', border: '1.5px solid #0284c7', borderRadius: 6,
-    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1525',
+    fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0c4a6e', background: '#eff6ff',
   },
-  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#94a3b8', cursor: 'pointer' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' },
 
   btn: (color, disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#243044'
-      : color === 'gray' ? '#162032'
+    background: disabled ? '#e2e8f0'
+      : color === 'gray' ? '#f1f5f9'
       : '#f97316',
-    color: disabled ? '#64748b' : '#fff',
-    opacity: disabled ? 0.6 : 1,
+    color: disabled ? '#94a3b8'
+      : color === 'gray' ? '#475569'
+      : '#fff',
+    opacity: disabled ? 0.7 : 1,
     transition: 'opacity .15s',
+    border: color === 'gray' && !disabled ? '1px solid #e2e8f0' : 'none',
     boxShadow: disabled || color === 'gray' ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
   btnRow: { display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' },
@@ -138,26 +141,27 @@ const s = {
   lookupBtn: (disabled) => ({
     padding: '8px 11px', border: 'none', borderRadius: 6, fontWeight: 700, fontSize: 12,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-    flexShrink: 0, background: disabled ? '#243044' : '#f97316', color: disabled ? '#64748b' : '#fff',
-    opacity: disabled ? 0.6 : 1,
+    flexShrink: 0, background: disabled ? '#e2e8f0' : '#f97316',
+    color: disabled ? '#94a3b8' : '#fff',
+    opacity: disabled ? 0.7 : 1,
   }),
 
   fmcsaBanner: {
-    background: '#0a1f0e', border: '1.5px solid #16a34a', borderRadius: 8,
+    background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8,
     padding: '14px 18px', marginBottom: 12, fontSize: 12,
   },
   swBanner: {
-    background: '#0a1525', border: '1.5px solid #0284c7', borderRadius: 8,
+    background: '#eff6ff', border: '1.5px solid #93c5fd', borderRadius: 8,
     padding: '14px 18px', marginBottom: 20, fontSize: 12,
   },
   swWarnBanner: {
-    background: '#1a1200', border: '1.5px solid #d97706', borderRadius: 8,
+    background: '#fffbeb', border: '1.5px solid #fcd34d', borderRadius: 8,
     padding: '14px 18px', marginBottom: 20, fontSize: 12,
   },
 
   verdictCard: (tier) => ({
     borderRadius: 10, padding: '20px 24px', marginBottom: 20,
-    background: tier === 'GREEN' ? '#0a1f0e' : tier === 'YELLOW' ? '#1a1200' : '#1a0808',
+    background: tier === 'GREEN' ? '#f0fdf4' : tier === 'YELLOW' ? '#fffbeb' : '#fef2f2',
     border: `2px solid ${tier === 'GREEN' ? '#16a34a' : tier === 'YELLOW' ? '#d97706' : '#dc2626'}`,
   }),
   verdictBadge: (tier) => ({
@@ -167,22 +171,22 @@ const s = {
     color: '#fff', marginBottom: 14,
   }),
   reasonItem: (tier) => ({
-    fontSize: 13, color: tier === 'GREEN' ? '#4ade80' : tier === 'YELLOW' ? '#fbbf24' : '#f87171',
+    fontSize: 13, color: tier === 'GREEN' ? '#166534' : tier === 'YELLOW' ? '#92400e' : '#991b1b',
     marginBottom: 4, paddingLeft: 14, position: 'relative',
   }),
 
   overrideCard: {
-    background: '#1a1200', border: '2px solid #d97706', borderRadius: 10,
+    background: '#fffbeb', border: '2px solid #d97706', borderRadius: 10,
     padding: '20px 24px', marginBottom: 20,
   },
-  overrideHead: { fontSize: 13, fontWeight: 700, color: '#fbbf24', marginBottom: 6 },
-  overrideSub:  { fontSize: 12, color: '#d97706', marginBottom: 14, lineHeight: 1.5 },
+  overrideHead: { fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 6 },
+  overrideSub:  { fontSize: 12, color: '#b45309', marginBottom: 14, lineHeight: 1.5 },
 
   logTable: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  logTh:    { textAlign: 'left', padding: '8px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45' },
-  logTd:    { padding: '7px 10px', borderBottom: '1px solid #141e30', color: '#94a3b8' },
+  logTh:    { textAlign: 'left', padding: '8px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0' },
+  logTd:    { padding: '7px 10px', borderBottom: '1px solid #f1f5f9', color: '#475569' },
 
-  required: { color: '#f87171', marginLeft: 2 },
+  required: { color: '#dc2626', marginLeft: 2 },
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

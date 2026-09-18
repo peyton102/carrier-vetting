@@ -2,23 +2,24 @@ import { useState, useEffect, useCallback } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
-  h1:       { fontSize: 22, fontWeight: 800, color: '#f1f5f9', margin: '0 0 4px' },
+  h1:       { fontSize: 22, fontWeight: 800, color: '#0f172a', margin: '0 0 4px' },
   sub:      { fontSize: 13, color: '#64748b', marginBottom: 24, lineHeight: 1.6 },
-  card:     { background: '#0f1729', border: '1px solid #1e2d45', borderRadius: 10, padding: '20px 24px', marginBottom: 20 },
-  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#475569', textTransform: 'uppercase', borderBottom: '1px solid #1e2d45', paddingBottom: 10, marginBottom: 16 },
-  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 },
-  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
-  select:   { width: '100%', padding: '8px 10px', border: '1.5px solid #1e2d45', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#e2e8f0', background: '#0a1220' },
-  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#94a3b8', cursor: 'pointer', marginBottom: 10 },
+  card:     { background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 10, padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 4px rgba(0,0,0,.05)' },
+  cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
+  label:    { display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 },
+  input:    { width: '100%', padding: '8px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0f172a', background: '#ffffff' },
+  select:   { width: '100%', padding: '8px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', color: '#0f172a', background: '#ffffff' },
+  checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer', marginBottom: 10 },
   btnRow:   { display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' },
   btn:      (disabled) => ({
     padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-    background: disabled ? '#243044' : '#f97316', color: '#fff',
-    opacity: disabled ? 0.6 : 1,
+    background: disabled ? '#e2e8f0' : '#f97316',
+    color: disabled ? '#94a3b8' : '#fff',
+    opacity: disabled ? 0.7 : 1,
     boxShadow: disabled ? 'none' : '0 2px 8px rgba(249,115,22,.25)',
   }),
-  notice: { background: 'rgba(59,130,246,.08)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#93c5fd', marginBottom: 20 },
+  notice: { background: 'rgba(59,130,246,.06)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#1d4ed8', marginBottom: 20 },
 };
 
 // All 8 FMCSA CSA BASICs with configurable threshold + action
@@ -128,7 +129,7 @@ function FmcsaCredentialsCard() {
               type="button"
               onClick={handleVerify}
               disabled={verifying}
-              style={{ ...s.btn(verifying), background: verifying ? '#243044' : '#162032', boxShadow: 'none' }}
+              style={{ ...s.btn(verifying), background: verifying ? '#e2e8f0' : '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0', boxShadow: 'none' }}
             >
               {verifying ? 'Verifying…' : 'Verify Key'}
             </button>
@@ -221,16 +222,16 @@ export default function Settings({ settings, onSave }) {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '40%' }}>BASIC</th>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '30%' }}>Alert threshold (%)</th>
-                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#0a1220', fontWeight: 700, color: '#475569', borderBottom: '1px solid #1e2d45', width: '30%' }}>Action when exceeded</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0', width: '40%' }}>BASIC</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0', width: '30%' }}>Alert threshold (%)</th>
+                  <th style={{ textAlign: 'left', padding: '6px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0', width: '30%' }}>Action when exceeded</th>
                 </tr>
               </thead>
               <tbody>
                 {BASICS.map(({ key, label }) => (
                   <tr key={key}>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30', fontWeight: 600, color: '#94a3b8' }}>{label}</td>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30' }}>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9', fontWeight: 600, color: '#374151' }}>{label}</td>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
                           type="number"
@@ -242,7 +243,7 @@ export default function Settings({ settings, onSave }) {
                         <span style={{ color: '#6b7280', fontSize: 12 }}>%</span>
                       </div>
                     </td>
-                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #141e30' }}>
+                    <td style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9' }}>
                       <select
                         value={form[`${key}Action`] ?? 'hold'}
                         onChange={e => set(`${key}Action`, e.target.value)}
