@@ -186,4 +186,68 @@ router.get('/logs/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// ── POST /api/vetting/mark-used ───────────────────────────────────────────────
+// Records a carrier as booked. Auto-adds to watched_carriers for ongoing
+// inspection monitoring. Called after PDF is generated and saved.
+router.post('/mark-used', async (req, res) => {
+  const { carrierName, dotNumber, mcNumber, loadRef, dispatcher, verdict, tier, vettingRecordId } = req.body;
+  const orgId = req.auth.tenant;
+  try {
+    const supabase = getSupabase();
+
+    const { data, error } = await supabase
+      .from('used_carriers')
+      .insert({
+        tenant_id:         orgId,
+        carrier_name:      carrierName     || null,
+        dot_number:        dotNumber       || null,
+        mc_number:         mcNumber        || null,
+        load_ref:          loadRef         || null,
+        dispatcher:        dispatcher      || null,
+        verdict:           verdict         || null,
+        tier:              tier            || null,
+        vetting_record_id: vettingRecordId || null,
+      })
+      .select('id, used_at')
+      .single();
+    if (error) throw new Error(error.message);
+
+    // Auto-add to watched_carriers for ongoing inspection monitoring (non-fatal)
+    if (dotNumber) {
+      try {
+        await supabase
+          .from('watched_carriers')
+          .upsert({
+            tenant_id:    orgId,
+            dot_number:   String(dotNumber),
+            carrier_name: carrierName || null,
+            mc_number:    mcNumber    || null,
+            added_by:     dispatcher  || 'system',
+            is_active:    true,
+          }, { onConflict: 'tenant_id,dot_number' });
+      } catch (watchErr) {
+        console.warn('[WATCH] Could not auto-watch carrier DOT', dotNumber, watchErr.message);
+      }
+    }
+
+    res.json({ ok: true, id: data.id, used_at: data.used_at });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── GET /api/vetting/used-carriers ────────────────────────────────────────────
+router.get('/used-carriers', async (req, res, next) => {
+  try {
+    const { data, error } = await getSupabase()
+      .from('used_carriers')
+      .select('*')
+      .eq('tenant_id', req.auth.tenant)
+      .order('used_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { next(e); }
+});
+
 export default router;

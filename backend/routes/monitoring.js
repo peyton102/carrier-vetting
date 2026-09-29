@@ -1,7 +1,7 @@
 // ── Carrier Monitoring Routes ─────────────────────────────────────────────────
 import { Router }       from 'express';
 import { createClient } from '@supabase/supabase-js';
-import { runMonitoringCheck } from '../lib/monitor.js';
+import { runMonitoringCheck, runWatchedCarriersCheck } from '../lib/monitor.js';
 
 const router = Router();
 const sb = () => createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -94,6 +94,115 @@ router.post('/alerts/:id/ack', async (req, res, next) => {
 router.post('/check-now', async (req, res, next) => {
   try {
     await runMonitoringCheck(sb(), req.auth.tenant);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── Watched Carriers ──────────────────────────────────────────────────────────
+
+// GET /api/monitoring/watched — list all watched carriers for this tenant
+router.get('/watched', async (req, res, next) => {
+  try {
+    const { data, error } = await sb()
+      .from('watched_carriers')
+      .select('*')
+      .eq('tenant_id', req.auth.tenant)
+      .order('added_at', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { next(e); }
+});
+
+// POST /api/monitoring/watched — add a carrier to the watch list
+router.post('/watched', async (req, res, next) => {
+  try {
+    const { dotNumber, carrierName, mcNumber, addedBy } = req.body;
+    if (!dotNumber) return res.status(400).json({ error: 'dotNumber is required' });
+    const { data, error } = await sb()
+      .from('watched_carriers')
+      .upsert({
+        tenant_id:    req.auth.tenant,
+        dot_number:   String(dotNumber),
+        carrier_name: carrierName || null,
+        mc_number:    mcNumber    || null,
+        added_by:     addedBy     || 'manual',
+        is_active:    true,
+      }, { onConflict: 'tenant_id,dot_number' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, id: data.id });
+  } catch (e) { next(e); }
+});
+
+// DELETE /api/monitoring/watched/:dot — deactivate a watched carrier
+router.delete('/watched/:dot', async (req, res, next) => {
+  try {
+    const { error } = await sb()
+      .from('watched_carriers')
+      .update({ is_active: false })
+      .eq('tenant_id', req.auth.tenant)
+      .eq('dot_number', req.params.dot);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// POST /api/monitoring/check-carriers — manual trigger for watched-carrier inspection check
+router.post('/check-carriers', async (req, res, next) => {
+  try {
+    await runWatchedCarriersCheck(sb(), req.auth.tenant);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// ── Carrier Blocks ────────────────────────────────────────────────────────────
+
+// GET /api/monitoring/blocks — list all active carrier blocks for this tenant
+router.get('/blocks', async (req, res, next) => {
+  try {
+    const { data, error } = await sb()
+      .from('carrier_blocks')
+      .select('*')
+      .eq('tenant_id', req.auth.tenant)
+      .eq('is_active', true)
+      .order('blocked_at', { ascending: false });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { next(e); }
+});
+
+// GET /api/monitoring/blocks/:dot — active block for a specific DOT (this tenant)
+router.get('/blocks/:dot', async (req, res, next) => {
+  try {
+    const { data, error } = await sb()
+      .from('carrier_blocks')
+      .select('*')
+      .eq('tenant_id', req.auth.tenant)
+      .eq('dot_number', req.params.dot)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || null);
+  } catch (e) { next(e); }
+});
+
+// POST /api/monitoring/blocks/:dot/lift — manually lift a carrier block
+router.post('/blocks/:dot/lift', async (req, res, next) => {
+  try {
+    const { liftedBy, liftedReason } = req.body;
+    const { error } = await sb()
+      .from('carrier_blocks')
+      .update({
+        is_active:     false,
+        lifted_at:     new Date().toISOString(),
+        lifted_by:     liftedBy     || req.auth.tenant,
+        lifted_reason: liftedReason || null,
+      })
+      .eq('tenant_id', req.auth.tenant)
+      .eq('dot_number', req.params.dot)
+      .eq('is_active', true);
+    if (error) throw error;
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

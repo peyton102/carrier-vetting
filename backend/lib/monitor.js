@@ -289,12 +289,289 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
   }
 }
 
+// ── Watched-carrier inspection polling ───────────────────────────────────────
+// Polls FMCSA inspection records for every active watched carrier.
+// Detects net-new inspections with OOS violations, auto-blocks the carrier,
+// and emails the tenant when thresholds are crossed.
+
+async function fetchFMCSAInspections(dot, webKey) {
+  const url = `${FMCSA_BASE}/carriers/${dot}/inspections?webKey=${webKey}&type=json`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`FMCSA inspections HTTP ${res.status} for DOT ${dot}`);
+  const json  = await res.json();
+  const items = json?.content;
+  if (Array.isArray(items)) return items;
+  if (Array.isArray(items?.inspection)) return items.inspection;
+  return [];
+}
+
+async function fetchFMCSAOosRates(dot, webKey) {
+  const res = await fetch(fmcsaUrl(`/carriers/${dot}`, webKey), {
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`FMCSA HTTP ${res.status}`);
+  const json = await res.json();
+  const c    = json?.content?.carrier || json?.content;
+  if (!c) throw new Error('FMCSA returned no carrier record');
+  return {
+    truckOosPct:  c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate) : NaN,
+    driverOosPct: c.driverOosRate  != null ? parseFloat(c.driverOosRate)  : NaN,
+    inspCount:    c.vehicleInsp    != null ? parseInt(c.vehicleInsp, 10)  : 0,
+  };
+}
+
+async function sendBlockAlertEmail(carrier, newOosInspections, issues, tenantEmail) {
+  if (!process.env.SMTP_HOST || !tenantEmail) {
+    console.warn('[MONITOR:WATCH] SMTP not configured or no tenant email — block alert not emailed');
+    return;
+  }
+
+  const transport = nodemailer.createTransport({
+    host:   process.env.SMTP_HOST,
+    port:   parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth:   { user: process.env.SMTP_USERNAME, pass: process.env.SMTP_PASSWORD },
+  });
+
+  const now          = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const carrierLabel = `${carrier.carrier_name || 'Unknown'} — DOT ${carrier.dot_number}`;
+  const subject      = `CARRIER AUTO-BLOCKED — ${carrierLabel} — New OOS Inspection`;
+
+  const inspRows = newOosInspections.map(i => `
+    <tr>
+      <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.inspDate || '—'}</td>
+      <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.reportState || '—'}</td>
+      <td style="padding:4px 8px;border:1px solid #e5e7eb">Level ${i.level || '—'}</td>
+      <td style="padding:4px 8px;border:1px solid #e5e7eb">
+        ${i.vehicleOosViolations ?? 0} vehicle / ${i.driverOosViolations ?? 0} driver OOS
+      </td>
+      <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.reportNumber || '—'}</td>
+    </tr>`).join('');
+
+  const issueList = issues.map(i => `<li style="margin-bottom:4px">${i}</li>`).join('');
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:640px">
+      <div style="background:#dc2626;color:#fff;padding:12px 18px;border-radius:8px 8px 0 0;
+                  font-weight:700;font-size:16px">
+        CARRIER AUTO-BLOCKED — New OOS Roadside Inspection
+      </div>
+      <div style="border:1px solid #e5e7eb;border-top:none;padding:18px;border-radius:0 0 8px 8px">
+        <p><strong>Carrier:</strong> ${carrierLabel}</p>
+        ${carrier.mc_number ? `<p><strong>MC:</strong> ${carrier.mc_number}</p>` : ''}
+        <p><strong>Blocked at:</strong> ${now} ET</p>
+        <p><strong>Reason:</strong></p>
+        <ul style="margin:0 0 16px 0">${issueList}</ul>
+        <p><strong>New OOS Inspections (${newOosInspections.length}):</strong></p>
+        <table style="border-collapse:collapse;width:100%;font-size:12px">
+          <thead>
+            <tr style="background:#f3f4f6">
+              <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left">Date</th>
+              <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left">State</th>
+              <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left">Level</th>
+              <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left">OOS Violations</th>
+              <th style="padding:4px 8px;border:1px solid #e5e7eb;text-align:left">Report #</th>
+            </tr>
+          </thead>
+          <tbody>${inspRows}</tbody>
+        </table>
+        <p style="margin-top:16px;color:#dc2626;font-weight:700">
+          This carrier has been automatically hard-blocked in the vetting system.
+          Do not book until the block is reviewed and manually lifted in the Settings.
+        </p>
+      </div>
+    </div>`;
+
+  const from = process.env.FROM_EMAIL
+    ? `"${process.env.FROM_NAME || 'Carrier Vetting'}" <${process.env.FROM_EMAIL}>`
+    : process.env.SMTP_USERNAME;
+
+  await transport.sendMail({ from, to: tenantEmail, subject, html });
+  transport.close();
+}
+
+async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey) {
+  console.log(`[MONITOR:WATCH] Checking DOT ${carrier.dot_number} (${carrier.carrier_name || '?'}) [${carrier.tenant_id}]`);
+
+  let inspections;
+  try {
+    inspections = await fetchFMCSAInspections(carrier.dot_number, webKey);
+  } catch (err) {
+    console.warn(`[MONITOR:WATCH] DOT ${carrier.dot_number} inspections fetch failed: ${err.message}`);
+    await supabase.from('watched_carriers')
+      .update({ last_checked_at: new Date().toISOString() })
+      .eq('id', carrier.id);
+    return;
+  }
+
+  const reportNum      = i => String(i.reportNumber || i.reportNum || i.rptNumber || '');
+  const allNums        = inspections.map(reportNum).filter(Boolean);
+  const known          = new Set(carrier.last_report_numbers || []);
+  const newInspections = inspections.filter(i => !known.has(reportNum(i)) && reportNum(i) !== '');
+
+  const baseUpdate = {
+    last_checked_at:       new Date().toISOString(),
+    last_report_numbers:   allNums,
+    last_inspection_count: inspections.length,
+  };
+
+  if (newInspections.length === 0) {
+    await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
+    console.log(`[MONITOR:WATCH] DOT ${carrier.dot_number} — no new inspections`);
+    return;
+  }
+
+  console.log(`[MONITOR:WATCH] DOT ${carrier.dot_number} — ${newInspections.length} new inspection(s)`);
+
+  const vOos = i => i.vehicleOosViolations ?? i.oosVehicle ?? i.vehicleOos ?? 0;
+  const dOos = i => i.driverOosViolations  ?? i.oosDrives  ?? i.driverOos  ?? 0;
+  const newOosInspections = newInspections.filter(i => vOos(i) > 0 || dOos(i) > 0);
+
+  if (newOosInspections.length === 0) {
+    await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
+    console.log(`[MONITOR:WATCH] DOT ${carrier.dot_number} — ${newInspections.length} new clean inspection(s) — no action`);
+    return;
+  }
+
+  // New OOS inspections — re-fetch aggregate rates (FMCSA computes these with time-weighting)
+  let stats = { truckOosPct: NaN, driverOosPct: NaN, inspCount: inspections.length };
+  try {
+    stats = await fetchFMCSAOosRates(carrier.dot_number, webKey);
+  } catch (err) {
+    console.warn(`[MONITOR:WATCH] DOT ${carrier.dot_number} OOS rate fetch failed: ${err.message}`);
+  }
+
+  baseUpdate.last_truck_oos_pct     = isNaN(stats.truckOosPct)  ? null : stats.truckOosPct;
+  baseUpdate.last_driver_oos_pct    = isNaN(stats.driverOosPct) ? null : stats.driverOosPct;
+  baseUpdate.last_inspection_count  = stats.inspCount || inspections.length;
+
+  const hardBlockTruck  = parseFloat(settings.oosHardBlockTruck)  || 35;
+  const hardBlockDriver = parseFloat(settings.oosHardBlockDriver) || 7;
+
+  const issues = [];
+  if (!isNaN(stats.truckOosPct) && stats.truckOosPct > hardBlockTruck) {
+    issues.push(
+      `Vehicle OOS rate ${stats.truckOosPct.toFixed(1)}% now exceeds the ` +
+      `${hardBlockTruck}% hard-block threshold`
+    );
+  }
+  if (!isNaN(stats.driverOosPct) && stats.driverOosPct > hardBlockDriver) {
+    issues.push(
+      `Driver OOS rate ${stats.driverOosPct.toFixed(1)}% now exceeds the ` +
+      `${hardBlockDriver}% hard-block threshold`
+    );
+  }
+  for (const i of newOosInspections) {
+    issues.push(
+      `New OOS inspection: ${i.inspDate || '?'}, ${i.reportState || '?'}, ` +
+      `Level ${i.level || '?'} — ${vOos(i)} vehicle OOS, ${dOos(i)} driver OOS ` +
+      `(Report #${reportNum(i) || '?'})`
+    );
+  }
+
+  let thresholdType  = 'new_oos_inspection';
+  let thresholdValue = null;
+  let actualValue    = null;
+  if (!isNaN(stats.truckOosPct) && stats.truckOosPct > hardBlockTruck) {
+    thresholdType  = 'truck_oos';
+    thresholdValue = hardBlockTruck;
+    actualValue    = stats.truckOosPct;
+  } else if (!isNaN(stats.driverOosPct) && stats.driverOosPct > hardBlockDriver) {
+    thresholdType  = 'driver_oos';
+    thresholdValue = hardBlockDriver;
+    actualValue    = stats.driverOosPct;
+  }
+
+  const { error: blockErr } = await supabase.from('carrier_blocks').insert({
+    tenant_id:         carrier.tenant_id,
+    dot_number:        carrier.dot_number,
+    carrier_name:      carrier.carrier_name,
+    mc_number:         carrier.mc_number,
+    blocked_by:        'system',
+    block_reason:      issues.join('; '),
+    threshold_type:    thresholdType,
+    threshold_value:   thresholdValue,
+    actual_value:      actualValue,
+    violation_details: { newInspections, newOosInspections, stats },
+  });
+  if (blockErr) console.error('[MONITOR:WATCH] Block insert failed:', blockErr.message);
+
+  await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
+
+  try {
+    await sendBlockAlertEmail(carrier, newOosInspections, issues, tenantEmail);
+    console.log(`[MONITOR:WATCH] Block alert emailed — DOT ${carrier.dot_number} [${carrier.tenant_id}]`);
+  } catch (emailErr) {
+    console.error('[MONITOR:WATCH] Email send failed:', emailErr.message);
+  }
+
+  console.log(`[MONITOR:WATCH] BLOCKED [${carrier.tenant_id}] — DOT ${carrier.dot_number}: ${issues[0]}`);
+}
+
+/**
+ * Check all active watched carriers (or only carriers for a specific tenant).
+ * Per-tenant FMCSA key fetched from tenant_credentials.
+ */
+export async function runWatchedCarriersCheck(supabase, tenantId = null) {
+  let query = supabase.from('watched_carriers').select('*').eq('is_active', true);
+  if (tenantId) query = query.eq('tenant_id', tenantId);
+  const { data: carriers, error } = await query;
+
+  if (error) { console.error('[MONITOR:WATCH] DB error:', error.message); return; }
+  if (!carriers?.length) { console.log('[MONITOR:WATCH] No watched carriers.'); return; }
+
+  console.log(`[MONITOR:WATCH] Checking ${carriers.length} watched carrier(s)…`);
+
+  const byTenant = {};
+  for (const c of carriers) {
+    (byTenant[c.tenant_id] ??= []).push(c);
+  }
+
+  for (const [tid, tenantCarriers] of Object.entries(byTenant)) {
+    let settings, tenantEmail, webKey;
+    try {
+      [settings] = await Promise.all([fetchSettings(tid)]);
+
+      const [tenantRow, credRow] = await Promise.all([
+        supabase.from('tenants').select('email').eq('slug', tid).single(),
+        supabase.from('tenant_credentials').select('fmcsa_webkey').eq('tenant_slug', tid).single(),
+      ]);
+
+      tenantEmail = tenantRow.data?.email ?? null;
+      webKey      = credRow.data?.fmcsa_webkey ? decrypt(credRow.data.fmcsa_webkey) : null;
+    } catch (e) {
+      console.warn(`[MONITOR:WATCH] Could not fetch data for tenant ${tid}: ${e.message}`);
+      continue;
+    }
+
+    if (!webKey) {
+      console.warn(`[MONITOR:WATCH] Tenant ${tid} has no FMCSA web key — skipping ${tenantCarriers.length} carrier(s)`);
+      continue;
+    }
+
+    for (const carrier of tenantCarriers) {
+      try {
+        await checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey);
+      } catch (err) {
+        console.error(`[MONITOR:WATCH] Unhandled error for DOT ${carrier.dot_number}: ${err.message}`);
+      }
+    }
+  }
+}
+
 export function startMonitoringJob(supabase) {
   const intervalHours = parseFloat(process.env.MONITOR_INTERVAL_HOURS || '4');
   const intervalMs    = intervalHours * 60 * 60 * 1000;
 
   console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h (per-tenant FMCSA keys)`);
   // First run 60s after startup to let connections settle
-  setTimeout(() => runMonitoringCheck(supabase), 60_000);
-  setInterval(() => runMonitoringCheck(supabase), intervalMs);
+  setTimeout(() => {
+    runMonitoringCheck(supabase);
+    runWatchedCarriersCheck(supabase);
+  }, 60_000);
+  setInterval(() => {
+    runMonitoringCheck(supabase);
+    runWatchedCarriersCheck(supabase);
+  }, intervalMs);
 }
