@@ -6,6 +6,8 @@ import Settings       from './pages/Settings.jsx';
 import Admin          from './pages/Admin.jsx';
 import Activate       from './pages/Activate.jsx';
 import Monitoring     from './pages/Monitoring.jsx';
+import UsedCarriers   from './pages/UsedCarriers.jsx';
+import AlertBanner    from './components/AlertBanner.jsx';
 
 function LoginScreen({ onLogin }) {
   const [email,    setEmail]    = useState('');
@@ -124,13 +126,15 @@ export default function App() {
 
   return (
     <div className="app">
+      <AlertBanner />
       <nav>
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
           {navLink('/vetting',      'Vetting')}
           {navLink('/monitoring',   'Monitoring')}
-          {navLink('/certificates', 'Certificates')}
-          {navLink('/settings',     'Settings')}
+          {navLink('/certificates',   'Certificates')}
+          {navLink('/used-carriers', 'Used Carriers')}
+          {navLink('/settings',      'Settings')}
           {user.isAdmin && navLink('/admin', 'Admin')}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -153,6 +157,7 @@ export default function App() {
           <Route path="/vetting"      element={<CarrierVetting settings={settings} />} />
           <Route path="/monitoring"   element={<Monitoring />} />
           <Route path="/certificates" element={<Certificates />} />
+          <Route path="/used-carriers" element={<UsedCarriers />} />
           <Route path="/settings"     element={<Settings settings={settings} onSave={setSettings} />} />
           <Route path="/admin"        element={user.isAdmin ? <Admin /> : <Navigate to="/vetting" replace />} />
         </Routes>

@@ -65,15 +65,27 @@ export default function Monitoring() {
   const [checking, setChecking] = useState(false);
   const [err,      setErr]      = useState('');
 
+  const [watched,      setWatched]      = useState([]);
+  const [blocks,       setBlocks]       = useState([]);
+  const [addDot,       setAddDot]       = useState('');
+  const [addName,      setAddName]      = useState('');
+  const [adding,       setAdding]       = useState(false);
+  const [liftingDot,   setLiftingDot]   = useState(null);
+  const [checkingCars, setCheckingCars] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [loadsRes, alertsRes] = await Promise.all([
+      const [loadsRes, alertsRes, watchedRes, blocksRes] = await Promise.all([
         fetch('/api/monitoring/active'),
         fetch('/api/monitoring/alerts'),
+        fetch('/api/monitoring/watched'),
+        fetch('/api/monitoring/blocks'),
       ]);
       if (!loadsRes.ok || !alertsRes.ok) throw new Error('Failed to load monitoring data');
       setLoads(await loadsRes.json());
       setAlerts(await alertsRes.json());
+      if (watchedRes.ok) setWatched(await watchedRes.json());
+      if (blocksRes.ok)  setBlocks(await blocksRes.json());
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -108,6 +120,53 @@ export default function Monitoring() {
       await load();
     } catch (e) { alert(e.message); }
     finally { setChecking(false); }
+  }
+
+  async function addWatched(e) {
+    e.preventDefault();
+    const dot = addDot.replace(/\D/g, '');
+    if (!dot) return;
+    setAdding(true);
+    try {
+      const res = await fetch('/api/monitoring/watched', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dotNumber: dot, carrierName: addName.trim() || undefined }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setAddDot(''); setAddName('');
+      await load();
+    } catch (e) { alert(e.message); }
+    finally { setAdding(false); }
+  }
+
+  async function removeWatched(dot) {
+    try {
+      const res = await fetch(`/api/monitoring/watched/${dot}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setWatched(w => w.filter(x => x.dot_number !== dot));
+    } catch (e) { alert(e.message); }
+  }
+
+  async function liftBlock(dot) {
+    if (!confirm('Lift the block on this carrier? They will be available for booking again.')) return;
+    setLiftingDot(dot);
+    try {
+      const res = await fetch(`/api/monitoring/blocks/${dot}/lift`, { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      setBlocks(b => b.filter(x => x.dot_number !== dot));
+    } catch (e) { alert(e.message); }
+    finally { setLiftingDot(null); }
+  }
+
+  async function checkCarriers() {
+    setCheckingCars(true);
+    try {
+      const res = await fetch('/api/monitoring/check-carriers', { method: 'POST' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      await load();
+    } catch (e) { alert(e.message); }
+    finally { setCheckingCars(false); }
   }
 
   if (loading) return <div style={s.page}><p style={{ color: '#64748b' }}>Loading…</p></div>;
@@ -182,7 +241,7 @@ export default function Monitoring() {
               <tbody>
                 {loads.map(row => (
                   <tr key={row.id}>
-                    <td style={s.td}><strong style={{ color: '#e2e8f0' }}>{row.load_ref}</strong></td>
+                    <td style={s.td}><strong style={{ color: '#0f172a' }}>{row.load_ref}</strong></td>
                     <td style={s.td}>{row.carrier_name || '—'}</td>
                     <td style={s.td}>{row.dot_number}</td>
                     <td style={s.td}>
@@ -207,6 +266,102 @@ export default function Monitoring() {
           </div>
         )}
       </div>
+
+      {/* ── Watched Carriers ── */}
+      <div style={s.card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={s.head}>Watched Carriers</div>
+          <button style={s.btn('orange', checkingCars)} disabled={checkingCars} onClick={checkCarriers}>
+            {checkingCars ? 'Checking…' : 'Check All Now'}
+          </button>
+        </div>
+
+        <form onSubmit={addWatched} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input
+            value={addDot} onChange={e => setAddDot(e.target.value)}
+            placeholder="DOT number" style={{ padding: '6px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', width: 130 }}
+          />
+          <input
+            value={addName} onChange={e => setAddName(e.target.value)}
+            placeholder="Carrier name (optional)" style={{ padding: '6px 10px', border: '1.5px solid #cbd5e1', borderRadius: 6, fontSize: 12, fontFamily: 'inherit', flex: 1, minWidth: 160 }}
+          />
+          <button type="submit" disabled={adding || !addDot.replace(/\D/g, '')} style={s.btn('blue', adding || !addDot.replace(/\D/g, ''))}>
+            {adding ? 'Adding…' : '+ Watch'}
+          </button>
+        </form>
+
+        {watched.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#64748b' }}>No carriers being watched. Add a DOT number above to start watching.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['DOT', 'Carrier', 'MC', 'Added', ''].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {watched.map(row => (
+                  <tr key={row.id}>
+                    <td style={s.td}><strong style={{ color: '#0f172a' }}>{row.dot_number}</strong></td>
+                    <td style={s.td}>{row.carrier_name || '—'}</td>
+                    <td style={s.td}>{row.mc_number || '—'}</td>
+                    <td style={s.td}>{fmtDate(row.added_at)}</td>
+                    <td style={s.td}>
+                      <button style={s.btn('red', false)} onClick={() => removeWatched(row.dot_number)}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Carrier Blocks ── */}
+      {blocks.length > 0 && (
+        <div style={s.card}>
+          <div style={s.head}>Carrier Blocks</div>
+          <p style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+            These carriers were automatically blocked due to a safety violation detected during monitoring.
+            Lift the block to allow booking again.
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['DOT', 'Carrier', 'Reason', 'Blocked', ''].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {blocks.map(row => (
+                  <tr key={row.id}>
+                    <td style={s.td}><strong style={{ color: '#dc2626' }}>{row.dot_number}</strong></td>
+                    <td style={s.td}>{row.carrier_name || '—'}</td>
+                    <td style={{ ...s.td, maxWidth: 280, color: '#374151' }}>{row.block_reason || '—'}</td>
+                    <td style={s.td}>{fmtDate(row.blocked_at)}</td>
+                    <td style={s.td}>
+                      <button
+                        style={s.btn('green', liftingDot === row.dot_number)}
+                        disabled={liftingDot === row.dot_number}
+                        onClick={() => liftBlock(row.dot_number)}
+                      >
+                        {liftingDot === row.dot_number ? 'Lifting…' : 'Lift Block'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

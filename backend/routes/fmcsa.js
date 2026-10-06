@@ -8,8 +8,23 @@ import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../lib/encryption.js';
 
-const router = express.Router();
-const BASE   = 'https://mobile.fmcsa.dot.gov/qc/services';
+const router           = express.Router();
+const BASE             = 'https://mobile.fmcsa.dot.gov/qc/services';
+const FMCSA_TIMEOUT_MS = 15_000;
+
+function isNetworkError(e) {
+  return (
+    e?.name === 'TimeoutError' ||
+    e?.name === 'AbortError'   ||
+    e?.code === 'ECONNREFUSED' ||
+    e?.code === 'ENOTFOUND'    ||
+    e?.code === 'ECONNRESET'
+  );
+}
+
+async function fetchFmcsa(url) {
+  return fetch(url, { signal: AbortSignal.timeout(FMCSA_TIMEOUT_MS) });
+}
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -138,7 +153,7 @@ function buildPayload(c, dot, docketJson, authorityGrantDate) {
 
 async function fetchGrantDate(dot, webKey) {
   try {
-    const r = await fetch(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
+    const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
     return r.ok ? extractGrantDate(await r.json()) : '';
   } catch (_) { return ''; }
 }
@@ -153,8 +168,8 @@ router.get('/dot/:dot', async (req, res, next) => {
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
 
     const [carrierRes, docketRes] = await Promise.all([
-      fetch(fmcsaUrl(`/carriers/${dot}`, webKey)),
-      fetch(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)),
+      fetchFmcsa(fmcsaUrl(`/carriers/${dot}`, webKey)),
+      fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)),
     ]);
 
     if (carrierRes.status === 404) return res.status(404).json({ error: `DOT ${dot} not found in FMCSA database` });
@@ -167,7 +182,12 @@ router.get('/dot/:dot', async (req, res, next) => {
     const authorityGrantDate = await fetchGrantDate(dot, webKey);
 
     res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (isNetworkError(e)) {
+      return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
+    }
+    next(e);
+  }
 });
 
 // ── MC number lookup ──────────────────────────────────────────────────────────
@@ -179,7 +199,7 @@ router.get('/mc/:mc', async (req, res, next) => {
     const mc = req.params.mc.replace(/^(MC|FF)/i, '').replace(/\D/g, '');
     if (!mc) return res.status(400).json({ error: 'Invalid MC number' });
 
-    const docketRes = await fetch(fmcsaUrl(`/carriers/docket-number/${mc}`, webKey));
+    const docketRes = await fetchFmcsa(fmcsaUrl(`/carriers/docket-number/${mc}`, webKey));
     if (docketRes.status === 404) return res.status(404).json({ error: `MC ${mc} not found in FMCSA database` });
     if (!docketRes.ok) throw new Error(`FMCSA API HTTP ${docketRes.status} for MC ${mc}`);
 
@@ -188,12 +208,17 @@ router.get('/mc/:mc', async (req, res, next) => {
 
     const dot = String(c.dotNumber);
     const [docketsRes, authorityGrantDate] = await Promise.all([
-      fetch(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)).then(r => r.ok ? r.json() : null),
+      fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)).then(r => r.ok ? r.json() : null),
       fetchGrantDate(dot, webKey),
     ]);
 
     res.json(buildPayload(c, dot, docketsRes, authorityGrantDate));
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (isNetworkError(e)) {
+      return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
+    }
+    next(e);
+  }
 });
 
 // ── Legacy: keep /:dot working so existing bookmarks don't break ──────────────
@@ -206,8 +231,8 @@ router.get('/:dot', async (req, res, next) => {
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
 
     const [carrierRes, docketRes] = await Promise.all([
-      fetch(fmcsaUrl(`/carriers/${dot}`, webKey)),
-      fetch(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)),
+      fetchFmcsa(fmcsaUrl(`/carriers/${dot}`, webKey)),
+      fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)),
     ]);
 
     if (carrierRes.status === 404) return res.status(404).json({ error: `DOT ${dot} not found in FMCSA database` });
@@ -220,7 +245,12 @@ router.get('/:dot', async (req, res, next) => {
     const authorityGrantDate = await fetchGrantDate(dot, webKey);
 
     res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (isNetworkError(e)) {
+      return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
+    }
+    next(e);
+  }
 });
 
 export default router;

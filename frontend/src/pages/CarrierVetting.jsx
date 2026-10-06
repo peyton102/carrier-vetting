@@ -123,7 +123,7 @@ const s = {
   checkRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#374151', cursor: 'pointer' },
 
   btn: (color, disabled) => ({
-    padding: '10px 22px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 14,
+    padding: '10px 22px', borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
     background: disabled ? '#e2e8f0'
       : color === 'gray' ? '#f1f5f9'
@@ -283,6 +283,13 @@ export default function CarrierVetting({ settings }) {
   const [lookupErr,    setLookupErr]    = useState('');
   const [swErr,        setSwErr]        = useState('');
 
+  const [blockInfo,          setBlockInfo]          = useState(null);
+  const [fmcsaCannotVerify,  setFmcsaCannotVerify]  = useState(false);
+  const [fmcsaLastAttemptAt, setFmcsaLastAttemptAt] = useState(null);
+  const [marking,            setMarking]            = useState(false);
+  const [marked,             setMarked]             = useState(false);
+  const [finalVerdict,       setFinalVerdict]       = useState(null);
+
   // Input border style by source: blue=SaferWatch, green=FMCSA, plain=manual
   const fi = (name) => {
     const src = fieldSources[name];
@@ -366,16 +373,32 @@ export default function CarrierVetting({ settings }) {
     if (!dot) return setLookupErr('Enter a DOT number first.');
     setLookupErr('');
     setSwErr('');
+    setFmcsaCannotVerify(false);
+    setFmcsaLastAttemptAt(null);
+    setBlockInfo(null);
     setLookingUp(true);
     try {
-      const [fmcsaRes, swRes] = await Promise.all([
+      const [fmcsaRes, swRes, blockRes] = await Promise.all([
         fetch(`/api/fmcsa/dot/${dot}`),
         fetch(`/api/saferwatch/${dot}`),
+        fetch(`/api/monitoring/blocks/${dot}`),
       ]);
       const fmcsaJson = await fmcsaRes.json();
       const swJson    = await swRes.json();
-      if (!fmcsaRes.ok) throw new Error(fmcsaJson.error ?? 'FMCSA lookup failed');
-      applyLookupResults(fmcsaJson, swRes, swJson);
+
+      if (fmcsaRes.status === 503 && fmcsaJson.cannotVerify) {
+        setFmcsaCannotVerify(true);
+        setFmcsaLastAttemptAt(fmcsaJson.lastAttemptAt ?? null);
+      } else if (!fmcsaRes.ok) {
+        throw new Error(fmcsaJson.error ?? 'FMCSA lookup failed');
+      } else {
+        applyLookupResults(fmcsaJson, swRes, swJson);
+      }
+
+      if (blockRes.ok) {
+        const blockJson = await blockRes.json();
+        if (blockJson) setBlockInfo(blockJson);
+      }
     } catch (e) {
       setLookupErr(e.message);
     } finally {
@@ -389,6 +412,9 @@ export default function CarrierVetting({ settings }) {
     if (!mc) return setLookupErr('Enter an MC number first.');
     setLookupErr('');
     setSwErr('');
+    setFmcsaCannotVerify(false);
+    setFmcsaLastAttemptAt(null);
+    setBlockInfo(null);
     setLookingUp(true);
     try {
       const [fmcsaRes, swRes] = await Promise.all([
@@ -397,8 +423,23 @@ export default function CarrierVetting({ settings }) {
       ]);
       const fmcsaJson = await fmcsaRes.json();
       const swJson    = await swRes.json();
-      if (!fmcsaRes.ok) throw new Error(fmcsaJson.error ?? 'FMCSA MC lookup failed');
-      applyLookupResults(fmcsaJson, swRes, swJson);
+
+      if (fmcsaRes.status === 503 && fmcsaJson.cannotVerify) {
+        setFmcsaCannotVerify(true);
+        setFmcsaLastAttemptAt(fmcsaJson.lastAttemptAt ?? null);
+      } else if (!fmcsaRes.ok) {
+        throw new Error(fmcsaJson.error ?? 'FMCSA MC lookup failed');
+      } else {
+        applyLookupResults(fmcsaJson, swRes, swJson);
+        // Check for carrier block using DOT resolved from FMCSA
+        const dot = fmcsaJson.dotNumber;
+        if (dot) {
+          fetch(`/api/monitoring/blocks/${dot}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(b => { if (b) setBlockInfo(b); })
+            .catch(() => {});
+        }
+      }
     } catch (e) {
       setLookupErr(e.message);
     } finally {
@@ -416,7 +457,11 @@ export default function CarrierVetting({ settings }) {
       const res = await fetch('/api/vetting/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          fmcsaCannotVerify,
+          fmcsaLastAttemptAt,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Vetting failed');
@@ -457,7 +502,7 @@ export default function CarrierVetting({ settings }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          carrierData: form,
+          carrierData: { ...form, fmcsaCannotVerify, fmcsaLastAttemptAt },
           override:    applyOverride ? override : null,
         }),
       });
@@ -470,6 +515,8 @@ export default function CarrierVetting({ settings }) {
       const recordId  = pdfRes.headers.get('X-Record-Id');
       const filename  = pdfRes.headers.get('X-Filename') || 'VettingCert.pdf';
       const saveErr   = pdfRes.headers.get('X-Certificate-Save-Error');
+      const xVerdict  = pdfRes.headers.get('X-Verdict');
+      const xTier     = pdfRes.headers.get('X-Tier');
 
       // Trigger browser download
       const blob = await pdfRes.blob();
@@ -484,11 +531,37 @@ export default function CarrierVetting({ settings }) {
 
       setSavedRecordId(recordId);
       setSaveStatus(saveErr ? { ok: false, error: saveErr } : { ok: true, recordId });
+      setFinalVerdict({ verdict: xVerdict, tier: xTier, recordId });
+      setMarked(false);
     } catch (e) {
       setFinalErr(`PDF generation failed: ${e.message}`);
     } finally {
       setFinalizing(false);
     }
+  }
+
+  // ── Mark as Used ────────────────────────────────────────────────────────────
+  async function markAsUsed() {
+    if (!finalVerdict?.recordId || marked || marking) return;
+    setMarking(true);
+    try {
+      await fetch('/api/vetting/mark-used', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          carrierName:     form.carrierName,
+          dotNumber:       form.dotNumber,
+          mcNumber:        form.mcNumber,
+          loadRef:         form.loadRef,
+          dispatcher:      form.dispatcher,
+          verdict:         finalVerdict.verdict,
+          tier:            finalVerdict.tier,
+          vettingRecordId: finalVerdict.recordId,
+        }),
+      });
+      setMarked(true);
+    } catch (_) {}
+    finally { setMarking(false); }
   }
 
   // ── Load audit logs ─────────────────────────────────────────────────────────
@@ -534,6 +607,12 @@ export default function CarrierVetting({ settings }) {
     setRunErr('');
     setFinalErr('');
     setFmcsaData(null);
+    setBlockInfo(null);
+    setFmcsaCannotVerify(false);
+    setFmcsaLastAttemptAt(null);
+    setMarking(false);
+    setMarked(false);
+    setFinalVerdict(null);
     setSwData(null);
     setFieldSources({});
     setLookupErr('');
@@ -639,6 +718,48 @@ export default function CarrierVetting({ settings }) {
           </Field>
         </div>
       </div>
+
+      {/* ── Carrier Block Banner ── */}
+      {blockInfo && (
+        <div style={{
+          background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 8,
+          padding: '14px 18px', marginBottom: 16,
+        }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#991b1b', marginBottom: 4 }}>
+            CARRIER BLOCKED — DO NOT USE
+          </div>
+          <div style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>
+            {blockInfo.block_reason}
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            Blocked {new Date(blockInfo.blocked_at).toLocaleDateString('en-US')}
+            {blockInfo.threshold_type && ` · ${blockInfo.threshold_type.replace(/_/g, ' ')}: ${blockInfo.actual_value ?? ''}%`}
+            {' '}&mdash; Go to Monitoring to lift this block.
+          </div>
+        </div>
+      )}
+
+      {/* ── FMCSA Cannot Verify Banner ── */}
+      {fmcsaCannotVerify && (
+        <div style={{
+          background: '#fffbeb', border: '2px solid #d97706', borderRadius: 8,
+          padding: '14px 18px', marginBottom: 16,
+        }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#92400e', marginBottom: 4 }}>
+            ⚠ FMCSA UNREACHABLE — CANNOT VERIFY
+          </div>
+          <div style={{ fontSize: 13, color: '#374151', marginBottom: 4 }}>
+            FMCSA was unavailable during lookup. Carrier status could not be verified from live data.
+            Enter carrier information manually below. This run will be flagged as{' '}
+            <strong>HOLD — manager authorization required</strong>.
+          </div>
+          {fmcsaLastAttemptAt && (
+            <div style={{ fontSize: 12, color: '#6b7280' }}>
+              Last attempt: {new Date(fmcsaLastAttemptAt).toLocaleString('en-US', { timeZoneName: 'short' })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Auto-fill Banners ── */}
       {fmcsaData && (
@@ -1024,36 +1145,50 @@ export default function CarrierVetting({ settings }) {
           {/* ── Post-generate status ── */}
           {savedRecordId && (
             <div style={{
-              background: saveStatus?.ok === false ? '#1a1200' : '#0a1f0e',
+              background: saveStatus?.ok === false ? '#fffbeb' : '#f0fdf4',
               border: `1.5px solid ${saveStatus?.ok === false ? '#d97706' : '#16a34a'}`,
               borderRadius: 8, padding: '14px 18px', marginTop: 16,
             }}>
-              <strong style={{ color: saveStatus?.ok === false ? '#fbbf24' : '#4ade80' }}>
+              <strong style={{ color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
                 PDF generated and downloaded.
               </strong>
               {' '}
-              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#fbbf24' : '#4ade80' }}>
+              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
                 Attach it to the load in Dr Dispatch now.
               </span>
 
               {saveStatus?.ok && (
-                <p style={{ fontSize: 12, color: '#4ade80', marginTop: 8, marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: '#166534', marginTop: 8, marginBottom: 0 }}>
                   Certificate saved to secure storage. Record ID:{' '}
-                  <code style={{ fontSize: 11, background: 'rgba(34,197,94,.15)', padding: '1px 4px', borderRadius: 3, color: '#4ade80' }}>
+                  <code style={{ fontSize: 11, background: 'rgba(22,163,74,.12)', padding: '1px 4px', borderRadius: 3, color: '#166534' }}>
                     {saveStatus.recordId}
                   </code>
                 </p>
               )}
               {saveStatus?.ok === false && (
-                <p style={{ fontSize: 12, color: '#fbbf24', marginTop: 8, marginBottom: 0 }}>
+                <p style={{ fontSize: 12, color: '#92400e', marginTop: 8, marginBottom: 0 }}>
                   Certificate could not be saved to storage: {saveStatus.error}
                 </p>
               )}
 
-              <div style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                 <button style={s.btn('blue', false)} onClick={reset}>
                   Vet Another Carrier
                 </button>
+                {!marked && (
+                  <button
+                    style={s.btn('green', marking)}
+                    disabled={marking}
+                    onClick={markAsUsed}
+                  >
+                    {marking ? 'Saving…' : 'Mark as Used'}
+                  </button>
+                )}
+                {marked && (
+                  <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>
+                    ✓ Carrier marked as used
+                  </span>
+                )}
               </div>
             </div>
           )}

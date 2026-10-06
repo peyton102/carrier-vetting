@@ -52,6 +52,7 @@ router.put('/', async (req, res, next) => {
       oos_hard_block_truck:                      floatMin(b.oosHardBlockTruck,   D.oosHardBlockTruck,   1),
       oos_hard_block_driver:                     floatMin(b.oosHardBlockDriver,  D.oosHardBlockDriver,  1),
       inspection_volume_min:                     posInt(b.inspectionVolumeMin,   D.inspectionVolumeMin),
+      alert_recipients:                          (b.alertRecipients ?? '').trim().slice(0, 2000),
       updated_at:                                new Date().toISOString(),
     };
 

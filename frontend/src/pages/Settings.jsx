@@ -270,7 +270,7 @@ export default function Settings({ settings, onSave }) {
                 onChange={e => set('autoLiabilityMin', parseInt(e.target.value, 10))}
                 style={s.input}
               />
-              <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0', color: '#475569' }}>
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
                 Carriers below this amount are hard-rejected. Federal minimum is $750,000.
               </p>
             </div>
@@ -407,6 +407,22 @@ export default function Settings({ settings, onSave }) {
               Default: 3.
             </p>
           </div>
+        </div>
+
+        {/* ── Alert Recipients ── */}
+        <div style={s.card}>
+          <div style={s.cardHead}>Monitoring Alert Recipients</div>
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 12 }}>
+            Email addresses that receive carrier monitoring alerts. One per line or comma-separated.
+            Leave blank to send alerts to the account email only.
+          </p>
+          <textarea
+            value={form.alertRecipients ?? ''}
+            onChange={e => set('alertRecipients', e.target.value)}
+            placeholder="alerts@company.com, ops@company.com"
+            rows={3}
+            style={{ ...s.input, resize: 'vertical', lineHeight: 1.6 }}
+          />
         </div>
 
         {/* ── Save ── */}

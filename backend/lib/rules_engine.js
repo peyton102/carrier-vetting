@@ -41,11 +41,18 @@ export const DEFAULT_SETTINGS = {
   oosHardBlockDriver:  7,
   // ── Inspection volume minimum: fewer inspections → HOLD for manual review ─
   inspectionVolumeMin: 3,
+  // ── Alert email recipients (comma or newline separated) ────────────────────
+  alertRecipients: '',
 };
 
 // Federal auto liability floor — below this is always RED regardless of tenant setting.
 // FMCSA minimum for most property carriers.
 const FEDERAL_AUTO_LIABILITY_MIN = 750_000;
+
+// Absolute truck OOS floor — above this is always RED regardless of tenant settings.
+// Tenant settings cannot disable or soften this check; it fires unconditionally.
+// (FMCSA national average is ~5.5%; 20% is roughly 3.6× average — a strong safety signal.)
+const ABSOLUTE_TRUCK_OOS_FLOOR = 20;
 
 /**
  * Run the tri-tier (RED / YELLOW / GREEN) vetting rules.
@@ -155,6 +162,11 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const hardBlockDriver = parseFloat(cfg.oosHardBlockDriver) || 7;
   const truckOos        = parseFloat(d.truckOosPct);
   const driverOos       = parseFloat(d.driverOosPct);
+
+  // Absolute floor: always RED regardless of tenant settings
+  if (!isNaN(truckOos) && truckOos > ABSOLUTE_TRUCK_OOS_FLOOR && truckOos <= hardBlockTruck) {
+    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
+  }
   if (!isNaN(truckOos) && truckOos > hardBlockTruck) {
     red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
   }
@@ -184,6 +196,19 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   }
 
   // ── YELLOW — HOLD for manager review (override allowed) ─────────────────
+
+  // FMCSA unreachable during initial lookup — cannot verify carrier status
+  // The fmcsa.js route sets cannotVerify:true when FMCSA times out or is down.
+  // This must never become a pass — forces HOLD requiring logged manager override.
+  if (d.fmcsaCannotVerify === true || d.fmcsaCannotVerify === 'true') {
+    const ts = d.fmcsaLastAttemptAt
+      ? ` Last attempt: ${new Date(d.fmcsaLastAttemptAt).toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short' })}.`
+      : '';
+    yellow.push(
+      `FMCSA was unreachable during initial lookup — carrier status could not be verified from live data.${ts}` +
+      ' Manager authorization required to proceed.'
+    );
+  }
 
   // Inspection volume safeguard — fewer than minimum inspections
   if (lowVolume) {

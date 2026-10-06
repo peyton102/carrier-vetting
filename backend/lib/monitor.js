@@ -137,8 +137,22 @@ function checkOOSSnapshot(snap, settings) {
 
 // ── Email ─────────────────────────────────────────────────────────────────────
 
-async function sendAlertEmail(load, issues, alertType, tenantEmail) {
-  if (!process.env.SMTP_HOST || !tenantEmail) return;
+/**
+ * Resolve the to-address list. Uses alertRecipients from settings if non-empty,
+ * otherwise falls back to the tenant account email.
+ */
+function resolveRecipients(settings, tenantEmail) {
+  const raw = (settings?.alertRecipients ?? '').trim();
+  if (raw) {
+    const list = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    if (list.length) return list.join(', ');
+  }
+  return tenantEmail || null;
+}
+
+async function sendAlertEmail(load, issues, alertType, settings, tenantEmail) {
+  const to = resolveRecipients(settings, tenantEmail);
+  if (!process.env.SMTP_HOST || !to) return;
 
   const transport = nodemailer.createTransport({
     host:   process.env.SMTP_HOST,
@@ -170,7 +184,7 @@ async function sendAlertEmail(load, issues, alertType, tenantEmail) {
     ? `"${process.env.FROM_NAME || 'Carrier Vetting'}" <${process.env.FROM_EMAIL}>`
     : process.env.SMTP_USERNAME;
 
-  await transport.sendMail({ from, to: tenantEmail, subject, html });
+  await transport.sendMail({ from, to, subject, html });
   transport.close();
 }
 
@@ -227,7 +241,7 @@ async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey) {
     });
 
     try {
-      await sendAlertEmail(load, issues, alertType, tenantEmail);
+      await sendAlertEmail(load, issues, alertType, settings, tenantEmail);
       console.log(`[MONITOR] Alert email sent — load ${load.load_ref} (${alertType})`);
     } catch (emailErr) {
       console.error('[MONITOR] Email send failed:', emailErr.message);
@@ -321,9 +335,10 @@ async function fetchFMCSAOosRates(dot, webKey) {
   };
 }
 
-async function sendBlockAlertEmail(carrier, newOosInspections, issues, tenantEmail) {
-  if (!process.env.SMTP_HOST || !tenantEmail) {
-    console.warn('[MONITOR:WATCH] SMTP not configured or no tenant email — block alert not emailed');
+async function sendBlockAlertEmail(carrier, newOosInspections, issues, settings, tenantEmail) {
+  const to = resolveRecipients(settings, tenantEmail);
+  if (!process.env.SMTP_HOST || !to) {
+    console.warn('[MONITOR:WATCH] SMTP not configured or no recipient — block alert not emailed');
     return;
   }
 
@@ -387,7 +402,7 @@ async function sendBlockAlertEmail(carrier, newOosInspections, issues, tenantEma
     ? `"${process.env.FROM_NAME || 'Carrier Vetting'}" <${process.env.FROM_EMAIL}>`
     : process.env.SMTP_USERNAME;
 
-  await transport.sendMail({ from, to: tenantEmail, subject, html });
+  await transport.sendMail({ from, to, subject, html });
   transport.close();
 }
 
@@ -500,7 +515,7 @@ async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, web
   await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
 
   try {
-    await sendBlockAlertEmail(carrier, newOosInspections, issues, tenantEmail);
+    await sendBlockAlertEmail(carrier, newOosInspections, issues, settings, tenantEmail);
     console.log(`[MONITOR:WATCH] Block alert emailed — DOT ${carrier.dot_number} [${carrier.tenant_id}]`);
   } catch (emailErr) {
     console.error('[MONITOR:WATCH] Email send failed:', emailErr.message);
