@@ -12,7 +12,7 @@ const s = {
 };
 
 function tierBadge(tier, verdict) {
-  const color = tier === 'GREEN' ? '#16a34a' : tier === 'YELLOW' ? '#d97706' : '#64748b';
+  const color = tier === 'GREEN' ? '#16a34a' : tier === 'YELLOW' ? '#d97706' : '#dc2626';
   return (
     <span style={{ background: color, color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
       {verdict ?? tier ?? '—'}

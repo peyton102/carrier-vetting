@@ -35,9 +35,8 @@ export default function AlertBanner() {
 
   return (
     <div style={{
-      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1000,
+      position: 'sticky', top: 62, left: 0, right: 0, zIndex: 999,
       display: 'flex', flexDirection: 'column', gap: 0,
-      pointerEvents: 'none',
     }}>
       {visible.map(a => (
         <div key={a.id} style={{
@@ -45,7 +44,6 @@ export default function AlertBanner() {
           borderBottom: `2px solid ${a.alert_type === 'cannot_verify' ? '#d97706' : '#dc2626'}`,
           padding: '10px 20px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
-          pointerEvents: 'auto',
           fontSize: 13,
         }}>
           <span style={{ fontWeight: 700, color: a.alert_type === 'cannot_verify' ? '#92400e' : '#991b1b', marginRight: 8 }}>

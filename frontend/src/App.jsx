@@ -106,7 +106,15 @@ export default function App() {
     setSettings(null);
   }
 
-  if (!ready) return null;
+  if (!ready) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block', marginBottom: 12 }} />
+        <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Carrier Vetting</div>
+        <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading…</div>
+      </div>
+    </div>
+  );
 
   // /activate is public — render before the auth gate
   if (!user) {
@@ -126,7 +134,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <AlertBanner />
       <nav>
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
@@ -151,6 +158,7 @@ export default function App() {
           </button>
         </span>
       </nav>
+      <AlertBanner />
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/vetting" replace />} />
@@ -160,6 +168,7 @@ export default function App() {
           <Route path="/used-carriers" element={<UsedCarriers />} />
           <Route path="/settings"     element={<Settings settings={settings} onSave={setSettings} />} />
           <Route path="/admin"        element={user.isAdmin ? <Admin /> : <Navigate to="/vetting" replace />} />
+          <Route path="*"             element={<Navigate to="/vetting" replace />} />
         </Routes>
       </main>
     </div>

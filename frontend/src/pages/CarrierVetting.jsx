@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import BrokerCheck from './BrokerCheck.jsx';
 
 // Fallback defaults used only while settings are loading (replaced immediately by server values)
@@ -289,7 +289,6 @@ export default function CarrierVetting({ settings }) {
   const [marking,            setMarking]            = useState(false);
   const [marked,             setMarked]             = useState(false);
   const [finalVerdict,       setFinalVerdict]       = useState(null);
-
   // Input border style by source: blue=SaferWatch, green=FMCSA, plain=manual
   const fi = (name) => {
     const src = fieldSources[name];
@@ -618,6 +617,9 @@ export default function CarrierVetting({ settings }) {
     setLookupErr('');
     setSwErr('');
   }
+
+  // Auto-load audit log on first render
+  useEffect(() => { loadLogs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isHold      = verdict?.verdict === 'HOLD';
   const isReject    = verdict?.verdict === 'REJECT';
@@ -1154,7 +1156,7 @@ export default function CarrierVetting({ settings }) {
               </strong>
               {' '}
               <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
-                Attach it to the load in Dr Dispatch now.
+                Attach it to the load in your TMS.
               </span>
 
               {saveStatus?.ok && (
@@ -1200,7 +1202,7 @@ export default function CarrierVetting({ settings }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={s.cardHead}>Vetting Audit Log</div>
           <button style={s.btn('blue', logsLoading)} disabled={logsLoading} onClick={loadLogs}>
-            {logsLoading ? 'Loading…' : logs ? 'Refresh' : 'Load Log'}
+            {logsLoading ? 'Loading…' : 'Refresh'}
           </button>
         </div>
         {logsErr && <p style={{ color: '#f87171', fontSize: 13 }}>{logsErr}</p>}

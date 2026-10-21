@@ -176,7 +176,7 @@ export default function Monitoring() {
       <h1 style={s.h1}>Carrier Monitoring</h1>
       <p style={s.sub}>
         Active loads are re-checked every {' '}
-        <strong style={{ color: '#94a3b8' }}>{process.env.MONITOR_INTERVAL_HOURS || 4} hours</strong>
+        <strong style={{ color: '#94a3b8' }}>4 hours</strong>
         {' '}via FMCSA + SaferWatch. Any status change triggers an email alert.
       </p>
 
@@ -213,13 +213,19 @@ export default function Monitoring() {
       <div style={s.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={s.head}>Active Monitored Loads</div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button style={s.btn('blue', false)} onClick={load}>Refresh</button>
-            <button style={s.btn('orange', checking)} disabled={checking} onClick={checkNow}>
+            <button style={{ ...s.btn('orange', checking), display: 'inline-flex', alignItems: 'center', gap: 6 }} disabled={checking} onClick={checkNow}>
+              {checking && <span className="tops-spinner" />}
               {checking ? 'Checking…' : 'Check All Now'}
             </button>
           </div>
         </div>
+        {checking && (
+          <p style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
+            Re-checking all active loads against FMCSA + SaferWatch. This may take a few seconds…
+          </p>
+        )}
 
         {err && <p style={{ color: '#f87171', fontSize: 13 }}>{err}</p>}
 
@@ -271,10 +277,16 @@ export default function Monitoring() {
       <div style={s.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={s.head}>Watched Carriers</div>
-          <button style={s.btn('orange', checkingCars)} disabled={checkingCars} onClick={checkCarriers}>
+          <button style={{ ...s.btn('orange', checkingCars), display: 'inline-flex', alignItems: 'center', gap: 6 }} disabled={checkingCars} onClick={checkCarriers}>
+            {checkingCars && <span className="tops-spinner" />}
             {checkingCars ? 'Checking…' : 'Check All Now'}
           </button>
         </div>
+        {checkingCars && (
+          <p style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
+            Fetching latest inspection data for each watched carrier from FMCSA…
+          </p>
+        )}
 
         <form onSubmit={addWatched} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           <input

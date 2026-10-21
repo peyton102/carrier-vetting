@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const s = {
   page:     { maxWidth: 900, margin: '0 auto', padding: '24px 20px' },
@@ -25,6 +25,8 @@ export default function Certificates() {
   const [loading, setLoading] = useState(false);
   const [err,     setErr]     = useState('');
 
+  useEffect(() => { load(); }, []);
+
   async function load() {
     setLoading(true); setErr('');
     try {
@@ -48,7 +50,7 @@ export default function Certificates() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={s.cardHead}>Stored Certificates</div>
           <button style={s.btn} disabled={loading} onClick={load}>
-            {loading ? 'Loading…' : certs ? 'Refresh' : 'Load Certificates'}
+            {loading ? 'Loading…' : 'Refresh'}
           </button>
         </div>
 
