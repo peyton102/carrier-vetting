@@ -270,7 +270,7 @@ export default function CarrierVetting({ settings }) {
   const [saveStatus,    setSaveStatus]    = useState(null);
 
   const [logs,        setLogs]        = useState(null);
-  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(true);
   const [logsErr,     setLogsErr]     = useState('');
   const [monitoring,  setMonitoring]  = useState(new Set()); // vetting_log IDs being monitored
 
@@ -567,10 +567,17 @@ export default function CarrierVetting({ settings }) {
   async function loadLogs() {
     setLogsLoading(true); setLogsErr('');
     try {
-      const res  = await fetch('/api/vetting/logs');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Failed to load logs');
+      const [logsRes, monRes] = await Promise.all([
+        fetch('/api/vetting/logs'),
+        fetch('/api/monitoring/active'),
+      ]);
+      const data = await logsRes.json();
+      if (!logsRes.ok) throw new Error(data.error ?? 'Failed to load logs');
       setLogs(data);
+      if (monRes.ok) {
+        const monData = await monRes.json();
+        setMonitoring(new Set(monData.map(m => m.vetting_log_id).filter(Boolean)));
+      }
     } catch (e) { setLogsErr(e.message); }
     finally { setLogsLoading(false); }
   }
@@ -1206,6 +1213,9 @@ export default function CarrierVetting({ settings }) {
           </button>
         </div>
         {logsErr && <p style={{ color: '#f87171', fontSize: 13 }}>{logsErr}</p>}
+        {logsLoading && !logs && !logsErr && (
+          <p style={{ fontSize: 13, color: '#64748b' }}>Loading…</p>
+        )}
         {logs && (
           logs.length === 0
             ? <p style={{ fontSize: 13, color: '#6b7280' }}>No records yet.</p>

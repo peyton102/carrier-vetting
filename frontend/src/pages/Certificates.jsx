@@ -22,7 +22,7 @@ function verdictColor(v) {
 
 export default function Certificates() {
   const [certs,   setCerts]   = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [err,     setErr]     = useState('');
 
   useEffect(() => { load(); }, []);
@@ -55,6 +55,10 @@ export default function Certificates() {
         </div>
 
         {err && <p style={{ color: '#dc2626', fontSize: 13 }}>{err}</p>}
+
+        {loading && !certs && !err && (
+          <p style={{ fontSize: 13, color: '#64748b' }}>Loading…</p>
+        )}
 
         {certs && (
           certs.length === 0
