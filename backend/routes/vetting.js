@@ -34,7 +34,7 @@ router.post('/run', async (req, res, next) => {
 // blocks the download — res.send(pdfBuffer) always executes.
 router.post('/pdf', async (req, res, next) => {
   try {
-    const { carrierData, override } = req.body;
+    const { carrierData, override, fieldSources } = req.body;
     const orgId = req.auth.tenant;
 
     if (!carrierData?.loadRef)    return res.status(400).json({ error: 'loadRef is required' });
@@ -71,6 +71,7 @@ router.post('/pdf', async (req, res, next) => {
       recordId,
       settings:      cfg,
       brokerName,
+      fieldSources:  fieldSources ?? {},
     });
 
     const dot      = (carrierData.dotNumber || 'NODOT').replace(/\W/g, '');

@@ -28,6 +28,7 @@ const C = {
  * @param {string} opts.recordId       — UUID from DB insert
  * @param {object} opts.settings       — tenant vetting settings (thresholds shown on certificate)
  * @param {string} opts.brokerName     — broker's display name for the certificate header
+ * @param {object} opts.fieldSources   — { fieldName: 'fmcsa' | 'saferwatch' } from the vetting form
  * @returns {Promise<Buffer>}
  */
 export function generateVettingPDF(opts) {
@@ -37,6 +38,7 @@ export function generateVettingPDF(opts) {
       verdict, tier, reasons, authorityDays,
       override, generatedAt, recordId,
       settings, brokerName,
+      fieldSources,
     } = opts;
 
     const cfg = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
@@ -118,8 +120,18 @@ export function generateVettingPDF(opts) {
       authorityDays !== null ? `${authorityDays} days` : '—');
     dataRow(doc, L, W, `Auto Liability (min $${fmtMoney(cfg.autoLiabilityMin)})`,
       d.autoLiability != null && d.autoLiability !== '' ? `$${Number(d.autoLiability).toLocaleString('en-US')}` : '—');
+    if (d.autoLiabilityExpiration) {
+      const expDays = daysUntilExpiry(d.autoLiabilityExpiration);
+      const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
+      dataRow(doc, L, W, 'Auto Liability Expiration', d.autoLiabilityExpiration + expNote);
+    }
     dataRow(doc, L, W, `Cargo Insurance (min $${fmtMoney(cfg.cargoMin)})`,
       d.cargoInsurance != null && d.cargoInsurance !== '' ? `$${Number(d.cargoInsurance).toLocaleString('en-US')}` : '—');
+    if (d.cargoExpiration) {
+      const expDays = daysUntilExpiry(d.cargoExpiration);
+      const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
+      dataRow(doc, L, W, 'Cargo Insurance Expiration', d.cargoExpiration + expNote);
+    }
     flagRow(doc, L, W, 'Pending Cancellation', d.pendingInsuranceCancellation);
 
     doc.moveDown(0.6);
@@ -132,28 +144,28 @@ export function generateVettingPDF(opts) {
     // Each basicRow shows the actual threshold configured for this broker.
     // Label also indicates whether exceeding the threshold causes REJECT or HOLD.
     basicRow(doc, L, W,
-      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicUnsafeDrivingThreshold}%)`,
+      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold);
     basicRow(doc, L, W,
-      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicCrashIndicatorThreshold}%)`,
+      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold);
     basicRow(doc, L, W,
-      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHosThreshold}%)`,
+      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold);
     basicRow(doc, L, W,
-      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleMaintenanceThreshold}%)`,
+      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold);
     basicRow(doc, L, W,
-      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleDriverObservedThreshold}%)`,
+      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold);
     basicRow(doc, L, W,
-      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicDriverFitnessThreshold}%)`,
+      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold);
     basicRow(doc, L, W,
-      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHazmatThreshold}%)`,
+      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHazmatThreshold}%)`,
       d.hazmatBasic, cfg.basicHazmatThreshold);
     basicRow(doc, L, W,
-      `Controlled Substances BASIC (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicControlledSubstanceThreshold}%)`,
+      `Controlled Substances BASIC (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicControlledSubstanceThreshold}%)`,
       d.controlledSubstancesBasic, cfg.basicControlledSubstanceThreshold);
 
     doc.moveDown(0.6);
@@ -175,11 +187,24 @@ export function generateVettingPDF(opts) {
       d.inspections24mo != null && d.inspections24mo !== '' ? String(d.inspections24mo) : '—');
     dataRow(doc, L, W, 'Clean Inspections (24 months)',
       d.cleanInspections24mo != null && d.cleanInspections24mo !== '' ? String(d.cleanInspections24mo) : '—');
-    const oosLabel = `OOS flag threshold: ≥ ${cfg.oosRateMultiplier}x national average`;
-    oosRow(doc, L, W, `Truck OOS % (${oosLabel})`,  d.truckOosPct,  d.nationalAvgTruckOos  || 5.5, cfg.oosRateMultiplier);
-    oosRow(doc, L, W, `Driver OOS % (${oosLabel})`, d.driverOosPct, d.nationalAvgDriverOos || 5.2, cfg.oosRateMultiplier);
-    dataRow(doc, L, W, 'Natl Avg Truck OOS %',  `${parseFloat(d.nationalAvgTruckOos  || 5.5).toFixed(2)}%`);
-    dataRow(doc, L, W, 'Natl Avg Driver OOS %', `${parseFloat(d.nationalAvgDriverOos || 5.2).toFixed(2)}%`);
+
+    const natAvgTruck  = parseFloat(d.nationalAvgTruckOos)  || 5.5;
+    const natAvgDriver = parseFloat(d.nationalAvgDriverOos) || 5.2;
+    const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
+    const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
+    const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
+    const ABS_FLOOR    = 20; // hardcoded — cannot be changed in Settings
+
+    // Truck OOS — label shows all three tiers the engine actually checks
+    const truckLabel = `Truck OOS % (HOLD >=${(natAvgTruck * mult).toFixed(1)}%; REJECT >=${hardTruck}% hard; REJECT >=20% floor)`;
+    oosRowFull(doc, L, W, truckLabel, d.truckOosPct, natAvgTruck, mult, hardTruck, ABS_FLOOR);
+
+    // Driver OOS — two tiers (no absolute floor for driver)
+    const driverLabel = `Driver OOS % (HOLD >=${(natAvgDriver * mult).toFixed(1)}%; REJECT >=${hardDriver}% hard)`;
+    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null);
+
+    dataRow(doc, L, W, 'Natl Avg Truck OOS %',  `${natAvgTruck.toFixed(2)}%`);
+    dataRow(doc, L, W, 'Natl Avg Driver OOS %', `${natAvgDriver.toFixed(2)}%`);
 
     doc.moveDown(0.6);
 
@@ -217,10 +242,7 @@ export function generateVettingPDF(opts) {
        );
     doc.moveDown(0.3);
     doc.fontSize(7).fillColor(C.gray)
-       .text(
-         `Data source: manual entry by dispatcher.  Generated: ${generatedAt.toLocaleString('en-US', { timeZone: 'America/New_York', timeZoneName: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
-         { align: 'center' }
-       );
+       .text(buildDataSourceLine(fieldSources), L, doc.y, { width: W, align: 'center' });
 
     doc.end();
   });
@@ -292,19 +314,75 @@ function basicRow(doc, L, W, label, rawVal, threshold) {
   doc.moveDown(0.15);
 }
 
-function oosRow(doc, L, W, label, rawVal, nationalAvg, multiplier) {
-  const val  = parseFloat(rawVal);
-  const isNA = isNaN(val);
-  const over = !isNA && val >= parseFloat(nationalAvg) * parseFloat(multiplier);
-  const display = isNA ? 'N/A' : `${val.toFixed(2)}%${over ? '  \u26a0 ABOVE THRESHOLD' : ''}`;
+function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock, absFloor) {
+  const val     = parseFloat(rawVal);
+  const isNA    = isNaN(val);
+  const isHard  = !isNA && (val >= hardBlock || (absFloor != null && val >= absFloor));
+  const isYellow = !isNA && !isHard && val >= parseFloat(nationalAvg) * parseFloat(multiplier);
+  const flagText = isHard
+    ? (absFloor != null && val >= hardBlock ? '  !! EXCEEDS HARD BLOCK' : '  !! EXCEEDS ABSOLUTE FLOOR')
+    : isYellow ? '  ^ ABOVE FLAG THRESHOLD' : '';
+  const display = isNA ? 'N/A' : `${val.toFixed(2)}%${flagText}`;
   const y = doc.y;
   doc.fontSize(9).font('Helvetica-Bold').fillColor(C.darkgray)
      .text(`${label}:`, L, y, { width: 220 });
-  doc.font(over ? 'Helvetica-Bold' : 'Helvetica').fillColor(over ? C.yellow : C.black)
+  doc.font(isHard || isYellow ? 'Helvetica-Bold' : 'Helvetica')
+     .fillColor(isHard ? C.red : isYellow ? C.yellow : C.black)
      .text(display, L + 222, y, { width: W - 222 });
   doc.moveDown(0.15);
 }
 
 function fmtMoney(n) {
   return Number(n).toLocaleString('en-US');
+}
+
+function daysUntilExpiry(dateStr) {
+  if (!dateStr) return null;
+  const exp = new Date(dateStr);
+  if (isNaN(exp.getTime())) return null;
+  const now = new Date();
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((exp.getTime() - todayMs) / 86_400_000);
+}
+
+const FIELD_LABELS = {
+  carrierName:               'carrier name',
+  dotNumber:                 'DOT',
+  mcNumber:                  'MC number',
+  authorityStatus:           'authority status',
+  authorityGrantDate:        'authority date',
+  safetyRating:              'safety rating',
+  powerUnits:                'power units',
+  inspections24mo:           'inspection count',
+  truckOosPct:               'truck OOS%',
+  driverOosPct:              'driver OOS%',
+  nationalAvgTruckOos:       'natl avg truck OOS',
+  nationalAvgDriverOos:      'natl avg driver OOS',
+  unsafeDrivingBasic:        'unsafe driving BASIC',
+  crashIndicatorBasic:       'crash indicator BASIC',
+  hosBasic:                  'HOS BASIC',
+  vehicleMaintenanceBasic:   'vehicle maint BASIC',
+  vehicleDriverObservedBasic:'vehicle driver-obs BASIC',
+  driverFitnessBasic:        'driver fitness BASIC',
+  hazmatBasic:               'hazmat BASIC',
+  controlledSubstancesBasic: 'controlled substances BASIC',
+  autoLiability:             'auto liability',
+  autoLiabilityExpiration:   'auto liab expiry',
+  cargoInsurance:            'cargo insurance',
+  cargoExpiration:           'cargo expiry',
+  activeFederalOOS:          'federal OOS flag',
+};
+
+function buildDataSourceLine(fieldSources) {
+  const fmcsa = [], sw = [];
+  for (const [field, source] of Object.entries(fieldSources ?? {})) {
+    const label = FIELD_LABELS[field] ?? field;
+    if (source === 'fmcsa')      fmcsa.push(label);
+    else if (source === 'saferwatch') sw.push(label);
+  }
+  const parts = [];
+  if (fmcsa.length) parts.push(`FMCSA: ${fmcsa.join(', ')}`);
+  if (sw.length)    parts.push(`SaferWatch: ${sw.join(', ')}`);
+  parts.push('remaining fields: manual entry by dispatcher');
+  return `Data sources — ${parts.join('  |  ')}`;
 }

@@ -307,7 +307,10 @@ function fmtMoney(n) {
 
 function daysUntilExpiry(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return null;
-  return Math.floor((d.getTime() - Date.now()) / 86_400_000);
+  const exp = new Date(dateStr);
+  if (isNaN(exp.getTime())) return null;
+  // Use UTC midnight for both sides so mid-day runs don't shorten the count
+  const now = new Date();
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.floor((exp.getTime() - todayMs) / 86_400_000);
 }

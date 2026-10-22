@@ -503,8 +503,9 @@ export default function CarrierVetting({ settings }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          carrierData: { ...form, fmcsaCannotVerify, fmcsaLastAttemptAt },
-          override:    applyOverride ? override : null,
+          carrierData:  { ...form, fmcsaCannotVerify, fmcsaLastAttemptAt },
+          override:     applyOverride ? override : null,
+          fieldSources,
         }),
       });
 
