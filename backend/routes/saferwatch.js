@@ -142,6 +142,25 @@ function extractCargo(certData) {
   return empty;
 }
 
+// Extract auto liability (BIPD) expiration from CertData
+function extractAutoLiabilityExpiration(certData) {
+  if (!certData) return '';
+  const certs = certData.Certificate;
+  if (!certs) return '';
+  const certList = Array.isArray(certs) ? certs : [certs];
+  for (const cert of certList) {
+    const covs = cert.Coverage;
+    if (!covs) continue;
+    const covList = Array.isArray(covs) ? covs : [covs];
+    for (const cov of covList) {
+      if (/liab|bipd|auto/i.test(cov.type || '')) {
+        return normalizeDate(str(cov.expirationDate));
+      }
+    }
+  }
+  return '';
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 router.get('/:dot', async (req, res, next) => {
@@ -256,6 +275,10 @@ router.get('/:dot', async (req, res, next) => {
 
       // Active federal OOS — boolean
       activeFederalOOS: str(operation.outOfService).toLowerCase() === 'yes',
+
+      // Insurance expiration dates (used by rules engine for 30-day warning + expired check)
+      autoLiabilityExpiration: extractAutoLiabilityExpiration(certData),
+      cargoExpiration:         cargo.expiration,
     };
 
     // Fields with actual values (non-empty string, or boolean true)
@@ -268,10 +291,9 @@ router.get('/:dot', async (req, res, next) => {
       ...swFields,
       filledFields,
 
-      // Metadata for the banner — not written to form fields
+      // Metadata for the banner
       certStatus,
-      cargoExpiration: cargo.expiration,
-      bipdRequired:    parseMoney(insurance.bipdRequired),
+      bipdRequired: parseMoney(insurance.bipdRequired),
       riskAssessment: {
         overall:   str(riskAssess.Overall),
         authority: str(riskAssess.Authority),

@@ -136,6 +136,16 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     red.push(`Cargo insurance $${fmtMoney(cargo)} is below this broker's $${fmtMoney(cfg.cargoMin)} minimum`);
   }
 
+  // Insurance expiry — already expired → hard fail
+  const autoExpDays = daysUntilExpiry(d.autoLiabilityExpiration);
+  if (autoExpDays !== null && autoExpDays < 0) {
+    red.push(`Auto liability insurance expired on ${d.autoLiabilityExpiration} (${Math.abs(autoExpDays)} day${Math.abs(autoExpDays) === 1 ? '' : 's'} ago) — carrier cannot legally haul`);
+  }
+  const cargoExpDays = daysUntilExpiry(d.cargoExpiration);
+  if (cargoExpDays !== null && cargoExpDays < 0) {
+    red.push(`Cargo insurance expired on ${d.cargoExpiration} (${Math.abs(cargoExpDays)} day${Math.abs(cargoExpDays) === 1 ? '' : 's'} ago)`);
+  }
+
   // Carrier Assure grade F
   if (grade === 'F') {
     red.push('Carrier Assure grade F — automatic disqualification');
@@ -244,6 +254,14 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     yellow.push('Authority revocation is pending — carrier is at immediate risk of losing operating authority; confirm status before booking');
   }
 
+  // Insurance expiry — within 30 days → HOLD
+  if (autoExpDays !== null && autoExpDays >= 0 && autoExpDays <= 30) {
+    yellow.push(`Auto liability insurance expires in ${autoExpDays} day${autoExpDays === 1 ? '' : 's'} (${d.autoLiabilityExpiration}) — confirm renewal before booking`);
+  }
+  if (cargoExpDays !== null && cargoExpDays >= 0 && cargoExpDays <= 30) {
+    yellow.push(`Cargo insurance expires in ${cargoExpDays} day${cargoExpDays === 1 ? '' : 's'} (${d.cargoExpiration}) — confirm renewal before booking`);
+  }
+
   // Pending insurance cancellation
   if (d.pendingInsuranceCancellation) {
     yellow.push('Pending insurance cancellation notice on file');
@@ -285,4 +303,11 @@ function checkBasic(red, yellow, rawVal, threshold, action, label) {
 
 function fmtMoney(n) {
   return Number(n).toLocaleString('en-US');
+}
+
+function daysUntilExpiry(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return Math.floor((d.getTime() - Date.now()) / 86_400_000);
 }

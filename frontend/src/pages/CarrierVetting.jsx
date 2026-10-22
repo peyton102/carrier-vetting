@@ -43,7 +43,9 @@ const INITIAL_FORM = {
   safetyRating: 'None/Unrated',
   // Insurance
   autoLiability:                '',
+  autoLiabilityExpiration:      '',
   cargoInsurance:               '',
+  cargoExpiration:              '',
   pendingInsuranceCancellation: false,
   // Carrier Assure
   carrierAssureGrade: '',
@@ -796,7 +798,7 @@ export default function CarrierVetting({ settings }) {
           {swData.cargoExpiration && (
             <span style={{ color: '#94a3b8' }}>{' '}Cargo cert expires: <strong>{swData.cargoExpiration}</strong>.</span>
           )}
-          {swData.certStatus && swData.certStatus !== 'APPROVED' && (
+          {swData.certStatus && !['APPROVED', 'OK'].includes(swData.certStatus) && (
             <span style={{ color: '#fbbf24', fontWeight: 600 }}>
               {' '}⚠ Cert status: {swData.certStatus}
             </span>
@@ -864,11 +866,25 @@ export default function CarrierVetting({ settings }) {
               inputStyle={fi('autoLiability')}
             />
           </Field>
+          <Field label="Auto Liability Expiration">
+            <TextInput
+              type="date" name="autoLiabilityExpiration" value={form.autoLiabilityExpiration}
+              onChange={handleChange}
+              inputStyle={fi('autoLiabilityExpiration')}
+            />
+          </Field>
           <Field label={`Cargo Insurance ($) — min $${cfg.cargoMin.toLocaleString()}`}>
             <TextInput
               type="number" name="cargoInsurance" value={form.cargoInsurance}
               onChange={handleChange} placeholder="e.g. 100000" min="0"
               inputStyle={fi('cargoInsurance')}
+            />
+          </Field>
+          <Field label="Cargo Insurance Expiration">
+            <TextInput
+              type="date" name="cargoExpiration" value={form.cargoExpiration}
+              onChange={handleChange}
+              inputStyle={fi('cargoExpiration')}
             />
           </Field>
           <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
@@ -1055,7 +1071,7 @@ export default function CarrierVetting({ settings }) {
         <>
           <div style={{ ...s.verdictCard(verdict.tier), marginTop: 24 }}>
             <div style={s.verdictBadge(verdict.tier)}>
-              {verdictLabel(verdict.tier)} — {verdict.verdict}
+              {verdict.verdict === 'APPROVED WITH OVERRIDE' ? '✓ APPROVED WITH OVERRIDE' : verdictLabel(verdict.tier)}
             </div>
 
             {verdict.authorityDays !== null && (

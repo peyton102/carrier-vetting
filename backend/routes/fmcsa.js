@@ -125,8 +125,14 @@ function buildPayload(c, dot, docketJson, authorityGrantDate) {
 
   const filledFields = Object.keys(fmcsaFields).filter(f => fmcsaFields[f] !== '');
 
+  // Best-effort: FMCSA outOfServiceDate present → active federal OOS order
+  // SaferWatch (operation.outOfService) is more reliable; this catches it when SW is unavailable.
+  const activeFederalOOS = !!c.outOfServiceDate;
+  if (activeFederalOOS) filledFields.push('activeFederalOOS');
+
   return {
     ...fmcsaFields,
+    activeFederalOOS,
     filledFields,
     manualFields: [
       'autoLiability', 'cargoInsurance', 'pendingInsuranceCancellation',
