@@ -2,20 +2,84 @@
 // Re-checks FMCSA + SaferWatch for every active (in-transit) monitored load.
 // Runs on a configurable interval (default 4 h). Alerts via email + DB on change.
 // FMCSA unreachable → "Cannot Verify" alert (never a silent pass).
-// FMCSA key is per-tenant (tenant_credentials). SaferWatch uses operator env keys.
+// FMCSA key is per-tenant (tenant_credentials). SaferWatch uses per-tenant or shared env keys.
+// All pass/fail decisions use the same runVettingRules() as initial vetting —
+// no separate OOS or authority logic here.
 
 import nodemailer    from 'nodemailer';
 import { XMLParser } from 'fast-xml-parser';
-import { fetchSettings } from './settings.js';
-import { decrypt } from './encryption.js';
+import { fetchSettings }   from './settings.js';
+import { decrypt }         from './encryption.js';
+import { runVettingRules } from './rules_engine.js';
 
 const FMCSA_BASE = 'https://mobile.fmcsa.dot.gov/qc/services';
 const SW_BASE    = 'https://www.saferwatch.com/webservices/CarrierService32.php';
 
+// ── Shared helpers (mirrors saferwatch.js) ────────────────────────────────────
+
+function str(v) { return v != null ? String(v) : ''; }
+
+function parseMoney(raw) {
+  if (raw == null || raw === '') return '';
+  const n = parseFloat(String(raw).replace(/[$,\s]/g, ''));
+  return isNaN(n) ? '' : String(n);
+}
+
+function normalizeDate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return '';
+}
+
+function extractCargo(certData) {
+  const empty = { amount: '', expiration: '' };
+  if (!certData) return empty;
+  const certs    = certData.Certificate;
+  if (!certs) return empty;
+  const certList = Array.isArray(certs) ? certs : [certs];
+  for (const cert of certList) {
+    const covs = cert.Coverage;
+    if (!covs) continue;
+    const covList = Array.isArray(covs) ? covs : [covs];
+    for (const cov of covList) {
+      if (/cargo/i.test(cov.type || '')) {
+        return {
+          amount:     parseMoney(cov.coverageLimit),
+          expiration: normalizeDate(str(cov.expirationDate)),
+        };
+      }
+    }
+  }
+  return empty;
+}
+
+function extractAutoLiabilityExpiration(certData) {
+  if (!certData) return '';
+  const certs    = certData.Certificate;
+  if (!certs) return '';
+  const certList = Array.isArray(certs) ? certs : [certs];
+  for (const cert of certList) {
+    const covs = cert.Coverage;
+    if (!covs) continue;
+    const covList = Array.isArray(covs) ? covs : [covs];
+    for (const cov of covList) {
+      if (/liab|bipd|auto/i.test(cov.type || '')) {
+        return normalizeDate(str(cov.expirationDate));
+      }
+    }
+  }
+  return '';
+}
+
 // ── FMCSA helpers ─────────────────────────────────────────────────────────────
 
 function fmcsaUrl(path, webKey) {
-  return `${FMCSA_BASE}${path}?webKey=${webKey}&type=json`;
+  return `${FMCSA_BASE}${path}?webKey=${encodeURIComponent(webKey)}&type=json`;
 }
 
 function normalizeFMCSAAuthority(c) {
@@ -38,6 +102,7 @@ function normalizeFMCSARating(raw) {
   return 'None/Unrated';
 }
 
+// Returns all fields needed by runVettingRules for a live FMCSA check.
 async function fetchFMCSASnapshot(dot, webKey) {
   const res = await fetch(fmcsaUrl(`/carriers/${dot}`, webKey), {
     signal: AbortSignal.timeout(15_000),
@@ -45,40 +110,67 @@ async function fetchFMCSASnapshot(dot, webKey) {
   if (res.status === 404) throw new Error(`DOT ${dot} not found in FMCSA`);
   if (!res.ok) throw new Error(`FMCSA HTTP ${res.status}`);
   const json = await res.json();
-  const c = json?.content?.carrier || json?.content;
+  const c    = json?.content?.carrier || json?.content;
   if (!c) throw new Error('FMCSA returned no carrier record');
+
   return {
-    authorityStatus: normalizeFMCSAAuthority(c),
-    safetyRating:    normalizeFMCSARating(c.safetyRating),
+    carrierName:          c.legalName || '',
+    authorityStatus:      normalizeFMCSAAuthority(c),
+    safetyRating:         normalizeFMCSARating(c.safetyRating),
+    powerUnits:           c.totalPowerUnits != null ? String(c.totalPowerUnits) : '',
+    inspections24mo:      c.vehicleInsp    != null ? String(c.vehicleInsp)      : '',
+    truckOosPct:          c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate).toFixed(2) : '',
+    driverOosPct:         c.driverOosRate  != null ? parseFloat(c.driverOosRate).toFixed(2)  : '',
+    nationalAvgTruckOos:  c.vehicleOosRateNationalAverage != null ? String(c.vehicleOosRateNationalAverage) : '',
+    nationalAvgDriverOos: c.driverOosRateNationalAverage  != null ? String(c.driverOosRateNationalAverage)  : '',
+    activeFederalOOS:     !!c.outOfServiceDate,
   };
 }
 
 // ── SaferWatch helpers ────────────────────────────────────────────────────────
 
-function str(v) { return v != null ? String(v) : ''; }
+// Resolve per-tenant SW keys from DB, falling back to shared env keys.
+async function resolveSwKeys(tid, supabase) {
+  try {
+    const { data } = await supabase
+      .from('tenant_credentials')
+      .select('sw_service_key, sw_customer_key')
+      .eq('tenant_slug', tid)
+      .single();
+    if (data?.sw_service_key && data?.sw_customer_key) {
+      return {
+        serviceKey:  decrypt(data.sw_service_key),
+        customerKey: decrypt(data.sw_customer_key),
+      };
+    }
+  } catch (_) { /* fall through to shared env keys */ }
+  return {
+    serviceKey:  process.env.SAFERWATCH_SERVICE_KEY,
+    customerKey: process.env.SAFERWATCH_CUSTOMER_KEY,
+  };
+}
 
-function swUrl(dot, serviceKey, customerKey) {
+// Returns full SW snapshot including BASIC scores, insurance amounts, and expiry dates.
+// Returns null (not an error) when keys are not configured.
+async function fetchSaferWatchSnapshot(dot, swKeys) {
+  const { serviceKey, customerKey } = swKeys;
+  if (!serviceKey || !customerKey) return null;
+
   const p = new URLSearchParams({
     Action:      'CarrierLookup',
     ServiceKey:  serviceKey,
     CustomerKey: customerKey,
     number:      dot,
   });
-  return `${SW_BASE}?${p}`;
-}
-
-async function fetchSaferWatchSnapshot(dot) {
-  const serviceKey  = process.env.SAFERWATCH_SERVICE_KEY;
-  const customerKey = process.env.SAFERWATCH_CUSTOMER_KEY;
-  if (!serviceKey || !customerKey) return null;
-
-  const res = await fetch(swUrl(dot, serviceKey, customerKey), {
-    signal: AbortSignal.timeout(12_000),
-  });
+  const res = await fetch(`${SW_BASE}?${p}`, { signal: AbortSignal.timeout(12_000) });
   if (!res.ok) throw new Error(`SaferWatch HTTP ${res.status}`);
 
   const xml    = await res.text();
-  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
+  const parser = new XMLParser({
+    ignoreAttributes:    false,
+    attributeNamePrefix: '@_',
+    isArray: (name) => ['Certificate', 'Coverage'].includes(name),
+  });
   const parsed = parser.parse(xml);
   const root   = parsed['CarrierService32.CarrierLookup'];
   if (!root) throw new Error('Unexpected SaferWatch XML structure');
@@ -91,48 +183,92 @@ async function fetchSaferWatchSnapshot(dot) {
   const details = root.CarrierDetails;
   if (!details) throw new Error('SaferWatch: no CarrierDetails');
 
-  const insp  = details.Inspection || {};
-  const toNum = (v) => { const n = parseFloat(v); return isNaN(n) ? NaN : n; };
+  const safety     = details.Safety         || {};
+  const inspection = details.Inspection     || {};
+  const operation  = details.Operation      || {};
+  const equipment  = details.Equipment      || {};
+  const insurance  = details.FMCSAInsurance || {};
+  const certData   = details.CertData       || null;
+
+  const cargo = extractCargo(certData);
+
   return {
-    truckOosPct:  toNum(insp.inspectVehOOSPctUS),
-    driverOosPct: toNum(insp.inspectDrvOOSPctUS),
+    unsafeDrivingBasic:        str(safety.unsafeDrvPCT),
+    hosBasic:                  str(safety.hosPCT),
+    vehicleMaintenanceBasic:   str(safety.vehMaintPCT),
+    controlledSubstancesBasic: str(safety.controlSubPCT),
+    driverFitnessBasic:        str(safety.drvFitPCT),
+    autoLiability:             parseMoney(insurance.bipdOnFile),
+    cargoInsurance:            cargo.amount,
+    autoLiabilityExpiration:   extractAutoLiabilityExpiration(certData),
+    cargoExpiration:           cargo.expiration,
+    truckOosPct:               str(inspection.inspectVehOOSPctUS),
+    driverOosPct:              str(inspection.inspectDrvOOSPctUS),
+    inspections24mo:           str(inspection.inspectTotalUS),
+    powerUnits:                str(equipment.totalPower),
+    activeFederalOOS:          str(operation.outOfService).toLowerCase() === 'yes',
   };
 }
 
-// ── Issue checking (uses tenant settings) ─────────────────────────────────────
+// ── Merge FMCSA + SW snapshots into a runVettingRules-compatible object ────────
+// authorityGrantDate is intentionally left blank — authority age is not re-checked
+// during monitoring. Monitoring only detects degradation from an already-approved state.
 
-function checkFMCSASnapshot(snap, settings) {
-  const issues = [];
-  const bad = ['inactive', 'suspended', 'not authorized', 'revocation pending'];
-  if (bad.includes(snap.authorityStatus.toLowerCase())) {
-    issues.push(`Operating authority changed to "${snap.authorityStatus}" — carrier may no longer operate legally`);
-  }
-  if (settings.blockConditional    && snap.safetyRating === 'Conditional') {
-    issues.push('FMCSA safety rating changed to Conditional');
-  }
-  if (settings.blockUnsatisfactory && snap.safetyRating === 'Unsatisfactory') {
-    issues.push('FMCSA safety rating changed to Unsatisfactory');
-  }
-  return issues;
-}
+function buildCarrierSnapshot(fmcsa, sw) {
+  const snap = {
+    // From FMCSA (authoritative for authority/rating/OOS/inspections)
+    carrierName:               fmcsa.carrierName,
+    authorityStatus:           fmcsa.authorityStatus,
+    authorityGrantDate:        '',   // skip age re-check during monitoring
+    safetyRating:              fmcsa.safetyRating,
+    powerUnits:                fmcsa.powerUnits,
+    inspections24mo:           fmcsa.inspections24mo,
+    truckOosPct:               fmcsa.truckOosPct,
+    driverOosPct:              fmcsa.driverOosPct,
+    nationalAvgTruckOos:       fmcsa.nationalAvgTruckOos,
+    nationalAvgDriverOos:      fmcsa.nationalAvgDriverOos,
+    activeFederalOOS:          fmcsa.activeFederalOOS,
+    // Not monitorable without SW — blank unless SW provides them
+    autoLiability:             '',
+    cargoInsurance:            '',
+    autoLiabilityExpiration:   '',
+    cargoExpiration:           '',
+    unsafeDrivingBasic:        '',
+    crashIndicatorBasic:       '',
+    hosBasic:                  '',
+    vehicleMaintenanceBasic:   '',
+    vehicleDriverObservedBasic: '',
+    driverFitnessBasic:        '',
+    hazmatBasic:               '',
+    controlledSubstancesBasic: '',
+    // Not relevant during monitoring
+    carrierAssureGrade:        '',
+    pendingInsuranceCancellation: false,
+    fmcsaCannotVerify:         false,
+  };
 
-function checkOOSSnapshot(snap, settings) {
-  const issues         = [];
-  const hardBlockTruck = parseFloat(settings.oosHardBlockTruck)  || 35;
-  const mult           = parseFloat(settings.oosRateMultiplier)  || 2;
-  const nationalTruck  = 5.5;
-  const nationalDriver = 5.2;
+  if (sw) {
+    // SW is more granular for OOS/inspection counts — prefer when present
+    if (sw.truckOosPct)    snap.truckOosPct    = sw.truckOosPct;
+    if (sw.driverOosPct)   snap.driverOosPct   = sw.driverOosPct;
+    if (sw.inspections24mo) snap.inspections24mo = sw.inspections24mo;
+    if (sw.powerUnits)     snap.powerUnits     = sw.powerUnits;
+    // SW operation.outOfService is more reliable than FMCSA outOfServiceDate
+    if (sw.activeFederalOOS) snap.activeFederalOOS = sw.activeFederalOOS;
+    // BASIC scores (only available from SW)
+    if (sw.unsafeDrivingBasic)        snap.unsafeDrivingBasic        = sw.unsafeDrivingBasic;
+    if (sw.hosBasic)                  snap.hosBasic                  = sw.hosBasic;
+    if (sw.vehicleMaintenanceBasic)   snap.vehicleMaintenanceBasic   = sw.vehicleMaintenanceBasic;
+    if (sw.controlledSubstancesBasic) snap.controlledSubstancesBasic = sw.controlledSubstancesBasic;
+    if (sw.driverFitnessBasic)        snap.driverFitnessBasic        = sw.driverFitnessBasic;
+    // Insurance amounts and expiry dates (only available from SW)
+    if (sw.autoLiability)           snap.autoLiability           = sw.autoLiability;
+    if (sw.cargoInsurance)          snap.cargoInsurance          = sw.cargoInsurance;
+    if (sw.autoLiabilityExpiration) snap.autoLiabilityExpiration = sw.autoLiabilityExpiration;
+    if (sw.cargoExpiration)         snap.cargoExpiration         = sw.cargoExpiration;
+  }
 
-  // Hard block threshold takes priority over the multiplier check
-  if (!isNaN(snap.truckOosPct) && snap.truckOosPct > hardBlockTruck) {
-    issues.push(`Vehicle OOS rate ${snap.truckOosPct.toFixed(2)}% now exceeds the ${hardBlockTruck}% hard block`);
-  } else if (!isNaN(snap.truckOosPct) && snap.truckOosPct >= nationalTruck * mult) {
-    issues.push(`Vehicle OOS rate ${snap.truckOosPct.toFixed(2)}% now exceeds ${mult}x national average (${(nationalTruck * mult).toFixed(1)}%)`);
-  }
-  if (!isNaN(snap.driverOosPct) && snap.driverOosPct >= nationalDriver * mult) {
-    issues.push(`Driver OOS rate ${snap.driverOosPct.toFixed(2)}% now exceeds ${mult}x national average (${(nationalDriver * mult).toFixed(1)}%)`);
-  }
-  return issues;
+  return snap;
 }
 
 // ── Email ─────────────────────────────────────────────────────────────────────
@@ -188,27 +324,33 @@ async function sendAlertEmail(load, issues, alertType, settings, tenantEmail) {
   transport.close();
 }
 
-// ── Core check ────────────────────────────────────────────────────────────────
+// ── Core check (monitored loads) ──────────────────────────────────────────────
 
-async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey) {
+async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey, swKeys) {
   let issues    = [];
   let alertType = null;
   let newStatus = 'ok';
 
   try {
-    // FMCSA: primary check — failure triggers cannot_verify, not a pass
+    // FMCSA: primary check — failure triggers cannot_verify, not a silent pass
     const fmcsaSnap = await fetchFMCSASnapshot(load.dot_number, webKey);
-    issues.push(...checkFMCSASnapshot(fmcsaSnap, settings));
 
-    // SaferWatch: secondary — failure is logged, not alerted on its own
+    // SaferWatch: secondary — adds BASIC scores, insurance amounts, expiry dates
+    let swSnap = null;
     try {
-      const swSnap = await fetchSaferWatchSnapshot(load.dot_number);
-      if (swSnap) issues.push(...checkOOSSnapshot(swSnap, settings));
+      swSnap = await fetchSaferWatchSnapshot(load.dot_number, swKeys);
     } catch (swErr) {
       console.warn(`[MONITOR] SaferWatch unavailable for DOT ${load.dot_number}: ${swErr.message}`);
     }
 
-    if (issues.length > 0) { alertType = 'status_change'; newStatus = 'alert'; }
+    const carrierData = buildCarrierSnapshot(fmcsaSnap, swSnap);
+    const result      = runVettingRules(carrierData, settings);
+
+    if (result.tier !== 'GREEN') {
+      alertType = 'status_change';
+      newStatus = 'alert';
+      issues    = result.reasons;
+    }
   } catch (fmcsaErr) {
     alertType = 'cannot_verify';
     newStatus  = 'cannot_verify';
@@ -276,17 +418,23 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
   }
 
   for (const [tid, tenantLoads] of Object.entries(byTenant)) {
-    let settings, tenantEmail, webKey;
+    let settings, tenantEmail, webKey, swKeys;
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
       const [tenantRow, credRow] = await Promise.all([
         supabase.from('tenants').select('email').eq('slug', tid).single(),
-        supabase.from('tenant_credentials').select('fmcsa_webkey').eq('tenant_slug', tid).single(),
+        supabase.from('tenant_credentials')
+          .select('fmcsa_webkey, sw_service_key, sw_customer_key')
+          .eq('tenant_slug', tid).single(),
       ]);
 
       tenantEmail = tenantRow.data?.email ?? null;
-      webKey      = credRow.data?.fmcsa_webkey ? decrypt(credRow.data.fmcsa_webkey) : null;
+      webKey      = credRow.data?.fmcsa_webkey  ? decrypt(credRow.data.fmcsa_webkey)  : null;
+      swKeys = {
+        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)  : process.env.SAFERWATCH_SERVICE_KEY,
+        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key) : process.env.SAFERWATCH_CUSTOMER_KEY,
+      };
     } catch (e) {
       console.warn(`[MONITOR] Could not fetch data for tenant ${tid}: ${e.message}`);
       continue;
@@ -298,18 +446,18 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
     }
 
     for (const load of tenantLoads) {
-      await checkSingleLoad(load, settings, tenantEmail, supabase, webKey);
+      await checkSingleLoad(load, settings, tenantEmail, supabase, webKey, swKeys);
     }
   }
 }
 
 // ── Watched-carrier inspection polling ───────────────────────────────────────
 // Polls FMCSA inspection records for every active watched carrier.
-// Detects net-new inspections with OOS violations, auto-blocks the carrier,
-// and emails the tenant when thresholds are crossed.
+// Detects net-new inspections with OOS violations, then runs the full rules engine
+// to decide whether to auto-block. Alerts when runVettingRules returns RED or YELLOW.
 
 async function fetchFMCSAInspections(dot, webKey) {
-  const url = `${FMCSA_BASE}/carriers/${dot}/inspections?webKey=${webKey}&type=json`;
+  const url = `${FMCSA_BASE}/carriers/${dot}/inspections?webKey=${encodeURIComponent(webKey)}&type=json`;
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(`FMCSA inspections HTTP ${res.status} for DOT ${dot}`);
@@ -318,21 +466,6 @@ async function fetchFMCSAInspections(dot, webKey) {
   if (Array.isArray(items)) return items;
   if (Array.isArray(items?.inspection)) return items.inspection;
   return [];
-}
-
-async function fetchFMCSAOosRates(dot, webKey) {
-  const res = await fetch(fmcsaUrl(`/carriers/${dot}`, webKey), {
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`FMCSA HTTP ${res.status}`);
-  const json = await res.json();
-  const c    = json?.content?.carrier || json?.content;
-  if (!c) throw new Error('FMCSA returned no carrier record');
-  return {
-    truckOosPct:  c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate) : NaN,
-    driverOosPct: c.driverOosRate  != null ? parseFloat(c.driverOosRate)  : NaN,
-    inspCount:    c.vehicleInsp    != null ? parseInt(c.vehicleInsp, 10)  : 0,
-  };
 }
 
 async function sendBlockAlertEmail(carrier, newOosInspections, issues, settings, tenantEmail) {
@@ -353,13 +486,16 @@ async function sendBlockAlertEmail(carrier, newOosInspections, issues, settings,
   const carrierLabel = `${carrier.carrier_name || 'Unknown'} — DOT ${carrier.dot_number}`;
   const subject      = `CARRIER AUTO-BLOCKED — ${carrierLabel} — New OOS Inspection`;
 
+  const vOos = i => i.vehicleOosViolations ?? i.oosVehicle ?? i.vehicleOos ?? 0;
+  const dOos = i => i.driverOosViolations  ?? i.oosDrives  ?? i.driverOos  ?? 0;
+
   const inspRows = newOosInspections.map(i => `
     <tr>
       <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.inspDate || '—'}</td>
       <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.reportState || '—'}</td>
       <td style="padding:4px 8px;border:1px solid #e5e7eb">Level ${i.level || '—'}</td>
       <td style="padding:4px 8px;border:1px solid #e5e7eb">
-        ${i.vehicleOosViolations ?? 0} vehicle / ${i.driverOosViolations ?? 0} driver OOS
+        ${vOos(i)} vehicle / ${dOos(i)} driver OOS
       </td>
       <td style="padding:4px 8px;border:1px solid #e5e7eb">${i.reportNumber || '—'}</td>
     </tr>`).join('');
@@ -406,7 +542,7 @@ async function sendBlockAlertEmail(carrier, newOosInspections, issues, settings,
   transport.close();
 }
 
-async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey) {
+async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey, swKeys) {
   console.log(`[MONITOR:WATCH] Checking DOT ${carrier.dot_number} (${carrier.carrier_name || '?'}) [${carrier.tenant_id}]`);
 
   let inspections;
@@ -449,53 +585,64 @@ async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, web
     return;
   }
 
-  // New OOS inspections — re-fetch aggregate rates (FMCSA computes these with time-weighting)
-  let stats = { truckOosPct: NaN, driverOosPct: NaN, inspCount: inspections.length };
+  // New OOS inspections found — fetch current snapshot and run the full rules engine
+  let fmcsaSnap;
   try {
-    stats = await fetchFMCSAOosRates(carrier.dot_number, webKey);
+    fmcsaSnap = await fetchFMCSASnapshot(carrier.dot_number, webKey);
   } catch (err) {
-    console.warn(`[MONITOR:WATCH] DOT ${carrier.dot_number} OOS rate fetch failed: ${err.message}`);
+    console.warn(`[MONITOR:WATCH] DOT ${carrier.dot_number} snapshot fetch failed: ${err.message}`);
+    await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
+    return;
   }
 
-  baseUpdate.last_truck_oos_pct     = isNaN(stats.truckOosPct)  ? null : stats.truckOosPct;
-  baseUpdate.last_driver_oos_pct    = isNaN(stats.driverOosPct) ? null : stats.driverOosPct;
-  baseUpdate.last_inspection_count  = stats.inspCount || inspections.length;
-
-  const hardBlockTruck  = parseFloat(settings.oosHardBlockTruck)  || 35;
-  const hardBlockDriver = parseFloat(settings.oosHardBlockDriver) || 7;
-
-  const issues = [];
-  if (!isNaN(stats.truckOosPct) && stats.truckOosPct > hardBlockTruck) {
-    issues.push(
-      `Vehicle OOS rate ${stats.truckOosPct.toFixed(1)}% now exceeds the ` +
-      `${hardBlockTruck}% hard-block threshold`
-    );
+  let swSnap = null;
+  try {
+    swSnap = await fetchSaferWatchSnapshot(carrier.dot_number, swKeys);
+  } catch (swErr) {
+    console.warn(`[MONITOR:WATCH] SaferWatch unavailable for DOT ${carrier.dot_number}: ${swErr.message}`);
   }
-  if (!isNaN(stats.driverOosPct) && stats.driverOosPct > hardBlockDriver) {
-    issues.push(
-      `Driver OOS rate ${stats.driverOosPct.toFixed(1)}% now exceeds the ` +
-      `${hardBlockDriver}% hard-block threshold`
-    );
+
+  const carrierData = buildCarrierSnapshot(fmcsaSnap, swSnap);
+  const result      = runVettingRules(carrierData, settings);
+
+  baseUpdate.last_truck_oos_pct    = carrierData.truckOosPct  ? parseFloat(carrierData.truckOosPct)  : null;
+  baseUpdate.last_driver_oos_pct   = carrierData.driverOosPct ? parseFloat(carrierData.driverOosPct) : null;
+  baseUpdate.last_inspection_count = parseInt(carrierData.inspections24mo, 10) || inspections.length;
+
+  if (result.tier === 'GREEN') {
+    // New OOS inspections exist but didn't push the carrier over any threshold — log, no block
+    await supabase.from('watched_carriers').update(baseUpdate).eq('id', carrier.id);
+    console.log(`[MONITOR:WATCH] DOT ${carrier.dot_number} — new OOS inspections but still GREEN — no action`);
+    return;
   }
-  for (const i of newOosInspections) {
-    issues.push(
+
+  // RED or YELLOW — block the carrier and alert
+  const issues = [
+    ...result.reasons,
+    ...newOosInspections.map(i =>
       `New OOS inspection: ${i.inspDate || '?'}, ${i.reportState || '?'}, ` +
       `Level ${i.level || '?'} — ${vOos(i)} vehicle OOS, ${dOos(i)} driver OOS ` +
       `(Report #${reportNum(i) || '?'})`
-    );
-  }
+    ),
+  ];
+
+  // Determine primary threshold type for the block record
+  const hardBlockTruck  = parseFloat(settings.oosHardBlockTruck)  || 35;
+  const hardBlockDriver = parseFloat(settings.oosHardBlockDriver) || 7;
+  const tOos = parseFloat(carrierData.truckOosPct);
+  const dOosVal = parseFloat(carrierData.driverOosPct);
 
   let thresholdType  = 'new_oos_inspection';
   let thresholdValue = null;
   let actualValue    = null;
-  if (!isNaN(stats.truckOosPct) && stats.truckOosPct > hardBlockTruck) {
+  if (!isNaN(tOos) && tOos > hardBlockTruck) {
     thresholdType  = 'truck_oos';
     thresholdValue = hardBlockTruck;
-    actualValue    = stats.truckOosPct;
-  } else if (!isNaN(stats.driverOosPct) && stats.driverOosPct > hardBlockDriver) {
+    actualValue    = tOos;
+  } else if (!isNaN(dOosVal) && dOosVal > hardBlockDriver) {
     thresholdType  = 'driver_oos';
     thresholdValue = hardBlockDriver;
-    actualValue    = stats.driverOosPct;
+    actualValue    = dOosVal;
   }
 
   const { error: blockErr } = await supabase.from('carrier_blocks').insert({
@@ -508,7 +655,7 @@ async function checkWatchedCarrier(carrier, settings, tenantEmail, supabase, web
     threshold_type:    thresholdType,
     threshold_value:   thresholdValue,
     actual_value:      actualValue,
-    violation_details: { newInspections, newOosInspections, stats },
+    violation_details: { newInspections, newOosInspections, carrierData, vettingResult: result },
   });
   if (blockErr) console.error('[MONITOR:WATCH] Block insert failed:', blockErr.message);
 
@@ -544,17 +691,23 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
   }
 
   for (const [tid, tenantCarriers] of Object.entries(byTenant)) {
-    let settings, tenantEmail, webKey;
+    let settings, tenantEmail, webKey, swKeys;
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
       const [tenantRow, credRow] = await Promise.all([
         supabase.from('tenants').select('email').eq('slug', tid).single(),
-        supabase.from('tenant_credentials').select('fmcsa_webkey').eq('tenant_slug', tid).single(),
+        supabase.from('tenant_credentials')
+          .select('fmcsa_webkey, sw_service_key, sw_customer_key')
+          .eq('tenant_slug', tid).single(),
       ]);
 
       tenantEmail = tenantRow.data?.email ?? null;
-      webKey      = credRow.data?.fmcsa_webkey ? decrypt(credRow.data.fmcsa_webkey) : null;
+      webKey      = credRow.data?.fmcsa_webkey  ? decrypt(credRow.data.fmcsa_webkey)  : null;
+      swKeys = {
+        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)  : process.env.SAFERWATCH_SERVICE_KEY,
+        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key) : process.env.SAFERWATCH_CUSTOMER_KEY,
+      };
     } catch (e) {
       console.warn(`[MONITOR:WATCH] Could not fetch data for tenant ${tid}: ${e.message}`);
       continue;
@@ -567,7 +720,7 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
 
     for (const carrier of tenantCarriers) {
       try {
-        await checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey);
+        await checkWatchedCarrier(carrier, settings, tenantEmail, supabase, webKey, swKeys);
       } catch (err) {
         console.error(`[MONITOR:WATCH] Unhandled error for DOT ${carrier.dot_number}: ${err.message}`);
       }
