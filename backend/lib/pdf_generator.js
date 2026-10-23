@@ -193,14 +193,26 @@ export function generateVettingPDF(opts) {
     const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
     const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
     const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
-    const ABS_FLOOR    = 20; // hardcoded — cannot be changed in Settings
+    const ABS_FLOOR    = 20; // hardcoded absolute floor — cannot be changed in Settings
 
-    // Truck OOS — label shows all three tiers the engine actually checks
-    const truckLabel = `Truck OOS % (HOLD >=${(natAvgTruck * mult).toFixed(1)}%; REJECT >=${hardTruck}% hard; REJECT >=20% floor)`;
-    oosRowFull(doc, L, W, truckLabel, d.truckOosPct, natAvgTruck, mult, hardTruck, ABS_FLOOR);
+    // Only include a HOLD tier in the label if that threshold can actually fire
+    // (i.e., the multiplier threshold is below the first hard-reject limit for that rate)
+    const truckYellowAt  = natAvgTruck  * mult;
+    const driverYellowAt = natAvgDriver * mult;
+    const truckCanHold   = truckYellowAt  < ABS_FLOOR;   // yellow fires before the 20% floor
+    const driverCanHold  = driverYellowAt < hardDriver;  // yellow fires before the hard block
 
-    // Driver OOS — two tiers (no absolute floor for driver)
-    const driverLabel = `Driver OOS % (HOLD >=${(natAvgDriver * mult).toFixed(1)}%; REJECT >=${hardDriver}% hard)`;
+    const truckParts = [];
+    if (truckCanHold) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
+    truckParts.push(`REJECT >=20% floor`, `REJECT >=${hardTruck}% hard`);
+    const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
+
+    const driverParts = [];
+    if (driverCanHold) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
+    driverParts.push(`REJECT >=${hardDriver}% hard`);
+    const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
+
+    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR);
     oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null);
 
     dataRow(doc, L, W, 'Natl Avg Truck OOS %',  `${natAvgTruck.toFixed(2)}%`);
@@ -319,8 +331,9 @@ function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock
   const isNA    = isNaN(val);
   const isHard  = !isNA && (val >= hardBlock || (absFloor != null && val >= absFloor));
   const isYellow = !isNA && !isHard && val >= parseFloat(nationalAvg) * parseFloat(multiplier);
+  const exceedsAbsFloor = absFloor != null && val >= absFloor && val < hardBlock;
   const flagText = isHard
-    ? (absFloor != null && val >= hardBlock ? '  !! EXCEEDS HARD BLOCK' : '  !! EXCEEDS ABSOLUTE FLOOR')
+    ? (exceedsAbsFloor ? '  !! EXCEEDS ABSOLUTE FLOOR' : '  !! EXCEEDS HARD BLOCK')
     : isYellow ? '  ^ ABOVE FLAG THRESHOLD' : '';
   const display = isNA ? 'N/A' : `${val.toFixed(2)}%${flagText}`;
   const y = doc.y;

@@ -267,15 +267,21 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     yellow.push('Pending insurance cancellation notice on file');
   }
 
-  // OOS rates above threshold but below the hard-fail limits
+  // OOS yellow-flag: only fires when the multiplier threshold is below the applicable hard limit.
+  // If the yellow threshold >= the hard limit, the red check always fires first — dead code otherwise.
   const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 5.5;
   const avgDriver = parseFloat(d.nationalAvgDriverOos) || 5.2;
   const mult      = parseFloat(cfg.oosRateMultiplier)  || 2;
-  if (!isNaN(truckOos)  && truckOos  >= avgTruck  * mult && truckOos  <= hardBlockTruck) {
-    yellow.push(`Truck OOS ${truckOos}% ≥ ${mult}x national average (${(avgTruck * mult).toFixed(1)}%) — manager review required`);
+  const truckYellowAt  = avgTruck  * mult;
+  const driverYellowAt = avgDriver * mult;
+
+  // Truck: yellow fires only if multiplier threshold is below the 20% absolute floor
+  if (!isNaN(truckOos) && truckYellowAt < ABSOLUTE_TRUCK_OOS_FLOOR && truckOos >= truckYellowAt) {
+    yellow.push(`Truck OOS ${truckOos}% >= ${mult}x national average (${truckYellowAt.toFixed(1)}%) — manager review required`);
   }
-  if (!isNaN(driverOos) && driverOos >= avgDriver * mult && driverOos <= hardBlockDriver) {
-    yellow.push(`Driver OOS ${driverOos}% ≥ ${mult}x national average (${(avgDriver * mult).toFixed(1)}%) — manager review required`);
+  // Driver: yellow fires only if multiplier threshold is below the hard block limit
+  if (!isNaN(driverOos) && driverYellowAt < hardBlockDriver && driverOos >= driverYellowAt) {
+    yellow.push(`Driver OOS ${driverOos}% >= ${mult}x national average (${driverYellowAt.toFixed(1)}%) — manager review required`);
   }
 
   if (yellow.length > 0) {
