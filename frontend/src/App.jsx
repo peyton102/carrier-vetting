@@ -136,7 +136,7 @@ export default function App() {
     <div className="app">
       <nav>
         <span className="brand">{user.name || 'Carrier Vetting'}</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 24 }}>
+        <span className="nav-links">
           {navLink('/vetting',      'Vetting')}
           {navLink('/monitoring',   'Monitoring')}
           {navLink('/certificates',   'Certificates')}
@@ -144,7 +144,7 @@ export default function App() {
           {navLink('/settings',      'Settings')}
           {user.isAdmin && navLink('/admin', 'Admin')}
         </span>
-        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span className="nav-user">
           <span style={{ fontSize: 13, color: '#64748b' }}>{user.email}</span>
           <button
             onClick={handleLogout}

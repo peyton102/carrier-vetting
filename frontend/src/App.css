@@ -79,6 +79,47 @@ nav a {
 nav a:hover  { background: #f1f5f9; color: #374151; }
 nav a.active { background: rgba(249,115,22,.1); color: #f97316; font-weight: 700; }
 
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 24px;
+}
+
+.nav-user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+@media (max-width: 700px) {
+  nav {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 0 16px;
+  }
+  nav .brand {
+    padding: 14px 0;
+    margin-right: 0;
+  }
+  .nav-links {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 6px 0 10px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .nav-links::-webkit-scrollbar { display: none; }
+  .nav-user {
+    padding: 14px 0;
+  }
+}
+
 /* ── Page headings ───────────────────────────────────────────────────────── */
 h1 {
   font-size: 26px;
