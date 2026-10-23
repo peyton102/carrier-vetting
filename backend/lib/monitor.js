@@ -271,6 +271,88 @@ function buildCarrierSnapshot(fmcsa, sw) {
   return snap;
 }
 
+// ── Override suppression ──────────────────────────────────────────────────────
+// Maps a reason string to a stable category key. Used to detect whether a
+// monitoring reason was already present (and overridden) during initial vetting.
+
+function categorizeReason(text) {
+  if (/Auto liability insurance expired/i.test(text))        return 'auto_insurance_expired';
+  if (/Auto liability insurance expires/i.test(text))        return 'auto_insurance_expiry';
+  if (/Cargo insurance expired/i.test(text))                 return 'cargo_insurance_expired';
+  if (/Cargo insurance expires/i.test(text))                 return 'cargo_insurance_expiry';
+  if (/authority age/i.test(text))                           return 'authority_age';
+  if (/Operating authority/i.test(text))                     return 'authority_status';
+  if (/FMCSA safety rating/i.test(text))                     return 'safety_rating';
+  if (/Vehicle OOS rate.*absolute floor/i.test(text))        return 'oos_truck_floor';
+  if (/Vehicle OOS rate.*hard limit/i.test(text))            return 'oos_truck_hard';
+  if (/Truck OOS.*national average/i.test(text))             return 'oos_truck_yellow';
+  if (/Driver OOS rate.*hard limit/i.test(text))             return 'oos_driver_hard';
+  if (/Driver OOS.*national average/i.test(text))            return 'oos_driver_yellow';
+  if (/active federal Out-of-Service/i.test(text))           return 'active_oos';
+  if (/Ghost-carrier/i.test(text))                           return 'ghost_carrier';
+  if (/Only \d+ vehicle inspection/i.test(text))             return 'low_volume';
+  if (/Inspection count not provided/i.test(text))           return 'no_inspection_count';
+  if (/no BASIC percentile scores/i.test(text))              return 'no_basic_data';
+  if (/Unsafe Driving BASIC/i.test(text))                    return 'basic_unsafe_driving';
+  if (/Crash Indicator BASIC/i.test(text))                   return 'basic_crash_indicator';
+  if (/Hours of Service BASIC/i.test(text))                  return 'basic_hos';
+  if (/Vehicle Maintenance BASIC/i.test(text))               return 'basic_vehicle_maintenance';
+  if (/Vehicle Driver-Observed BASIC/i.test(text))           return 'basic_vehicle_driver_observed';
+  if (/Driver Fitness BASIC/i.test(text))                    return 'basic_driver_fitness';
+  if (/Hazardous Materials BASIC/i.test(text))               return 'basic_hazmat';
+  if (/Controlled Substances.*BASIC/i.test(text))            return 'basic_controlled_substances';
+  if (/Carrier Assure grade/i.test(text))                    return 'carrier_assure_grade';
+  if (/Pending insurance cancellation/i.test(text))          return 'pending_cancellation';
+  if (/FMCSA.*unreachable/i.test(text))                      return 'fmcsa_cannot_verify';
+  // Fallback: use raw text prefix — guarantees unknown reasons always alert
+  return `unknown:${text.slice(0, 40)}`;
+}
+
+// When a lower-severity reason was overridden, a higher-severity escalation
+// of the same issue should still trigger an alert.
+// Key = overridden category, Value = escalated categories that must still alert.
+const ESCALATIONS = {
+  'auto_insurance_expiry':  ['auto_insurance_expired'],
+  'cargo_insurance_expiry': ['cargo_insurance_expired'],
+  'oos_truck_yellow':       ['oos_truck_floor', 'oos_truck_hard'],
+  'oos_driver_yellow':      ['oos_driver_hard'],
+  'authority_age':          ['authority_status'],  // age HOLD → authority revoked RED
+};
+
+/**
+ * Given the current vetting reasons and the reasons that were overridden at
+ * booking time, return only the reasons that need a new alert:
+ *  - New category not present at override time → alert
+ *  - Same category as overridden reason → suppress
+ *  - Escalation of an overridden reason (HOLD → RED) → alert
+ */
+function filterAlertableReasons(currentReasons, overriddenReasons) {
+  if (!overriddenReasons?.length) return currentReasons;
+
+  const overriddenCats = new Set(overriddenReasons.map(categorizeReason));
+
+  // Build set of categories that are escalations of any overridden category
+  const escalatedFromOverride = new Set();
+  for (const overCat of overriddenCats) {
+    for (const escalated of (ESCALATIONS[overCat] || [])) {
+      escalatedFromOverride.add(escalated);
+    }
+  }
+
+  return currentReasons.filter(reason => {
+    const cat = categorizeReason(reason);
+    if (escalatedFromOverride.has(cat)) return true;  // severity increased → alert
+    if (overriddenCats.has(cat))        return false; // same issue, already overridden → suppress
+    return true;                                       // new issue → alert
+  });
+}
+
+// Reword insurance-expiry reasons for monitoring context (carrier is already on a load).
+function monitorReason(text) {
+  return text.replace(/— confirm renewal before booking/gi,
+    '— confirm renewal, carrier is on an active load');
+}
+
 // ── Email ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -331,6 +413,22 @@ async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey, sw
   let alertType = null;
   let newStatus = 'ok';
 
+  // Fetch original vetting reasons if the load was booked with an override.
+  // We suppress re-alerting on the same issues the manager already approved.
+  let overriddenReasons = [];
+  if (load.vetting_log_id) {
+    try {
+      const { data: origLog } = await supabase
+        .from('vetting_logs')
+        .select('verdict, reasons')
+        .eq('id', load.vetting_log_id)
+        .single();
+      if (origLog?.verdict === 'APPROVED WITH OVERRIDE') {
+        overriddenReasons = origLog.reasons || [];
+      }
+    } catch (_) { /* non-fatal — missing log just means no suppression */ }
+  }
+
   try {
     // FMCSA: primary check — failure triggers cannot_verify, not a silent pass
     const fmcsaSnap = await fetchFMCSASnapshot(load.dot_number, webKey);
@@ -347,9 +445,13 @@ async function checkSingleLoad(load, settings, tenantEmail, supabase, webKey, sw
     const result      = runVettingRules(carrierData, settings);
 
     if (result.tier !== 'GREEN') {
-      alertType = 'status_change';
-      newStatus = 'alert';
-      issues    = result.reasons;
+      const alertable = filterAlertableReasons(result.reasons, overriddenReasons)
+        .map(monitorReason);
+      if (alertable.length > 0) {
+        alertType = 'status_change';
+        newStatus = 'alert';
+        issues    = alertable;
+      }
     }
   } catch (fmcsaErr) {
     alertType = 'cannot_verify';
