@@ -291,8 +291,10 @@ function dataRow(doc, L, W, label, value) {
   const y = doc.y;
   doc.fontSize(9).font('Helvetica-Bold').fillColor(C.darkgray)
      .text(`${label}:`, L, y, { width: 220 });
+  const afterLabel = doc.y;
   doc.font('Helvetica').fillColor(C.black)
      .text(String(value ?? '—'), L + 222, y, { width: W - 222 });
+  doc.y = Math.max(afterLabel, doc.y);
   doc.moveDown(0.15);
 }
 
@@ -301,8 +303,10 @@ function flagRow(doc, L, W, label, val) {
   const y = doc.y;
   doc.fontSize(9).font('Helvetica-Bold').fillColor(C.darkgray)
      .text(`${label}:`, L, y, { width: 220 });
+  const afterLabel = doc.y;
   doc.font('Helvetica-Bold').fillColor(on ? C.red : C.black)
      .text(on ? 'YES' : 'No', L + 222, y, { width: W - 222 });
+  doc.y = Math.max(afterLabel, doc.y);
   doc.moveDown(0.15);
 }
 
@@ -321,8 +325,10 @@ function basicRow(doc, L, W, label, rawVal, threshold) {
   const y = doc.y;
   doc.fontSize(9).font('Helvetica-Bold').fillColor(C.darkgray)
      .text(`${label}:`, L, y, { width: 220 });
+  const afterLabel = doc.y;
   doc.font(over ? 'Helvetica-Bold' : 'Helvetica').fillColor(over ? C.red : C.black)
      .text(display, L + 222, y, { width: W - 222 });
+  doc.y = Math.max(afterLabel, doc.y);
   doc.moveDown(0.15);
 }
 
@@ -339,9 +345,11 @@ function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock
   const y = doc.y;
   doc.fontSize(9).font('Helvetica-Bold').fillColor(C.darkgray)
      .text(`${label}:`, L, y, { width: 220 });
+  const afterLabel = doc.y;
   doc.font(isHard || isYellow ? 'Helvetica-Bold' : 'Helvetica')
      .fillColor(isHard ? C.red : isYellow ? C.yellow : C.black)
      .text(display, L + 222, y, { width: W - 222 });
+  doc.y = Math.max(afterLabel, doc.y);
   doc.moveDown(0.15);
 }
 
