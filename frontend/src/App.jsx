@@ -8,8 +8,9 @@ import Activate       from './pages/Activate.jsx';
 import Monitoring     from './pages/Monitoring.jsx';
 import UsedCarriers   from './pages/UsedCarriers.jsx';
 import AlertBanner    from './components/AlertBanner.jsx';
+import ResetPassword  from './pages/ResetPassword.jsx';
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onForgot }) {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
@@ -74,9 +75,100 @@ function LoginScreen({ onLogin }) {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <button
+            onClick={onForgot}
+            style={{ background: 'none', border: 'none', color: '#f97316', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+          >
+            Forgot password?
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+function ForgotPasswordScreen({ onBack }) {
+  const [email,   setEmail]   = useState('');
+  const [status,  setStatus]  = useState('idle'); // idle | loading | sent | error
+  const [errMsg,  setErrMsg]  = useState('');
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setStatus('loading');
+    try {
+      const res = await fetch('/api/reset/request', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email }),
+      });
+      if (res.ok) setStatus('sent');
+      else        { const d = await res.json(); setErrMsg(d.error || 'Request failed'); setStatus('error'); }
+    } catch { setErrMsg('Could not connect'); setStatus('error'); }
+  }
+
+  const inputStyle = {
+    width: '100%', padding: '10px 14px',
+    border: '1.5px solid #cbd5e1', borderRadius: 8, fontSize: 15, marginBottom: 14,
+    fontFamily: 'inherit', boxSizing: 'border-box', background: '#f8fafc', color: '#0f172a',
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
+      <div style={{ background: '#ffffff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 24px rgba(0,0,0,.08)', padding: '40px 36px', width: 340 }}>
+        <div style={{ fontWeight: 800, fontSize: 20, color: '#0f172a', marginBottom: 4 }}>Carrier Vetting</div>
+
+        {status === 'sent' ? (
+          <>
+            <div style={{ color: '#166534', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Check your email</div>
+            <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>
+              If an account exists for that address, we've sent a reset link. It expires in 1 hour.
+            </p>
+            <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+              Back to sign in
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>
+              Enter your email and we'll send you a reset link.
+            </div>
+            <form onSubmit={handleSubmit}>
+              <input
+                type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="Email address" autoFocus autoComplete="email" style={inputStyle}
+              />
+              {status === 'error' && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{errMsg}</div>}
+              <button
+                type="submit" disabled={status === 'loading' || !email}
+                style={{
+                  width: '100%', padding: '10px',
+                  background: status === 'loading' || !email ? '#e2e8f0' : '#f97316',
+                  color: status === 'loading' || !email ? '#94a3b8' : '#fff',
+                  border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14,
+                  cursor: status === 'loading' || !email ? 'not-allowed' : 'pointer',
+                  opacity: status === 'loading' || !email ? 0.7 : 1,
+                  boxShadow: status === 'loading' || !email ? 'none' : '0 2px 8px rgba(249,115,22,.3)',
+                  marginBottom: 14,
+                }}
+              >
+                {status === 'loading' ? 'Sending…' : 'Send reset link'}
+              </button>
+            </form>
+            <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+              Back to sign in
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LoginOrForgot({ onLogin }) {
+  const [screen, setScreen] = useState('login');
+  if (screen === 'forgot') return <ForgotPasswordScreen onBack={() => setScreen('login')} />;
+  return <LoginScreen onLogin={onLogin} onForgot={() => setScreen('forgot')} />;
 }
 
 export default function App() {
@@ -120,8 +212,9 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/activate" element={<Activate onActivate={data => { setUser(data); }} />} />
-        <Route path="*" element={<LoginScreen onLogin={setUser} />} />
+        <Route path="/activate"       element={<Activate onActivate={data => { setUser(data); }} />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="*"               element={<LoginOrForgot onLogin={setUser} />} />
       </Routes>
     );
   }

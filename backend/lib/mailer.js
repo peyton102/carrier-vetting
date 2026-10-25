@@ -62,3 +62,53 @@ export async function sendInviteEmail(to, orgName, inviteUrl) {
     html,
   });
 }
+
+/**
+ * Send a password-reset email.
+ * @param {string} to       — recipient email
+ * @param {string} resetUrl — full reset URL with token + email
+ */
+export async function sendPasswordResetEmail(to, resetUrl) {
+  const fromName  = process.env.FROM_NAME  || 'Carrier Vetting';
+  const fromEmail = process.env.FROM_EMAIL;
+  const from      = `"${fromName}" <${fromEmail}>`;
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:sans-serif;max-width:560px;margin:40px auto;color:#111827;padding:0 16px;">
+  <div style="background:#1e3a5f;padding:28px 32px;border-radius:8px 8px 0 0;">
+    <h1 style="color:#fff;margin:0;font-size:20px;font-weight:800;">
+      Reset your password
+    </h1>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;padding:28px 32px;border-radius:0 0 8px 8px;">
+    <p style="margin:0 0 16px;font-size:15px;">Hi,</p>
+    <p style="margin:0 0 16px;font-size:15px;">
+      We received a request to reset the password for your ${fromName} account.
+      Click the button below to choose a new password.
+    </p>
+    <div style="text-align:center;margin:32px 0;">
+      <a href="${resetUrl}"
+         style="background:#f97316;color:#fff;padding:13px 32px;border-radius:7px;
+                text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+        Reset My Password
+      </a>
+    </div>
+    <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">
+      This link expires in 1 hour. If you didn't request a password reset, you can ignore this email — your password won't change.
+    </p>
+    <p style="margin:16px 0 0;font-size:11px;color:#9ca3af;word-break:break-all;">
+      Or copy this link into your browser:<br>${resetUrl}
+    </p>
+  </div>
+</body>
+</html>`;
+
+  await getTransport().sendMail({
+    from,
+    to,
+    subject: `Reset your ${fromName} password`,
+    html,
+  });
+}

@@ -18,6 +18,7 @@ import certificatesRouter from './routes/certificates.js';
 import settingsRouter     from './routes/settings.js';
 import adminRouter        from './routes/admin.js';
 import inviteRouter       from './routes/invite.js';
+import resetRouter        from './routes/reset.js';
 import credentialsRouter  from './routes/credentials.js';
 import brokerCheckRouter  from './routes/broker_check.js';
 import monitoringRouter   from './routes/monitoring.js';
@@ -77,6 +78,7 @@ app.post('/api/logout', (req, res) => {
 
 // ── Public routes (no auth required) — must be registered BEFORE requireAuth ──
 app.use('/api/invite',       inviteRouter);
+app.use('/api/reset',        resetRouter);
 
 // ── All routes below require valid JWT ────────────────────────────────────────
 app.use('/api', requireAuth);
