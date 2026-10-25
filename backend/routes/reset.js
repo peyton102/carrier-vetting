@@ -43,7 +43,8 @@ router.post('/request', async (req, res, next) => {
 
     if (insertErr) throw insertErr;
 
-    const resetUrl = `${process.env.PORTAL_URL}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
+    const appOrigin = new URL(process.env.PORTAL_URL).origin;
+    const resetUrl  = `${appOrigin}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
     await sendPasswordResetEmail(cleanEmail, resetUrl);
 
     res.json({ ok: true });
