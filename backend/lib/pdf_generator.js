@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { DEFAULT_SETTINGS } from './rules_engine.js';
+import { DEFAULT_SETTINGS, classifyOos } from './rules_engine.js';
 
 // Colors
 const C = {
@@ -644,14 +644,21 @@ function basicRow(doc, L, W, label, rawVal, threshold, source) {
 }
 
 function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock, absFloor, source) {
-  const val     = parseFloat(rawVal);
-  const isNA    = isNaN(val);
-  const isHard  = !isNA && (val >= hardBlock || (absFloor != null && val >= absFloor));
-  const isYellow = !isNA && !isHard && val >= parseFloat(nationalAvg) * parseFloat(multiplier);
-  const exceedsAbsFloor = absFloor != null && !isNA && val >= absFloor && val < hardBlock;
-  const flagText = isHard
-    ? (exceedsAbsFloor ? '  !! EXCEEDS ABSOLUTE FLOOR' : '  !! EXCEEDS HARD BLOCK')
-    : isYellow ? '  ^ ABOVE FLAG THRESHOLD' : '';
+  const val = parseFloat(rawVal);
+  const cls = classifyOos(
+    val,
+    parseFloat(nationalAvg),
+    parseFloat(multiplier),
+    parseFloat(hardBlock),
+    absFloor != null ? parseFloat(absFloor) : null
+  );
+  const isNA     = cls === 'unknown';
+  const isHard   = cls === 'hard_block' || cls === 'abs_floor';
+  const isYellow = cls === 'yellow';
+  const flagText = cls === 'abs_floor'  ? '  !! EXCEEDS ABSOLUTE FLOOR'
+                 : cls === 'hard_block' ? '  !! EXCEEDS HARD BLOCK'
+                 : cls === 'yellow'     ? '  ^ ABOVE FLAG THRESHOLD'
+                 : '';
   const base    = isNA ? 'Not reviewed (no data)' : `${val.toFixed(2)}%${flagText}`;
   const display = !isNA && source ? `${base} (${source})` : base;
   _twoColRow(doc, L, W,

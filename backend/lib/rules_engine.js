@@ -68,6 +68,26 @@ const FREE_EMAIL_DOMAINS = new Set([
 ]);
 
 /**
+ * Classify an OOS rate into a severity level.
+ * All comparisons use >= so the cert label and the rule always fire on the same value.
+ * Exported and used by pdf_generator so both sides share one comparison.
+ *
+ * @param {number}      val        — OOS rate (e.g. 19.5 for 19.5%)
+ * @param {number}      natAvg     — live national average OOS rate
+ * @param {number}      multiplier — yellow threshold = natAvg × multiplier
+ * @param {number}      hardBlock  — hard-block threshold (RED, no override)
+ * @param {number|null} absFloor   — absolute floor (truck only; null = not applicable)
+ * @returns {'hard_block'|'abs_floor'|'yellow'|'clear'|'unknown'}
+ */
+export function classifyOos(val, natAvg, multiplier, hardBlock, absFloor = null) {
+  if (val == null || isNaN(val)) return 'unknown';
+  if (val >= hardBlock)                         return 'hard_block';
+  if (absFloor != null && val >= absFloor)      return 'abs_floor';
+  if (natAvg > 0 && val >= natAvg * multiplier) return 'yellow';
+  return 'clear';
+}
+
+/**
  * Run the tri-tier (RED / YELLOW / GREEN) vetting rules.
  *
  * RED    → REJECT, canOverride: false — no one can override
@@ -196,20 +216,26 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     red.push(`Unrated carrier with Carrier Assure grade ${grade} — auto-reject`);
   }
 
-  // OOS rate hard fails — apply regardless of BASIC availability or inspection volume
+  // OOS rate classification — uses classifyOos() so rule and cert label always use the same >= comparison
   const hardBlockTruck  = parseFloat(cfg.oosHardBlockTruck)  || 35;
   const hardBlockDriver = parseFloat(cfg.oosHardBlockDriver) || 7;
-  const truckOos        = parseFloat(d.truckOosPct);
-  const driverOos       = parseFloat(d.driverOosPct);
+  const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 22.26;
+  const avgDriver = parseFloat(d.nationalAvgDriverOos) || 6.67;
+  const mult      = parseFloat(cfg.oosRateMultiplier)  || 2;
+  const truckOos  = parseFloat(d.truckOosPct);
+  const driverOos = parseFloat(d.driverOosPct);
 
-  if (!isNaN(truckOos) && truckOos > ABSOLUTE_TRUCK_OOS_FLOOR && truckOos <= hardBlockTruck) {
-    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
+  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, hardBlockTruck,  ABSOLUTE_TRUCK_OOS_FLOOR);
+  const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver, null);
+
+  if (truckOosClass === 'abs_floor') {
+    red.push(`Vehicle OOS rate ${truckOos}% >= the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
   }
-  if (!isNaN(truckOos) && truckOos > hardBlockTruck) {
-    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
+  if (truckOosClass === 'hard_block') {
+    red.push(`Vehicle OOS rate ${truckOos}% >= the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
   }
-  if (!isNaN(driverOos) && driverOos > hardBlockDriver) {
-    red.push(`Driver OOS rate ${driverOos}% exceeds the ${hardBlockDriver}% hard limit — automatic disqualification, no override`);
+  if (driverOosClass === 'hard_block') {
+    red.push(`Driver OOS rate ${driverOos}% >= the ${hardBlockDriver}% hard limit — automatic disqualification, no override`);
   }
 
   // CSA BASIC checks — 7 BASICs (Controlled Substances replaced by binary flag above)
@@ -342,18 +368,12 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     yellow.push('Pending insurance cancellation notice on file');
   }
 
-  // OOS yellow-flag
-  const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 5.5;
-  const avgDriver = parseFloat(d.nationalAvgDriverOos) || 5.2;
-  const mult      = parseFloat(cfg.oosRateMultiplier)  || 2;
-  const truckYellowAt  = avgTruck  * mult;
-  const driverYellowAt = avgDriver * mult;
-
-  if (!isNaN(truckOos) && truckYellowAt < ABSOLUTE_TRUCK_OOS_FLOOR && truckOos >= truckYellowAt) {
-    yellow.push(`Truck OOS ${truckOos}% >= ${mult}x national average (${truckYellowAt.toFixed(1)}%) — manager review required`);
+  // OOS yellow-flag — classifyOos() result from above; already handles all range guards
+  if (truckOosClass === 'yellow') {
+    yellow.push(`Truck OOS ${truckOos}% >= ${mult}x national average (${(avgTruck * mult).toFixed(1)}%) — manager review required`);
   }
-  if (!isNaN(driverOos) && driverYellowAt < hardBlockDriver && driverOos >= driverYellowAt) {
-    yellow.push(`Driver OOS ${driverOos}% >= ${mult}x national average (${driverYellowAt.toFixed(1)}%) — manager review required`);
+  if (driverOosClass === 'yellow') {
+    yellow.push(`Driver OOS ${driverOos}% >= ${mult}x national average (${(avgDriver * mult).toFixed(1)}%) — manager review required`);
   }
 
   // ── Determine verdict ────────────────────────────────────────────────────
