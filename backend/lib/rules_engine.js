@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS = {
 const FEDERAL_AUTO_LIABILITY_MIN = 750_000;
 
 // FMCSA complaint portal — referenced in identity-check warnings.
-const FMCSA_COMPLAINT_URL = 'https://complaint.fmcsa.dot.gov/';
+const FMCSA_COMPLAINT_URL = 'https://nccdb.fmcsa.dot.gov';
 
 // Absolute truck OOS floor — always RED regardless of tenant settings.
 const ABSOLUTE_TRUCK_OOS_FLOOR = 20;

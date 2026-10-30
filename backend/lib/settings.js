@@ -26,8 +26,10 @@ export function rowToCfg(row) {
     basicVehicleDriverObservedAction:       row.basic_vehicle_driver_observed_action,
     basicHazmatThreshold:                   row.basic_hazmat_threshold,
     basicHazmatAction:                      row.basic_hazmat_action,
-    autoLiabilityMin:                       row.auto_liability_min,
-    cargoMin:                               row.cargo_min,
+    // Round money thresholds to nearest $1,000 — prevents floating-point near-misses
+    // (e.g. DB storing 749995 instead of 750000 from a prior migration).
+    autoLiabilityMin: row.auto_liability_min != null ? Math.round(row.auto_liability_min / 1000) * 1000 : undefined,
+    cargoMin:         row.cargo_min          != null ? Math.round(row.cargo_min          / 1000) * 1000 : undefined,
     authorityMinDays:                       row.authority_min_days,
     authorityAgeAction:                     row.authority_age_action,
     oosRateMultiplier:                      row.oos_rate_multiplier,

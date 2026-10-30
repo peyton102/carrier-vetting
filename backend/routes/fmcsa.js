@@ -192,98 +192,89 @@ function parseSaferPhone(html) {
 
 // Parse crash totals from SAFER HTML crash section.
 // Returns { count, fatal, injury, tow } or null when section not found.
+// SAFER uses <TABLE summary="Crashes"> with column headers Fatal|Injury|Tow|Total
+// and a data row: <TH SCOPE="ROW">Crashes</TH><TD>...</TD>...
 function parseSaferCrashes(html) {
   try {
-    // Find the crash section: TH containing "crash" + "24" followed by the TD content
-    const sectionMatch = html.match(
-      /<TH[^>]*>(?:(?!<\/TH>)[\s\S])*?[Cc]rash(?:(?!<\/TH>)[\s\S])*?24(?:(?!<\/TH>)[\s\S])*?<\/TH>([\s\S]*?)<\/TR>/i
-    );
-    if (!sectionMatch) return null;
+    // Find the crash table by its summary attribute
+    const tableMatch = html.match(/<TABLE[^>]*summary="Crashes"[^>]*>([\s\S]*?)<\/TABLE>/i);
+    if (!tableMatch) return null;
+    const tbl = tableMatch[1];
 
-    const sectionHtml = sectionMatch[1];
-    const plain = sectionHtml
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Extract all TR rows
+    const rows = [];
+    const rowRe = /<TR[^>]*>([\s\S]*?)<\/TR>/gi;
+    let m;
+    while ((m = rowRe.exec(tbl)) !== null) rows.push(m[1]);
+    if (rows.length < 2) return null;
 
-    // Method 1: each label directly precedes its value (e.g. "Fatal: 0  Tow: 4")
-    const adjacent = (label) => {
-      const m = plain.match(new RegExp(`${label}[^\\d]{0,12}(\\d+)`, 'i'));
-      return m ? parseInt(m[1], 10) : null;
-    };
+    // Header row: column names from TH cells (Type | Fatal | Injury | Tow | Total)
+    const headers = [...rows[0].matchAll(/<TH[^>]*>([\s\S]*?)<\/TH>/gi)]
+      .map(h => h[1].replace(/<[^>]+>/g, '').trim().toLowerCase());
 
-    let fatal  = adjacent('Fatal');
-    let injury = adjacent('Injur');
-    let tow    = adjacent('Tow');
-    let total  = adjacent('Total');
-
-    // Method 2: all headers listed first, then all values in the same order
-    // e.g. "Fatal Injury Tow Total  0  0  4  4"
-    if (total === null && fatal === null) {
-      const labels = [
-        { key: 'fatal',  re: /\bfatal\b/i  },
-        { key: 'injury', re: /\binjur/i    },
-        { key: 'tow',    re: /\btow\b/i    },
-        { key: 'total',  re: /\btotal\b/i  },
-      ];
-      const found = labels
-        .map(l => ({ ...l, pos: plain.search(l.re) }))
-        .filter(l => l.pos >= 0)
-        .sort((a, b) => a.pos - b.pos);
-
-      if (found.length >= 2) {
-        const lastPos = found[found.length - 1].pos;
-        // find the label text length (up to next space or end)
-        const afterAll = plain.slice(lastPos).replace(/^[a-z]+\s*/i, '');
-        const nums = (afterAll.match(/\d+/g) || []).map(Number);
-        if (nums.length >= found.length) {
-          found.forEach((l, i) => {
-            if (l.key === 'fatal')  fatal  = nums[i];
-            if (l.key === 'injury') injury = nums[i];
-            if (l.key === 'tow')    tow    = nums[i];
-            if (l.key === 'total')  total  = nums[i];
-          });
-        }
+    // Data row: TR containing <TH SCOPE="ROW">Crashes</TH>
+    let dataTds = null;
+    for (let i = 1; i < rows.length; i++) {
+      if (/crashes/i.test(rows[i]) && /<TH[^>]*/i.test(rows[i])) {
+        dataTds = [...rows[i].matchAll(/<TD[^>]*>([\s\S]*?)<\/TD>/gi)]
+          .map(td => td[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').trim());
+        break;
       }
     }
+    if (!dataTds || dataTds.length === 0) return null;
 
-    if (total === null && fatal === null) return null;
+    // headers[0] = "type" (the row-header column); data TDs start at column index 1.
+    // dataTds[0] = Fatal value, dataTds[1] = Injury, dataTds[2] = Tow, dataTds[3] = Total
+    const findVal = (label) => {
+      const idx = headers.findIndex(h => h.includes(label));
+      if (idx < 1) return null;
+      const n = parseInt(dataTds[idx - 1], 10);
+      return isNaN(n) ? null : n;
+    };
 
-    const count = total ?? ((fatal ?? 0) + (injury ?? 0) + (tow ?? 0));
-    return { count, fatal: fatal ?? 0, injury: injury ?? 0, tow: tow ?? 0 };
+    const fatal  = findVal('fatal');
+    const injury = findVal('injur');
+    const tow    = findVal('tow');
+    const total  = findVal('total');
+
+    if (total === null && fatal === null && tow === null) return null;
+    return {
+      count:  total  ?? ((fatal ?? 0) + (injury ?? 0) + (tow ?? 0)),
+      fatal:  fatal  ?? 0,
+      injury: injury ?? 0,
+      tow:    tow    ?? 0,
+    };
   } catch (_) { return null; }
 }
 
 // Parse live national OOS averages + "as of" date from SAFER HTML OOS section.
 // Returns { truckNatAvg, driverNatAvg, asOf } or null when section not found.
+// SAFER structure: <TR><TH>Nat'l Average %<br><span>as of DATE MM/DD/YYYY*</span></TH><TD>22.26%</TD><TD>6.67%</TD>...
 function parseSaferOosAverages(html) {
   try {
-    // Find the OOS rate section: TH containing "out of service" or "OOS"
-    const sectionMatch = html.match(
-      /<TH[^>]*>(?:(?!<\/TH>)[\s\S])*?(?:out\s*of\s*service|oos\s*rate)(?:(?!<\/TH>)[\s\S])*?<\/TH>([\s\S]*?)<\/TR>/i
-    );
-    if (!sectionMatch) return null;
+    // Find the TR containing "Nat'l Average" (the apostrophe may vary)
+    const rowMatch = html.match(/<TR[^>]*>[\s\S]*?Nat.{0,5}l\s+Average[\s\S]*?<\/TR>/i);
+    if (!rowMatch) return null;
+    const rowHtml = rowMatch[0];
 
-    const plain = sectionMatch[1]
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Extract date from the TH: "as of DATE 09/25/2026" — "DATE" is a literal keyword in SAFER HTML
+    const thMatch  = rowHtml.match(/<TH[^>]*>([\s\S]*?)<\/TH>/i);
+    const thText   = thMatch ? thMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    const asOfMatch = thText.match(/as\s+of\s+(?:DATE\s+)?([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i)
+                  || thText.match(/as\s+of\s+(?:DATE\s+)?([\d]{4}-[\d]{2}-[\d]{2})/i);
 
-    // Find "Natl" or "National" avg + two percentages (vehicle then driver)
-    const natMatch = plain.match(
-      /nat(?:ional|l\.?)[\s\S]{0,40}?(\d+\.?\d*)\s*%[\s\S]{0,60}?(\d+\.?\d*)\s*%/i
-    );
-    if (!natMatch) return null;
+    // Extract TD values — first = vehicle/truck avg, second = driver avg
+    const tds = [...rowHtml.matchAll(/<TD[^>]*>([\s\S]*?)<\/TD>/gi)]
+      .map(td => td[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').replace(/\s+/g, ' ').trim());
 
-    // "as of MM/DD/YYYY"
-    const asOfMatch = plain.match(/as\s+of\s+([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i)
-                   || plain.match(/as\s+of\s+([\d]{4}-[\d]{2}-[\d]{2})/i);
+    if (tds.length < 2) return null;
+    const truck  = tds[0].replace('%', '').trim();
+    const driver = tds[1].replace('%', '').trim();
+    if (!truck || !driver || isNaN(parseFloat(truck)) || isNaN(parseFloat(driver))) return null;
 
     return {
-      truckNatAvg:  natMatch[1],
-      driverNatAvg: natMatch[2],
+      truckNatAvg:  truck,
+      driverNatAvg: driver,
       asOf: asOfMatch ? asOfMatch[1] : null,
     };
   } catch (_) { return null; }

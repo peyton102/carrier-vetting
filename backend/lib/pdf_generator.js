@@ -371,8 +371,9 @@ export function generateVettingPDF(opts) {
       d.cleanInspections24mo != null && d.cleanInspections24mo !== '' ? String(d.cleanInspections24mo) : null,
       src('cleanInspections24mo'));
 
-    const natAvgTruck  = parseFloat(d.nationalAvgTruckOos)  || 5.5;
-    const natAvgDriver = parseFloat(d.nationalAvgDriverOos) || 5.2;
+    // Use live SAFER national averages; fall back to FMCSA SMS published values only when absent.
+    const natAvgTruck  = parseFloat(d.nationalAvgTruckOos)  || 22.26;
+    const natAvgDriver = parseFloat(d.nationalAvgDriverOos) || 6.67;
     const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
     const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
     const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
@@ -547,7 +548,10 @@ function _twoColRow(doc, L, W, labelFont, labelColor, labelText,
   doc.fontSize(9);
   const labelH = doc.font(labelFont).heightOfString(labelText,  { width: 220 });
   const valueH = doc.font(valueFont).heightOfString(valueText,  { width: W - 222 });
-  const rowH   = Math.max(labelH, valueH);
+  // Ensure rowH is at least one full line height — prevents rows from collapsing
+  // when heightOfString returns an unexpectedly small value.
+  const minH   = doc.currentLineHeight();
+  const rowH   = Math.max(labelH, valueH, minH);
 
   const pageBottom = doc.page.height - doc.page.margins.bottom;
   if (doc.y + rowH > pageBottom) doc.addPage();
@@ -556,7 +560,7 @@ function _twoColRow(doc, L, W, labelFont, labelColor, labelText,
   doc.font(labelFont).fillColor(labelColor).text(labelText, L,       y, { width: 220 });
   doc.font(valueFont).fillColor(valueColor).text(valueText, L + 222, y, { width: W - 222 });
   doc.y = y + rowH;
-  doc.moveDown(0.15);
+  doc.moveDown(0.25);
 }
 
 function dataRow(doc, L, W, label, value, source) {
