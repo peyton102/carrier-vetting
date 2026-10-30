@@ -69,8 +69,8 @@ const FREE_EMAIL_DOMAINS = new Set([
 
 /**
  * Classify an OOS rate into a severity level.
- * All comparisons use >= so the cert label and the rule always fire on the same value.
- * Exported and used by pdf_generator so both sides share one comparison.
+ * RED checks use > (strictly above threshold); YELLOW uses >= (at or above).
+ * Exported and used by pdf_generator so the cert label and the rule always agree.
  *
  * @param {number}      val        — OOS rate (e.g. 19.5 for 19.5%)
  * @param {number}      natAvg     — live national average OOS rate
@@ -81,8 +81,8 @@ const FREE_EMAIL_DOMAINS = new Set([
  */
 export function classifyOos(val, natAvg, multiplier, hardBlock, absFloor = null) {
   if (val == null || isNaN(val)) return 'unknown';
-  if (val >= hardBlock)                         return 'hard_block';
-  if (absFloor != null && val >= absFloor)      return 'abs_floor';
+  if (val > hardBlock)                          return 'hard_block';
+  if (absFloor != null && val > absFloor)       return 'abs_floor';
   if (natAvg > 0 && val >= natAvg * multiplier) return 'yellow';
   return 'clear';
 }
@@ -229,13 +229,13 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver, null);
 
   if (truckOosClass === 'abs_floor') {
-    red.push(`Vehicle OOS rate ${truckOos}% >= the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
+    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
   }
   if (truckOosClass === 'hard_block') {
-    red.push(`Vehicle OOS rate ${truckOos}% >= the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
+    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
   }
   if (driverOosClass === 'hard_block') {
-    red.push(`Driver OOS rate ${driverOos}% >= the ${hardBlockDriver}% hard limit — automatic disqualification, no override`);
+    red.push(`Driver OOS rate ${driverOos}% exceeds the ${hardBlockDriver}% hard limit — automatic disqualification, no override`);
   }
 
   // CSA BASIC checks — 7 BASICs (Controlled Substances replaced by binary flag above)
@@ -401,8 +401,8 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
 
 function checkBasic(red, yellow, rawVal, threshold, action, label) {
   const val = parseFloat(rawVal);
-  if (isNaN(val) || val < threshold) return;
-  const msg = `${label} BASIC ${val}% >= this broker's ${threshold}% threshold`;
+  if (isNaN(val) || val <= threshold) return;
+  const msg = `${label} BASIC ${val}% > this broker's ${threshold}% threshold`;
   if (action === 'reject') red.push(msg + ' — automatic disqualification, no override');
   else yellow.push(msg);
 }

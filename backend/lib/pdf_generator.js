@@ -34,8 +34,8 @@ const REVIEWABLE_FIELDS = [
   ['driverFitnessBasic',        'Driver Fitness BASIC'],
   ['hazmatBasic',               'Hazardous Materials BASIC'],
   ['carrierAssureGrade',        'Carrier Assure Grade'],
-  ['contactPhone',              'Contact Phone (dispatcher dealing with)'],
-  ['contactEmail',              'Contact Email (dispatcher dealing with)'],
+  ['contactPhone',              'Contact Phone (dispatcher)'],
+  ['contactEmail',              'Contact Email (dispatcher)'],
 ];
 
 /**
@@ -183,7 +183,7 @@ export function generateVettingPDF(opts) {
       doc.y = warnBoxY + 22;
       warnings.forEach(w => {
         doc.fontSize(9).font('Helvetica').fillColor(C.yellow)
-           .text(`\u26a0  ${w}`, L + 8, doc.y, { width: W - 8 });
+           .text(`!!  ${w}`, L + 8, doc.y, { width: W - 8 });
       });
     }
 
@@ -263,32 +263,32 @@ export function generateVettingPDF(opts) {
     }
 
     basicRow(doc, L, W,
-      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicUnsafeDrivingThreshold}%)`,
+      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'));
     basicRow(doc, L, W,
-      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicCrashIndicatorThreshold}%)`,
+      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold, src('crashIndicatorBasic'));
     basicRow(doc, L, W,
-      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHosThreshold}%)`,
+      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold, src('hosBasic'));
     basicRow(doc, L, W,
-      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleMaintenanceThreshold}%)`,
+      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'));
     basicRow(doc, L, W,
-      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleDriverObservedThreshold}%)`,
+      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold, src('vehicleDriverObservedBasic'));
     basicRow(doc, L, W,
-      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicDriverFitnessThreshold}%)`,
+      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'));
     basicRow(doc, L, W,
-      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHazmatThreshold}%)`,
+      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHazmatThreshold}%)`,
       d.hazmatBasic, cfg.basicHazmatThreshold, src('hazmatBasic'));
 
     doc.moveDown(0.4);
 
     // ── Identity check ────────────────────────────────────────────────────────
     sectionHeader(doc, L, W, 'IDENTITY CHECK AGAINST FMCSA RECORDS');
-    dataRow(doc, L, W, 'Contact Phone (dispatcher dealing with)', d.contactPhone);
+    dataRow(doc, L, W, 'Contact Phone (dispatcher)', d.contactPhone);
     dataRow(doc, L, W, 'FMCSA Phone on Record', d.fmcsaPhone, src('fmcsaPhone'));
 
     if (d.contactPhone && d.fmcsaPhone) {
@@ -304,7 +304,7 @@ export function generateVettingPDF(opts) {
       dataRow(doc, L, W, 'Phone Match', null);
     }
 
-    dataRow(doc, L, W, 'Contact Email (dispatcher dealing with)', d.contactEmail);
+    dataRow(doc, L, W, 'Contact Email (dispatcher)', d.contactEmail);
     if (d.contactEmail) {
       const domain = String(d.contactEmail).split('@').pop().toLowerCase().trim();
       const freeProviders = new Set([
@@ -386,12 +386,12 @@ export function generateVettingPDF(opts) {
 
     const truckParts = [];
     if (truckCanHold) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
-    truckParts.push(`REJECT >=20% floor`, `REJECT >=${hardTruck}% hard`);
+    truckParts.push(`REJECT >20% floor`, `REJECT >${hardTruck}% hard`);
     const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
 
     const driverParts = [];
     if (driverCanHold) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
-    driverParts.push(`REJECT >=${hardDriver}% hard`);
+    driverParts.push(`REJECT >${hardDriver}% hard`);
     const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
 
     oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, src('truckOosPct'));
@@ -631,10 +631,10 @@ function doubleBrokerChameleonRow(doc, L, W, dbVal, chamVal) {
 function basicRow(doc, L, W, label, rawVal, threshold, source) {
   const val  = parseFloat(rawVal);
   const isNA = isNaN(val) || rawVal == null || rawVal === '';
-  const over = !isNA && val >= threshold;
+  const over = !isNA && val > threshold;
   const base = isNA
     ? 'Not reviewed (no data)'
-    : `${val.toFixed(2)}%${over ? `  \u26a0 ABOVE this broker\u2019s ${threshold}% threshold` : ''}`;
+    : `${val.toFixed(2)}%${over ? `  !! ABOVE this broker\u2019s ${threshold}% threshold` : ''}`;
   const display = !isNA && source ? `${base} (${source})` : base;
   _twoColRow(doc, L, W,
     'Helvetica-Bold', C.darkgray, `${label}:`,
