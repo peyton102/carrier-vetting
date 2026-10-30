@@ -10,6 +10,7 @@ import { decrypt } from '../lib/encryption.js';
 
 const router           = express.Router();
 const BASE             = 'https://mobile.fmcsa.dot.gov/qc/services';
+const SAFER_BASE       = 'https://safer.fmcsa.dot.gov';
 const FMCSA_TIMEOUT_MS = 15_000;
 
 function isNetworkError(e) {
@@ -102,7 +103,7 @@ function extractGrantDate(authorityJson) {
   return dates[0].toISOString().slice(0, 10);
 }
 
-function buildPayload(c, dot, docketJson, authorityGrantDate) {
+function buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone = '') {
   const truckInsp = c.vehicleInsp    ?? 0;
   const truckOos  = c.vehicleOosInsp ?? 0;
 
@@ -121,23 +122,33 @@ function buildPayload(c, dot, docketJson, authorityGrantDate) {
                             ? String(c.vehicleOosRateNationalAverage) : '',
     nationalAvgDriverOos: c.driverOosRateNationalAverage != null
                             ? String(c.driverOosRateNationalAverage) : '',
+    fmcsaPhone:           saferPhone,   // parsed from SAFER HTML — QCMobile JSON has no phone field
+    hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
   };
 
-  const filledFields = Object.keys(fmcsaFields).filter(f => fmcsaFields[f] !== '');
+  const filledFields = Object.keys(fmcsaFields).filter(f => {
+    const v = fmcsaFields[f];
+    return v !== '' && v !== false && v != null;
+  });
 
   // Best-effort: FMCSA outOfServiceDate present → active federal OOS order
   // SaferWatch (operation.outOfService) is more reliable; this catches it when SW is unavailable.
   const activeFederalOOS = !!c.outOfServiceDate;
   if (activeFederalOOS) filledFields.push('activeFederalOOS');
 
+  const crashData = crashes24mo ?? { count: 0, items: [] };
+  filledFields.push('crashes24mo');
+
   return {
     ...fmcsaFields,
     activeFederalOOS,
+    crashes24mo: crashData,
     filledFields,
     manualFields: [
       'autoLiability', 'cargoInsurance', 'pendingInsuranceCancellation',
       'unsafeDrivingBasic', 'crashIndicatorBasic', 'hosBasic', 'vehicleMaintenanceBasic',
-      'vehicleDriverObservedBasic', 'driverFitnessBasic', 'hazmatBasic', 'controlledSubstancesBasic',
+      'vehicleDriverObservedBasic', 'driverFitnessBasic', 'hazmatBasic',
+      'drugAlcoholViolation', 'contactPhone', 'contactEmail',
       'cleanInspections24mo',
       'carrierAssureGrade', 'fraudFlag', 'doubleBrokerFlag', 'chameleonFlag',
     ],
@@ -157,11 +168,70 @@ function buildPayload(c, dot, docketJson, authorityGrantDate) {
   };
 }
 
+// ── SAFER Company Snapshot — phone number ─────────────────────────────────────
+// QCMobile /carriers/{dot} JSON does not include phone numbers.
+// Phone is only available in the SAFER HTML snapshot (publicly accessible, no key needed).
+// Row: <TH scope="ROW">Phone:</TH> <TD class="queryfield">(xxx) xxx-xxxx</TD>
+function parseSaferPhone(html) {
+  const m = html.match(
+    /<TH[^>]*SCOPE="ROW"[^>]*>[\s\S]*?Phone:?[\s\S]*?<\/TH>\s*<TD[^>]*class="queryfield"[^>]*>([\s\S]*?)<\/TD>/i
+  );
+  if (!m) return '';
+  return m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').replace(/\s+/g, ' ').trim();
+}
+
+async function fetchSaferPhone(dot) {
+  try {
+    const url = `${SAFER_BASE}/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dot}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(9_000) });
+    if (!res.ok) return '';
+    return parseSaferPhone(await res.text());
+  } catch (_) { return ''; }
+}
+
 async function fetchGrantDate(dot, webKey) {
   try {
     const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
     return r.ok ? extractGrantDate(await r.json()) : '';
   } catch (_) { return ''; }
+}
+
+async function fetchCrashes(dot, webKey) {
+  try {
+    const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/crashes`, webKey));
+    if (!r.ok) return { count: 0, items: [] };
+    const json = await r.json();
+
+    // FMCSA returns crashes in various shapes depending on API version
+    let all = [];
+    if (Array.isArray(json?.content))                  all = json.content;
+    else if (Array.isArray(json?.content?.crashes))    all = json.content.crashes;
+    else if (Array.isArray(json?.content?.crash))      all = json.content.crash;
+    else if (Array.isArray(json?.content?.crashResults)) all = json.content.crashResults;
+
+    // Filter to last 24 months
+    const cutoffMs = Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000;
+    const recent = all.filter(c => {
+      const dateStr = c.reportDate || c.accDate || c.date || '';
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      return !isNaN(d.getTime()) && d.getTime() >= cutoffMs;
+    });
+
+    return {
+      count: recent.length,
+      items: recent.map(c => ({
+        date:       c.reportDate || c.accDate || c.date || '',
+        state:      c.reportState || c.state || '',
+        fatalities: parseInt(c.fatal    ?? c.fatalities ?? 0, 10),
+        injuries:   parseInt(c.injure   ?? c.injuries   ?? 0, 10),
+        towaway:    !!(c.towAway ?? c.towaways ?? false),
+        hazmatRel:  !!(c.hazmatRel ?? false),
+      })),
+    };
+  } catch (_) {
+    return { count: 0, items: [] };
+  }
 }
 
 // ── DOT lookup ────────────────────────────────────────────────────────────────
@@ -184,10 +254,14 @@ router.get('/dot/:dot', async (req, res, next) => {
     const c = (await carrierRes.json())?.content?.carrier;
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
-    const docketJson         = docketRes.ok ? await docketRes.json() : null;
-    const authorityGrantDate = await fetchGrantDate(dot, webKey);
+    const docketJson = docketRes.ok ? await docketRes.json() : null;
+    const [authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
+      fetchGrantDate(dot, webKey),
+      fetchCrashes(dot, webKey),
+      fetchSaferPhone(dot),
+    ]);
 
-    res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
+    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
@@ -213,12 +287,14 @@ router.get('/mc/:mc', async (req, res, next) => {
     if (!c || !c.dotNumber) return res.status(404).json({ error: 'FMCSA returned no carrier record for that MC number' });
 
     const dot = String(c.dotNumber);
-    const [docketsRes, authorityGrantDate] = await Promise.all([
+    const [docketsRes, authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
       fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)).then(r => r.ok ? r.json() : null),
       fetchGrantDate(dot, webKey),
+      fetchCrashes(dot, webKey),
+      fetchSaferPhone(dot),
     ]);
 
-    res.json(buildPayload(c, dot, docketsRes, authorityGrantDate));
+    res.json(buildPayload(c, dot, docketsRes, authorityGrantDate, crashes24mo, saferPhone));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
@@ -247,10 +323,14 @@ router.get('/:dot', async (req, res, next) => {
     const c = (await carrierRes.json())?.content?.carrier;
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
-    const docketJson         = docketRes.ok ? await docketRes.json() : null;
-    const authorityGrantDate = await fetchGrantDate(dot, webKey);
+    const docketJson = docketRes.ok ? await docketRes.json() : null;
+    const [authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
+      fetchGrantDate(dot, webKey),
+      fetchCrashes(dot, webKey),
+      fetchSaferPhone(dot),
+    ]);
 
-    res.json(buildPayload(c, dot, docketJson, authorityGrantDate));
+    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });

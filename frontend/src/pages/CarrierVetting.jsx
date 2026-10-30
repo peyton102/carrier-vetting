@@ -14,8 +14,6 @@ const DEFAULTS = {
   basicVehicleMaintenanceAction:          'hold',
   basicDriverFitnessThreshold:            80,
   basicDriverFitnessAction:               'hold',
-  basicControlledSubstanceThreshold:      50,
-  basicControlledSubstanceAction:         'reject',
   basicVehicleDriverObservedThreshold:    65,
   basicVehicleDriverObservedAction:       'hold',
   basicHazmatThreshold:                   80,
@@ -32,6 +30,7 @@ const INITIAL_FORM = {
   // Run metadata
   loadRef:    '',
   dispatcher: '',
+  fmcsaLookupCompleted: false,
   // Carrier identity
   dotNumber:   '',
   mcNumber:    '',
@@ -62,7 +61,17 @@ const INITIAL_FORM = {
   vehicleDriverObservedBasic:   '',
   driverFitnessBasic:           '',
   hazmatBasic:                  '',
-  controlledSubstancesBasic:    '',
+  // Drug/alcohol — null = not answered (required), true = yes, false = no
+  drugAlcoholViolation:         null,
+  // Contact verification
+  contactPhone:   '',
+  contactEmail:   '',
+  hasBrokerAuthority: false,
+  fmcsaPhone:     '',
+  // Crashes (FMCSA, display only)
+  crashes24mo:    null,
+  // Insurance data timestamp (from SaferWatch)
+  insuranceDataAsOf: '',
   // Operations
   powerUnits:           '',
   inspections24mo:      '',
@@ -284,6 +293,7 @@ export default function CarrierVetting({ settings }) {
   const [lookingUp,    setLookingUp]    = useState(false);
   const [lookupErr,    setLookupErr]    = useState('');
   const [swErr,        setSwErr]        = useState('');
+  const [swDrugAlcohol, setSwDrugAlcohol] = useState(null); // { value: bool|null, source: string }
 
   const [blockInfo,          setBlockInfo]          = useState(null);
   const [fmcsaCannotVerify,  setFmcsaCannotVerify]  = useState(false);
@@ -321,6 +331,8 @@ export default function CarrierVetting({ settings }) {
       setFieldSources({});
       setLookupErr('');
       setSwErr('');
+      setSwDrugAlcohol(null);
+      setForm(f => ({ ...f, fmcsaLookupCompleted: false, drugAlcoholViolation: null }));
     }
   }, []);
 
@@ -331,7 +343,7 @@ export default function CarrierVetting({ settings }) {
 
     for (const field of (fmcsaJson.filledFields ?? [])) {
       const val = fmcsaJson[field];
-      if (val !== '' && val != null) { updates[field] = val; sources[field] = 'fmcsa'; }
+      if (val !== '' && val != null && val !== false) { updates[field] = val; sources[field] = 'fmcsa'; }
     }
 
     const swOk = swRes.ok && swJson.ok !== false;
@@ -349,15 +361,20 @@ export default function CarrierVetting({ settings }) {
         updates.activeFederalOOS = true;
         sources.activeFederalOOS = 'saferwatch';
       }
-      if (swJson.extraBasics?.controlledSubstancesPct) {
-        updates.controlledSubstancesBasic = swJson.extraBasics.controlledSubstancesPct;
-        sources.controlledSubstancesBasic = 'saferwatch';
-      }
       if (swJson.extraBasics?.driverFitnessPct) {
         updates.driverFitnessBasic = swJson.extraBasics.driverFitnessPct;
         sources.driverFitnessBasic = 'saferwatch';
       }
+      if (swJson.insuranceDataAsOf) {
+        updates.insuranceDataAsOf = swJson.insuranceDataAsOf;
+        sources.insuranceDataAsOf = 'saferwatch';
+      }
+      if (swJson.drugAlcoholViolation !== undefined) {
+        updates.drugAlcoholViolation = swJson.drugAlcoholViolation;
+        setSwDrugAlcohol({ value: swJson.drugAlcoholViolation, source: swJson.drugAlcoholSource ?? null });
+      }
     }
+    updates.fmcsaLookupCompleted = true;
 
     setForm(f => ({ ...f, ...updates }));
     setFieldSources(sources);
@@ -453,6 +470,10 @@ export default function CarrierVetting({ settings }) {
     setRunErr('');
     if (!form.loadRef.trim())    return setRunErr('Load Reference is required.');
     if (!form.dispatcher.trim()) return setRunErr('Dispatcher Name is required.');
+    if (!fmcsaCannotVerify && !form.fmcsaLookupCompleted)
+      return setRunErr('FMCSA lookup must be completed first. Enter a DOT or MC number and click Look Up.');
+    if (!form.contactPhone.trim()) return setRunErr('Dispatcher Contact Phone is required.');
+    if (!form.contactEmail.trim()) return setRunErr('Dispatcher Contact Email is required.');
     setRunning(true);
     try {
       const res = await fetch('/api/vetting/run', {
@@ -462,10 +483,12 @@ export default function CarrierVetting({ settings }) {
           ...form,
           fmcsaCannotVerify,
           fmcsaLastAttemptAt,
+          drugAlcoholSource: swDrugAlcohol?.source ?? null,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Vetting failed');
+      // data includes { verdict, tier, reasons, warnings, authorityDays, canOverride, recordId }
       setVerdict(data);
       setOverride({ managerName: '', reason: '' });
       setSavedRecordId(null);
@@ -474,10 +497,9 @@ export default function CarrierVetting({ settings }) {
     finally { setRunning(false); }
   }
 
-  // ── Finalize: generate PDF, save to storage, download to user ───────────────
-  // The backend generates the PDF once, uploads that exact buffer to storage,
-  // then sends the same buffer as the download. X-Certificate-Save-Error is set
-  // in the response headers if the save failed — PDF is always delivered.
+  // ── Finalize: generate PDF → storage → DB update → download ─────────────────
+  // /pdf reads the authoritative record from DB by recordId (set during /run).
+  // No verdict data is sent from the client — the server owns the verdict.
   async function finalize() {
     setFinalErr('');
     setSaveStatus(null);
@@ -503,9 +525,9 @@ export default function CarrierVetting({ settings }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          carrierData:  { ...form, fmcsaCannotVerify, fmcsaLastAttemptAt },
-          override:     applyOverride ? override : null,
+          recordId:    verdict.recordId,
           fieldSources,
+          override:    applyOverride ? override : null,
         }),
       });
 
@@ -516,7 +538,8 @@ export default function CarrierVetting({ settings }) {
 
       const recordId  = pdfRes.headers.get('X-Record-Id');
       const filename  = pdfRes.headers.get('X-Filename') || 'VettingCert.pdf';
-      const saveErr   = pdfRes.headers.get('X-Certificate-Save-Error');
+      const certSaved = pdfRes.headers.get('X-Cert-Saved');
+      const certError = pdfRes.headers.get('X-Cert-Error');
       const xVerdict  = pdfRes.headers.get('X-Verdict');
       const xTier     = pdfRes.headers.get('X-Tier');
 
@@ -532,7 +555,11 @@ export default function CarrierVetting({ settings }) {
       URL.revokeObjectURL(url);
 
       setSavedRecordId(recordId);
-      setSaveStatus(saveErr ? { ok: false, error: saveErr } : { ok: true, recordId });
+      setSaveStatus(
+        certSaved === 'false'
+          ? { ok: false, error: certError || 'Storage upload failed — attach PDF to load manually' }
+          : { ok: true, recordId }
+      );
       setFinalVerdict({ verdict: xVerdict, tier: xTier, recordId });
       setMarked(false);
     } catch (e) {
@@ -564,6 +591,29 @@ export default function CarrierVetting({ settings }) {
       setMarked(true);
     } catch (_) {}
     finally { setMarking(false); }
+  }
+
+  // ── Re-download a past certificate ──────────────────────────────────────────
+  async function redownloadPdf(logId) {
+    try {
+      const res = await fetch(`/api/vetting/logs/${logId}/pdf`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? 'PDF not available');
+      }
+      const filename = res.headers.get('X-Filename') || `cert-${logId}.pdf`;
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Could not retrieve certificate: ${e.message}`);
+    }
   }
 
   // ── Load audit logs ─────────────────────────────────────────────────────────
@@ -626,6 +676,7 @@ export default function CarrierVetting({ settings }) {
     setFieldSources({});
     setLookupErr('');
     setSwErr('');
+    setSwDrugAlcohol(null);
   }
 
   // Auto-load audit log on first render
@@ -816,8 +867,9 @@ export default function CarrierVetting({ settings }) {
           )}
           <div style={{ marginTop: 8, color: '#94a3b8' }}>
             <strong>Still requires manual entry:</strong>{' '}
-            Crash Indicator BASIC, Vehicle Driver-Observed BASIC, Hazardous Materials BASIC,
-            Clean inspections count, Pending insurance cancellation, Carrier Assure grade &amp; flags.
+            Drug/alcohol violation (required), Crash Indicator BASIC, Vehicle Driver-Observed BASIC,
+            Hazardous Materials BASIC, Clean inspections count, Carrier Assure grade &amp; flags,
+            dispatcher contact phone/email.
           </div>
         </div>
       )}
@@ -834,7 +886,8 @@ export default function CarrierVetting({ settings }) {
 
       {!fmcsaData && !swData && (
         <div style={{ fontSize: 12, color: '#475569', marginBottom: 16 }}>
-          <strong>Still requires manual entry after Look Up:</strong>{' '}
+          <strong>Always requires manual entry:</strong>{' '}
+          Drug/alcohol violation (required), dispatcher contact phone/email,
           Crash Indicator BASIC, Clean inspections count,
           Pending insurance cancellation, Carrier Assure grade &amp; flags.
         </div>
@@ -969,13 +1022,106 @@ export default function CarrierVetting({ settings }) {
               inputStyle={fi('hazmatBasic')}
             />
           </Field>
-          <Field label={`Controlled Substances/Alcohol BASIC % (${cfg.basicControlledSubstanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicControlledSubstanceThreshold})`}>
+
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={{ ...s.label, marginBottom: 8 }}>
+              Any drug or alcohol violation in the last 24 months?
+              <span style={s.required}>*</span>
+              <span style={{ fontWeight: 400, color: '#dc2626', marginLeft: 6 }}>
+                YES = REJECT, no override
+              </span>
+            </label>
+
+            {swDrugAlcohol?.source && swDrugAlcohol.value === true && (
+              <div style={{ background: '#fef2f2', border: '1.5px solid #dc2626', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>
+                <strong style={{ color: '#991b1b' }}>Auto-filled from SaferWatch — violation detected.</strong>{' '}
+                <span style={{ color: '#7f1d1d' }}>{swDrugAlcohol.source}</span>
+              </div>
+            )}
+            {swDrugAlcohol?.source && swDrugAlcohol.value === false && (
+              <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>
+                <strong style={{ color: '#166534' }}>Auto-filled — no violations found.</strong>{' '}
+                <span style={{ color: '#166534' }}>{swDrugAlcohol.source}</span>
+                <span style={{ color: '#6b7280' }}> You may change to Yes if you have additional information.</span>
+              </div>
+            )}
+            {swDrugAlcohol?.source && swDrugAlcohol.value === null && (
+              <div style={{ background: '#fffbeb', border: '1.5px solid #fcd34d', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>
+                <strong style={{ color: '#92400e' }}>{swDrugAlcohol.source}</strong>
+                <span style={{ color: '#6b7280' }}> — answer required below.</span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 20 }}>
+              <label style={{ ...s.checkRow, cursor: swDrugAlcohol?.value === true ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="radio" name="drugAlcoholViolation" value="yes"
+                  checked={form.drugAlcoholViolation === true}
+                  disabled={swDrugAlcohol?.value === true}
+                  onChange={() => {
+                    setForm(f => ({ ...f, drugAlcoholViolation: true }));
+                    setVerdict(null); setSavedRecordId(null); setSaveStatus(null);
+                    setRunErr(''); setFinalErr('');
+                  }}
+                />
+                <span style={{ color: '#dc2626', fontWeight: 700 }}>Yes — violation reported</span>
+              </label>
+              <label style={{ ...s.checkRow, cursor: swDrugAlcohol?.value === true ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="radio" name="drugAlcoholViolation" value="no"
+                  checked={form.drugAlcoholViolation === false}
+                  disabled={swDrugAlcohol?.value === true}
+                  onChange={() => {
+                    setForm(f => ({ ...f, drugAlcoholViolation: false }));
+                    setVerdict(null); setSavedRecordId(null); setSaveStatus(null);
+                    setRunErr(''); setFinalErr('');
+                  }}
+                />
+                <span style={{ color: '#166534' }}>No</span>
+              </label>
+              {form.drugAlcoholViolation === null && !swDrugAlcohol?.source && (
+                <span style={{ fontSize: 12, color: '#dc2626', alignSelf: 'center' }}>
+                  Required — check the FMCSA Drug &amp; Alcohol Clearinghouse or CSA SMS
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Contact Verification ── */}
+      <div style={s.card}>
+        <div style={s.cardHead}>Contact Verification</div>
+        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
+          Phone mismatch with FMCSA or free email domain = HOLD. Enter the contact info from the dispatch packet.
+        </div>
+        <div style={s.grid3}>
+          <Field label="Dispatcher Contact Phone">
             <TextInput
-              type="number" name="controlledSubstancesBasic" value={form.controlledSubstancesBasic}
-              onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
-              inputStyle={fi('controlledSubstancesBasic')}
+              name="contactPhone" value={form.contactPhone} onChange={handleChange}
+              placeholder="e.g. 555-867-5309"
             />
           </Field>
+          <Field label="Dispatcher Contact Email">
+            <TextInput
+              type="email" name="contactEmail" value={form.contactEmail} onChange={handleChange}
+              placeholder="e.g. dispatch@carrier.com"
+            />
+          </Field>
+          <Field label="FMCSA Company Phone (auto-filled)">
+            <TextInput
+              name="fmcsaPhone" value={form.fmcsaPhone} onChange={handleChange}
+              placeholder="From FMCSA registry" inputStyle={fi('fmcsaPhone')}
+            />
+          </Field>
+          <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
+            <CheckField
+              name="hasBrokerAuthority"
+              label="Carrier also holds broker authority"
+              checked={form.hasBrokerAuthority}
+              onChange={handleChange}
+            />
+          </div>
         </div>
       </div>
 
@@ -1111,11 +1257,32 @@ export default function CarrierVetting({ settings }) {
               </div>
             )}
 
+            {verdict.warnings?.length > 0 && (
+              <div style={{ marginTop: 14, background: '#fffbeb', border: '1.5px solid #d97706', borderRadius: 8, padding: '10px 14px' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Additional HOLD-level findings
+                </div>
+                <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                  {verdict.warnings.map((w, i) => (
+                    <li key={i} style={{ fontSize: 13, color: '#92400e', paddingLeft: 18, position: 'relative', marginBottom: 2 }}>
+                      <span style={{ position: 'absolute', left: 0 }}>⚠</span>
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {isReject && (
               <p style={{ fontSize: 12, fontWeight: 700, color: '#f87171', marginTop: 12, marginBottom: 0 }}>
                 REJECT decisions cannot be overridden. Do not book this carrier.
               </p>
             )}
+
+            <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 14, marginBottom: 0, lineHeight: 1.5 }}>
+              Results are based on third-party data and your settings as of this check.
+              You make the booking decision. Torevez does not guarantee any carrier is safe or qualified.
+            </p>
           </div>
 
           {/* ── Manager Override (HOLD only) ── */}
@@ -1170,53 +1337,68 @@ export default function CarrierVetting({ settings }) {
 
           {/* ── Post-generate status ── */}
           {savedRecordId && (
-            <div style={{
-              background: saveStatus?.ok === false ? '#fffbeb' : '#f0fdf4',
-              border: `1.5px solid ${saveStatus?.ok === false ? '#d97706' : '#16a34a'}`,
-              borderRadius: 8, padding: '14px 18px', marginTop: 16,
-            }}>
-              <strong style={{ color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
-                PDF generated and downloaded.
-              </strong>
-              {' '}
-              <span style={{ fontSize: 13, color: saveStatus?.ok === false ? '#92400e' : '#166534' }}>
-                Attach it to the load in your TMS.
-              </span>
-
-              {saveStatus?.ok && (
-                <p style={{ fontSize: 12, color: '#166534', marginTop: 8, marginBottom: 0 }}>
-                  Certificate saved to secure storage. Record ID:{' '}
-                  <code style={{ fontSize: 11, background: 'rgba(22,163,74,.12)', padding: '1px 4px', borderRadius: 3, color: '#166534' }}>
-                    {saveStatus.recordId}
-                  </code>
-                </p>
+            <>
+              {saveStatus?.ok === false ? (
+                <div style={{
+                  background: '#fef2f2', border: '2.5px solid #dc2626', borderRadius: 8,
+                  padding: '16px 20px', marginTop: 16,
+                }}>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: '#991b1b', marginBottom: 6 }}>
+                    ⚠ Certificate NOT archived to storage
+                  </div>
+                  <div style={{ fontSize: 13, color: '#7f1d1d', marginBottom: 10 }}>
+                    The PDF was generated and downloaded to your computer, but could not be saved to the secure archive.
+                    You must manually attach it to the load record and keep a copy.
+                  </div>
+                  <div style={{ fontSize: 12, color: '#991b1b', fontFamily: 'monospace', background: '#fee2e2', padding: '6px 10px', borderRadius: 4, marginBottom: 14 }}>
+                    {saveStatus.error}
+                  </div>
+                  <button style={s.btn('blue', false)} onClick={reset}>Vet Another Carrier</button>
+                </div>
+              ) : (
+                <div style={{
+                  background: '#f0fdf4', border: '1.5px solid #16a34a',
+                  borderRadius: 8, padding: '14px 18px', marginTop: 16,
+                }}>
+                  <strong style={{ color: '#166534' }}>PDF generated and downloaded.</strong>
+                  {' '}
+                  <span style={{ fontSize: 13, color: '#166534' }}>Attach it to the load in your TMS.</span>
+                  <p style={{ fontSize: 12, color: '#166534', marginTop: 8, marginBottom: 0 }}>
+                    Certificate saved to secure storage. Record ID:{' '}
+                    <code style={{ fontSize: 11, background: 'rgba(22,163,74,.12)', padding: '1px 4px', borderRadius: 3, color: '#166534' }}>
+                      {saveStatus.recordId}
+                    </code>
+                  </p>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button style={s.btn('blue', false)} onClick={reset}>Vet Another Carrier</button>
+                    {!marked && finalVerdict?.verdict === 'REJECT' && (
+                      <span style={{ fontSize: 13, color: '#dc2626', fontWeight: 700 }}>
+                        ✗ REJECT — carrier cannot be booked
+                      </span>
+                    )}
+                    {!marked && finalVerdict?.verdict === 'HOLD' && (
+                      <span style={{ fontSize: 13, color: '#d97706', fontWeight: 700 }}>
+                        ⚠ HOLD — manager override required before booking
+                      </span>
+                    )}
+                    {!marked && finalVerdict?.verdict !== 'REJECT' && finalVerdict?.verdict !== 'HOLD' && (
+                      <button
+                        style={s.btn('green', marking)}
+                        disabled={marking}
+                        onClick={markAsUsed}
+                      >
+                        {marking ? 'Saving…' : 'Mark as Used'}
+                      </button>
+                    )}
+                    {marked && (
+                      <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>
+                        ✓ Carrier marked as used
+                      </span>
+                    )}
+                  </div>
+                </div>
               )}
-              {saveStatus?.ok === false && (
-                <p style={{ fontSize: 12, color: '#92400e', marginTop: 8, marginBottom: 0 }}>
-                  Certificate could not be saved to storage: {saveStatus.error}
-                </p>
-              )}
-
-              <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <button style={s.btn('blue', false)} onClick={reset}>
-                  Vet Another Carrier
-                </button>
-                {!marked && (
-                  <button
-                    style={s.btn('green', marking)}
-                    disabled={marking}
-                    onClick={markAsUsed}
-                  >
-                    {marking ? 'Saving…' : 'Mark as Used'}
-                  </button>
-                )}
-                {marked && (
-                  <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>
-                    ✓ Carrier marked as used
-                  </span>
-                )}
-              </div>
-            </div>
+            </>
           )}
         </>
       )}
@@ -1254,14 +1436,19 @@ export default function CarrierVetting({ settings }) {
                         <td style={s.logTd}>{row.dispatcher}</td>
                         <td style={s.logTd}>{row.carrier_name || '—'}</td>
                         <td style={s.logTd}>{row.dot_number || '—'}</td>
-                        <td style={s.logTd}>{tierBadge(row.tier, row.verdict)}</td>
+                        <td style={s.logTd}>{tierBadge(row.tier, row.effective_verdict ?? row.verdict)}</td>
                         <td style={s.logTd}>
                           {row.pdf_url
-                            ? <a href={`/api/certificates/${row.id}/download`} target="_blank" rel="noreferrer" style={{ color: '#f97316', fontWeight: 600 }}>Download</a>
+                            ? <button
+                                style={{ background: 'none', border: 'none', color: '#f97316', fontWeight: 600, cursor: 'pointer', fontSize: 12, padding: 0 }}
+                                onClick={() => redownloadPdf(row.id)}
+                              >
+                                Download
+                              </button>
                             : <span style={{ color: '#475569' }}>—</span>}
                         </td>
                         <td style={s.logTd}>
-                          {(row.tier === 'GREEN' || row.verdict === 'APPROVED WITH OVERRIDE') && row.dot_number
+                          {(row.tier === 'GREEN' || (row.effective_verdict ?? row.verdict) === 'APPROVED WITH OVERRIDE') && row.dot_number
                             ? monitoring.has(row.id)
                               ? <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>● Monitoring</span>
                               : <button

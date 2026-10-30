@@ -40,3 +40,8 @@ create index if not exists monitored_loads_tenant_active
 
 create index if not exists monitoring_alerts_tenant_unacked
   on monitoring_alerts(tenant_id) where is_acknowledged = false;
+
+alter table monitored_loads   enable row level security;
+alter table monitoring_alerts enable row level security;
+-- Backend uses service-role key which bypasses RLS.
+-- No anon/authenticated policies needed.

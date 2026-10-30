@@ -8,3 +8,5 @@ create table if not exists password_reset_tokens (
 );
 create index if not exists idx_prt_token on password_reset_tokens(token);
 create index if not exists idx_prt_email on password_reset_tokens(email);
+alter table password_reset_tokens enable row level security;
+-- Backend uses service-role key which bypasses RLS.

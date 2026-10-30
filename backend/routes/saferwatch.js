@@ -161,6 +161,31 @@ function extractAutoLiabilityExpiration(certData) {
   return '';
 }
 
+// Detect pending insurance cancellation from CertData Coverage.cancellationDate.
+// A cancellationDate that is in the future means a BMC cancellation notice is on file.
+// Returns { pending: boolean, cancellationDate: string|null }
+function extractPendingCancellation(certData) {
+  if (!certData) return { pending: false, cancellationDate: null };
+  const certs = certData.Certificate;
+  if (!certs) return { pending: false, cancellationDate: null };
+  const certList = Array.isArray(certs) ? certs : [certs];
+  const today = new Date();
+  for (const cert of certList) {
+    const covs = cert.Coverage;
+    if (!covs) continue;
+    const covList = Array.isArray(covs) ? covs : [covs];
+    for (const cov of covList) {
+      const raw = str(cov.cancellationDate);
+      if (!raw) continue;
+      const d = new Date(raw);
+      if (!isNaN(d.getTime()) && d > today) {
+        return { pending: true, cancellationDate: normalizeDate(raw) };
+      }
+    }
+  }
+  return { pending: false, cancellationDate: null };
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 router.get('/:dot', async (req, res, next) => {
@@ -235,8 +260,56 @@ router.get('/:dot', async (req, res, next) => {
     const certData   = details.CertData       || null;
     const riskAssess = details.RiskAssessment || {};
 
-    const cargo      = extractCargo(certData);
-    const certStatus = str(certData?.['@_status'] || certData?.status || '');
+    const cargo              = extractCargo(certData);
+    const certStatus         = str(certData?.['@_status'] || certData?.status || '');
+    const pendingCancellation = extractPendingCancellation(certData);
+    const insuranceDataAsOf  = new Date().toISOString();
+
+    // ── Drug/alcohol auto-fill from Controlled Substances/Alcohol BASIC ────
+    // controlSubPCT is FMCSA's percentile (0–100, higher = worse).
+    // SaferWatch always emits the XML field; 0.0 is both the schema default AND
+    // the real "zero violations" value — only meaningful when inspectDrvUS > 0.
+    //
+    // Tested against real carriers:
+    //   0 driver insp.  → csPCT=0  meaning: NO DATA (schema default)
+    //   22k driver insp.→ csPCT=0  meaning: REAL ZERO violations
+    //   20k driver insp.→ csPCT>0  meaning: real violations confirmed
+    //
+    // Rules:
+    //   csAlert=Yes                       → auto-fill Yes (above FMCSA threshold)
+    //   csPCT > 0  AND drvInspUS > 0     → auto-fill Yes (violations exist, any level)
+    //   csPCT === 0 AND drvInspUS > 0    → auto-fill No  (real zero confirmed)
+    //   drvInspUS === 0 OR missing       → null, dispatcher must answer
+    const csAlert   = str(safety.controlSubAlert).trim().toLowerCase();
+    const csPct     = parseFloat(str(safety.controlSubPCT));
+    const drvInspUS = parseInt(str(inspection.inspectDrvUS || ''), 10);
+    const hasInsp   = !isNaN(drvInspUS) && drvInspUS > 0;
+    const checkedDate = new Date().toISOString().slice(0, 10);
+    let drugAlcoholViolation = null;
+    let drugAlcoholSource    = null;
+
+    if (csAlert === 'yes') {
+      // Alert triggered — above FMCSA intervention threshold
+      drugAlcoholViolation = true;
+      drugAlcoholSource    = `Auto-filled from SaferWatch — violation detected` +
+        ` (Controlled Substances BASIC alert: Yes` +
+        (hasInsp ? `, ${drvInspUS} driver insp.` : '') + `)`;
+    } else if (!isNaN(csPct) && csPct > 0 && hasInsp) {
+      // PCT > 0 with real inspections — violations exist even below alert threshold
+      drugAlcoholViolation = true;
+      drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — violation found` +
+        ` (controlSubPCT: ${csPct}, ${drvInspUS} driver insp., below alert threshold)`;
+    } else if (!isNaN(csPct) && csPct === 0 && hasInsp) {
+      // PCT = 0 with real inspections — confirmed zero violations
+      drugAlcoholViolation = false;
+      drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — 0 violations found` +
+        ` (controlSubPCT: 0, ${drvInspUS} driver insp.), checked ${checkedDate}`;
+    } else if (!isNaN(drvInspUS) && drvInspUS === 0) {
+      // No driver inspections on record — PCT=0 is schema default, not meaningful
+      drugAlcoholViolation = null;
+      drugAlcoholSource    = `SaferWatch: no driver inspections on record — answer required`;
+    }
+    // else: data missing entirely — drugAlcoholViolation stays null, no source banner
 
     // ── Normalise into vetting form field names ────────────────────────────
     const swFields = {
@@ -276,9 +349,18 @@ router.get('/:dot', async (req, res, next) => {
       // Active federal OOS — boolean
       activeFederalOOS: str(operation.outOfService).toLowerCase() === 'yes',
 
-      // Insurance expiration dates (used by rules engine for 30-day warning + expired check)
+      // Insurance expiration dates
       autoLiabilityExpiration: extractAutoLiabilityExpiration(certData),
       cargoExpiration:         cargo.expiration,
+
+      // Pending cancellation — detection code runs but value is NOT surfaced here until
+      // confirmed against a real carrier with an active BMC-91 cancellation notice.
+      // Re-enable when field name is verified: pendingCancellation.pending / .cancellationDate
+      // pendingInsuranceCancellation: pendingCancellation.pending,
+      // insuranceCancellationDate:    pendingCancellation.cancellationDate,
+
+      // Timestamp of this insurance data pull
+      insuranceDataAsOf,
     };
 
     // Fields with actual values (non-empty string, or boolean true)
@@ -290,6 +372,10 @@ router.get('/:dot', async (req, res, next) => {
       ok: true,
       ...swFields,
       filledFields,
+
+      // Drug/alcohol auto-fill — dispatcher can only upgrade No→Yes, never downgrade Yes→No
+      drugAlcoholViolation,
+      drugAlcoholSource,
 
       // Metadata for the banner
       certStatus,

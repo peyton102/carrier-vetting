@@ -22,16 +22,15 @@ const s = {
   notice: { background: 'rgba(59,130,246,.06)', border: '1px solid rgba(59,130,246,.2)', borderRadius: 8, padding: '12px 16px', fontSize: 12, color: '#1d4ed8', marginBottom: 20 },
 };
 
-// All 8 FMCSA CSA BASICs with configurable threshold + action
+// 7 configurable FMCSA CSA BASICs (Controlled Substances is now a required yes/no, not a percentile)
 const BASICS = [
-  { key: 'basicUnsafeDriving',            label: 'Unsafe Driving'                },
-  { key: 'basicCrashIndicator',           label: 'Crash Indicator'               },
-  { key: 'basicHos',                      label: 'Hours of Service'              },
-  { key: 'basicVehicleMaintenance',       label: 'Vehicle Maintenance'           },
-  { key: 'basicVehicleDriverObserved',    label: 'Vehicle Driver-Observed'       },
-  { key: 'basicDriverFitness',            label: 'Driver Fitness'                },
-  { key: 'basicHazmat',                   label: 'Hazardous Materials'           },
-  { key: 'basicControlledSubstance',      label: 'Controlled Substances/Alcohol' },
+  { key: 'basicUnsafeDriving',            label: 'Unsafe Driving'          },
+  { key: 'basicCrashIndicator',           label: 'Crash Indicator'         },
+  { key: 'basicHos',                      label: 'Hours of Service'        },
+  { key: 'basicVehicleMaintenance',       label: 'Vehicle Maintenance'     },
+  { key: 'basicVehicleDriverObserved',    label: 'Vehicle Driver-Observed' },
+  { key: 'basicDriverFitness',            label: 'Driver Fitness'          },
+  { key: 'basicHazmat',                   label: 'Hazardous Materials'     },
 ];
 
 // ── FMCSA Credentials Card ────────────────────────────────────────────────────
@@ -319,26 +318,11 @@ export default function Settings({ settings, onSave }) {
         {/* ── Safety Ratings ── */}
         <div style={s.card}>
           <div style={s.cardHead}>Safety Rating Blocks</div>
-          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 14 }}>
-            Carriers with these FMCSA safety ratings will be hard-rejected. Unrated carriers are
-            never blocked solely for being unrated.
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 0 }}>
+            <strong>Conditional</strong> and <strong>Unsatisfactory</strong> ratings are always hard-rejected — no override allowed.
+            This is hardcoded and cannot be changed per FMCSA guidance and standard brokerage liability practice.
+            Unrated carriers are never blocked solely for being unrated.
           </p>
-          <label style={s.checkRow}>
-            <input
-              type="checkbox"
-              checked={!!form.blockConditional}
-              onChange={e => set('blockConditional', e.target.checked)}
-            />
-            Block carriers rated <strong style={{ marginLeft: 4 }}>Conditional</strong>
-          </label>
-          <label style={s.checkRow}>
-            <input
-              type="checkbox"
-              checked={!!form.blockUnsatisfactory}
-              onChange={e => set('blockUnsatisfactory', e.target.checked)}
-            />
-            Block carriers rated <strong style={{ marginLeft: 4 }}>Unsatisfactory</strong>
-          </label>
         </div>
 
         {/* ── OOS Rate ── */}

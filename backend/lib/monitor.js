@@ -58,6 +58,28 @@ function extractCargo(certData) {
   return empty;
 }
 
+function extractPendingCancellation(certData) {
+  if (!certData) return { pending: false, cancellationDate: null };
+  const certs    = certData.Certificate;
+  if (!certs) return { pending: false, cancellationDate: null };
+  const certList = Array.isArray(certs) ? certs : [certs];
+  const today    = new Date();
+  for (const cert of certList) {
+    const covs = cert.Coverage;
+    if (!covs) continue;
+    const covList = Array.isArray(covs) ? covs : [covs];
+    for (const cov of covList) {
+      const raw = str(cov.cancellationDate);
+      if (!raw) continue;
+      const d = new Date(raw);
+      if (!isNaN(d.getTime()) && d > today) {
+        return { pending: true, cancellationDate: normalizeDate(raw) };
+      }
+    }
+  }
+  return { pending: false, cancellationDate: null };
+}
+
 function extractAutoLiabilityExpiration(certData) {
   if (!certData) return '';
   const certs    = certData.Certificate;
@@ -124,6 +146,8 @@ async function fetchFMCSASnapshot(dot, webKey) {
     nationalAvgTruckOos:  c.vehicleOosRateNationalAverage != null ? String(c.vehicleOosRateNationalAverage) : '',
     nationalAvgDriverOos: c.driverOosRateNationalAverage  != null ? String(c.driverOosRateNationalAverage)  : '',
     activeFederalOOS:     !!c.outOfServiceDate,
+    hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
+    fmcsaPhone:           c.telephone || c.mcsPhone || c.phone || '',
   };
 }
 
@@ -190,23 +214,26 @@ async function fetchSaferWatchSnapshot(dot, swKeys) {
   const insurance  = details.FMCSAInsurance || {};
   const certData   = details.CertData       || null;
 
-  const cargo = extractCargo(certData);
+  const cargo    = extractCargo(certData);
+  const pending  = extractPendingCancellation(certData);
 
   return {
-    unsafeDrivingBasic:        str(safety.unsafeDrvPCT),
-    hosBasic:                  str(safety.hosPCT),
-    vehicleMaintenanceBasic:   str(safety.vehMaintPCT),
-    controlledSubstancesBasic: str(safety.controlSubPCT),
-    driverFitnessBasic:        str(safety.drvFitPCT),
-    autoLiability:             parseMoney(insurance.bipdOnFile),
-    cargoInsurance:            cargo.amount,
-    autoLiabilityExpiration:   extractAutoLiabilityExpiration(certData),
-    cargoExpiration:           cargo.expiration,
-    truckOosPct:               str(inspection.inspectVehOOSPctUS),
-    driverOosPct:              str(inspection.inspectDrvOOSPctUS),
-    inspections24mo:           str(inspection.inspectTotalUS),
-    powerUnits:                str(equipment.totalPower),
-    activeFederalOOS:          str(operation.outOfService).toLowerCase() === 'yes',
+    unsafeDrivingBasic:              str(safety.unsafeDrvPCT),
+    hosBasic:                        str(safety.hosPCT),
+    vehicleMaintenanceBasic:         str(safety.vehMaintPCT),
+    driverFitnessBasic:              str(safety.drvFitPCT),
+    autoLiability:                   parseMoney(insurance.bipdOnFile),
+    cargoInsurance:                  cargo.amount,
+    autoLiabilityExpiration:         extractAutoLiabilityExpiration(certData),
+    cargoExpiration:                 cargo.expiration,
+    truckOosPct:                     str(inspection.inspectVehOOSPctUS),
+    driverOosPct:                    str(inspection.inspectDrvOOSPctUS),
+    inspections24mo:                 str(inspection.inspectTotalUS),
+    powerUnits:                      str(equipment.totalPower),
+    activeFederalOOS:                str(operation.outOfService).toLowerCase() === 'yes',
+    pendingInsuranceCancellation:    pending.pending,
+    insuranceCancellationDate:       pending.cancellationDate,
+    insuranceDataAsOf:               new Date().toISOString(),
   };
 }
 
@@ -228,6 +255,13 @@ function buildCarrierSnapshot(fmcsa, sw) {
     nationalAvgTruckOos:       fmcsa.nationalAvgTruckOos,
     nationalAvgDriverOos:      fmcsa.nationalAvgDriverOos,
     activeFederalOOS:          fmcsa.activeFederalOOS,
+    hasBrokerAuthority:        fmcsa.hasBrokerAuthority ?? false,
+    fmcsaPhone:                fmcsa.fmcsaPhone ?? '',
+    // Drug/alcohol is checked at booking only — never set to false in monitoring
+    drugAlcoholViolation:      null,
+    // Contact fields not monitorable (dispatcher enters these at booking)
+    contactPhone:              '',
+    contactEmail:              '',
     // Not monitorable without SW — blank unless SW provides them
     autoLiability:             '',
     cargoInsurance:            '',
@@ -240,11 +274,12 @@ function buildCarrierSnapshot(fmcsa, sw) {
     vehicleDriverObservedBasic: '',
     driverFitnessBasic:        '',
     hazmatBasic:               '',
-    controlledSubstancesBasic: '',
     // Not relevant during monitoring
     carrierAssureGrade:        '',
     pendingInsuranceCancellation: false,
     fmcsaCannotVerify:         false,
+    // Flag so rules engine skips null drugAlcoholViolation HOLD
+    _monitoringContext:        true,
   };
 
   if (sw) {
@@ -256,16 +291,18 @@ function buildCarrierSnapshot(fmcsa, sw) {
     // SW operation.outOfService is more reliable than FMCSA outOfServiceDate
     if (sw.activeFederalOOS) snap.activeFederalOOS = sw.activeFederalOOS;
     // BASIC scores (only available from SW)
-    if (sw.unsafeDrivingBasic)        snap.unsafeDrivingBasic        = sw.unsafeDrivingBasic;
-    if (sw.hosBasic)                  snap.hosBasic                  = sw.hosBasic;
-    if (sw.vehicleMaintenanceBasic)   snap.vehicleMaintenanceBasic   = sw.vehicleMaintenanceBasic;
-    if (sw.controlledSubstancesBasic) snap.controlledSubstancesBasic = sw.controlledSubstancesBasic;
-    if (sw.driverFitnessBasic)        snap.driverFitnessBasic        = sw.driverFitnessBasic;
-    // Insurance amounts and expiry dates (only available from SW)
-    if (sw.autoLiability)           snap.autoLiability           = sw.autoLiability;
-    if (sw.cargoInsurance)          snap.cargoInsurance          = sw.cargoInsurance;
-    if (sw.autoLiabilityExpiration) snap.autoLiabilityExpiration = sw.autoLiabilityExpiration;
-    if (sw.cargoExpiration)         snap.cargoExpiration         = sw.cargoExpiration;
+    if (sw.unsafeDrivingBasic)      snap.unsafeDrivingBasic      = sw.unsafeDrivingBasic;
+    if (sw.hosBasic)                snap.hosBasic                = sw.hosBasic;
+    if (sw.vehicleMaintenanceBasic) snap.vehicleMaintenanceBasic = sw.vehicleMaintenanceBasic;
+    if (sw.driverFitnessBasic)      snap.driverFitnessBasic      = sw.driverFitnessBasic;
+    // Insurance amounts, expiry dates, and pending cancellation (only available from SW)
+    if (sw.autoLiability)                snap.autoLiability                = sw.autoLiability;
+    if (sw.cargoInsurance)               snap.cargoInsurance               = sw.cargoInsurance;
+    if (sw.autoLiabilityExpiration)      snap.autoLiabilityExpiration      = sw.autoLiabilityExpiration;
+    if (sw.cargoExpiration)              snap.cargoExpiration              = sw.cargoExpiration;
+    if (sw.pendingInsuranceCancellation) snap.pendingInsuranceCancellation = sw.pendingInsuranceCancellation;
+    if (sw.insuranceCancellationDate)    snap.insuranceCancellationDate    = sw.insuranceCancellationDate;
+    if (sw.insuranceDataAsOf)            snap.insuranceDataAsOf            = sw.insuranceDataAsOf;
   }
 
   return snap;
@@ -300,7 +337,10 @@ function categorizeReason(text) {
   if (/Vehicle Driver-Observed BASIC/i.test(text))           return 'basic_vehicle_driver_observed';
   if (/Driver Fitness BASIC/i.test(text))                    return 'basic_driver_fitness';
   if (/Hazardous Materials BASIC/i.test(text))               return 'basic_hazmat';
-  if (/Controlled Substances.*BASIC/i.test(text))            return 'basic_controlled_substances';
+  if (/drug.*alcohol|alcohol.*drug/i.test(text))             return 'drug_alcohol_violation';
+  if (/broker authority/i.test(text))                        return 'broker_authority';
+  if (/contact.*mismatch|phone.*mismatch/i.test(text))       return 'contact_mismatch';
+  if (/free.*email|personal.*email/i.test(text))             return 'free_email';
   if (/Carrier Assure grade/i.test(text))                    return 'carrier_assure_grade';
   if (/Pending insurance cancellation/i.test(text))          return 'pending_cancellation';
   if (/FMCSA.*unreachable/i.test(text))                      return 'fmcsa_cannot_verify';

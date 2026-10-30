@@ -46,6 +46,38 @@ router.post('/start', async (req, res, next) => {
       return res.status(400).json({ error: 'dot_number and load_ref are required' });
     }
 
+    // Block monitoring for REJECT/HOLD — read effective verdict from DB (never trust client)
+    if (vetting_log_id) {
+      const supabase = sb();
+      const orgId    = req.auth.tenant;
+      const [logResult, overrideResult] = await Promise.all([
+        supabase
+          .from('vetting_logs')
+          .select('verdict, override_manager')
+          .eq('id', vetting_log_id)
+          .eq('tenant_id', orgId)
+          .single(),
+        supabase
+          .from('vetting_overrides')
+          .select('resulting_verdict')
+          .eq('record_id', vetting_log_id)
+          .eq('tenant_id', orgId)
+          .order('override_at', { ascending: false })
+          .limit(1),
+      ]);
+      const logRow          = logResult.data;
+      const ovRow           = overrideResult.data?.[0] ?? null;
+      const effectiveVerdict = ovRow?.resulting_verdict
+        ?? (logRow?.override_manager ? 'APPROVED WITH OVERRIDE' : logRow?.verdict);
+
+      if (effectiveVerdict === 'REJECT') {
+        return res.status(400).json({ error: 'REJECT verdict — carrier cannot be monitored for active loads' });
+      }
+      if (effectiveVerdict === 'HOLD') {
+        return res.status(400).json({ error: 'HOLD verdict requires manager override before monitoring' });
+      }
+    }
+
     const { data, error } = await sb()
       .from('monitored_loads')
       .insert({
