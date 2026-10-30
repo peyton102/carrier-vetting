@@ -249,22 +249,40 @@ function parseSaferCrashes(html) {
 
 // Parse live national OOS averages + "as of" date from SAFER HTML OOS section.
 // Returns { truckNatAvg, driverNatAvg, asOf } or null when section not found.
-// SAFER structure: <TR><TH>Nat'l Average %<br><span>as of DATE MM/DD/YYYY*</span></TH><TD>22.26%</TD><TD>6.67%</TD>...
+// SAFER structure: <TH>Nat'l Average %<br><span>as of DATE MM/DD/YYYY*</span></TH><TD>22.26%</TD><TD>6.67%</TD>...
+//
+// TR-based regexes fail here because the page has many nested TR/TH structures that
+// span large sections. Instead, find the "Nat'l Average" text by character position,
+// walk backward to its containing <TH opening tag, forward to its </TH> close, then
+// extract the TDs that follow before the next </TR>.
 function parseSaferOosAverages(html) {
   try {
-    // Find the TR containing "Nat'l Average" (the apostrophe may vary)
-    const rowMatch = html.match(/<TR[^>]*>[\s\S]*?Nat.{0,5}l\s+Average[\s\S]*?<\/TR>/i);
-    if (!rowMatch) return null;
-    const rowHtml = rowMatch[0];
+    // Find the exact position of "Nat'l Average" text
+    const natIdx = html.search(/Nat.{0,5}l\s+Average/i);
+    if (natIdx < 0) return null;
 
-    // Extract date from the TH: "as of DATE 09/25/2026" — "DATE" is a literal keyword in SAFER HTML
-    const thMatch  = rowHtml.match(/<TH[^>]*>([\s\S]*?)<\/TH>/i);
-    const thText   = thMatch ? thMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    // Walk backward from natIdx to find the <TH that contains this text
+    const thOpenIdx = html.lastIndexOf('<TH', natIdx);
+    if (thOpenIdx < 0) return null;
+
+    // Skip past the TH opening tag (find '>')
+    const thTagEnd   = html.indexOf('>', thOpenIdx) + 1;
+    // Find the closing </TH> after the Nat'l Average text
+    const thCloseIdx = html.indexOf('</TH>', natIdx);
+    if (thCloseIdx < 0) return null;
+
+    // Extract TH content and parse the "as of DATE MM/DD/YYYY" date
+    const thContent = html.slice(thTagEnd, thCloseIdx);
+    const thText    = thContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     const asOfMatch = thText.match(/as\s+of\s+(?:DATE\s+)?([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i)
-                  || thText.match(/as\s+of\s+(?:DATE\s+)?([\d]{4}-[\d]{2}-[\d]{2})/i);
+                   || thText.match(/as\s+of\s+(?:DATE\s+)?([\d]{4}-[\d]{2}-[\d]{2})/i);
 
-    // Extract TD values — first = vehicle/truck avg, second = driver avg
-    const tds = [...rowHtml.matchAll(/<TD[^>]*>([\s\S]*?)<\/TD>/gi)]
+    // Extract TDs between </TH> and the next </TR>
+    const afterTh   = html.slice(thCloseIdx + 5); // skip past </TH>
+    const trEndMatch = afterTh.match(/<\/TR>/i);
+    const rowSlice   = trEndMatch ? afterTh.slice(0, trEndMatch.index) : afterTh.slice(0, 500);
+
+    const tds = [...rowSlice.matchAll(/<TD[^>]*>([\s\S]*?)<\/TD>/gi)]
       .map(td => td[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').replace(/\s+/g, ' ').trim());
 
     if (tds.length < 2) return null;
