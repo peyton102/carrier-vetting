@@ -139,6 +139,7 @@ router.get('/watched', async (req, res, next) => {
       .from('watched_carriers')
       .select('*')
       .eq('tenant_id', req.auth.tenant)
+      .eq('is_active', true)
       .order('added_at', { ascending: false });
     if (error) throw error;
     res.json(data);
