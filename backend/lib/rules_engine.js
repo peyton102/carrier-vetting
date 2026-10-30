@@ -52,6 +52,9 @@ export const DEFAULT_SETTINGS = {
 // Federal auto liability floor — always RED regardless of tenant setting.
 const FEDERAL_AUTO_LIABILITY_MIN = 750_000;
 
+// FMCSA complaint portal — referenced in identity-check warnings.
+const FMCSA_COMPLAINT_URL = 'https://complaint.fmcsa.dot.gov/';
+
 // Absolute truck OOS floor — always RED regardless of tenant settings.
 const ABSOLUTE_TRUCK_OOS_FLOOR = 20;
 
@@ -275,7 +278,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       yellow.push(
         `Contact phone ${d.contactPhone} does not match FMCSA record (${d.fmcsaPhone}) — ` +
         `verify carrier identity before booking. ` +
-        `Report suspicious activity: https://complaint.fmcsa.dot.gov/`
+        `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
       );
     }
   }
@@ -287,7 +290,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       yellow.push(
         `Contact email uses a free provider (${domain}) — carrier identity cannot be verified by email domain. ` +
         `Confirm identity through FMCSA records or phone. ` +
-        `Report suspicious activity: https://complaint.fmcsa.dot.gov/`
+        `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
       );
     }
   }
@@ -379,7 +382,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
 function checkBasic(red, yellow, rawVal, threshold, action, label) {
   const val = parseFloat(rawVal);
   if (isNaN(val) || val < threshold) return;
-  const msg = `${label} BASIC ${val}% ≥ this broker's ${threshold}% threshold`;
+  const msg = `${label} BASIC ${val}% >= this broker's ${threshold}% threshold`;
   if (action === 'reject') red.push(msg + ' — automatic disqualification, no override');
   else yellow.push(msg);
 }

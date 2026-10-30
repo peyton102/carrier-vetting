@@ -263,25 +263,25 @@ export function generateVettingPDF(opts) {
     }
 
     basicRow(doc, L, W,
-      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicUnsafeDrivingThreshold}%)`,
+      `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'));
     basicRow(doc, L, W,
-      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicCrashIndicatorThreshold}%)`,
+      `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold, src('crashIndicatorBasic'));
     basicRow(doc, L, W,
-      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicHosThreshold}%)`,
+      `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold, src('hosBasic'));
     basicRow(doc, L, W,
-      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicVehicleMaintenanceThreshold}%)`,
+      `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'));
     basicRow(doc, L, W,
-      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicVehicleDriverObservedThreshold}%)`,
+      `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold, src('vehicleDriverObservedBasic'));
     basicRow(doc, L, W,
-      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicDriverFitnessThreshold}%)`,
+      `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'));
     basicRow(doc, L, W,
-      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} \u2265 ${cfg.basicHazmatThreshold}%)`,
+      `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} >= ${cfg.basicHazmatThreshold}%)`,
       d.hazmatBasic, cfg.basicHazmatThreshold, src('hazmatBasic'));
 
     doc.moveDown(0.4);
@@ -354,9 +354,8 @@ export function generateVettingPDF(opts) {
     // ── Carrier Assure ────────────────────────────────────────────────────────
     sectionHeader(doc, L, W, 'CARRIER ASSURE');
     dataRow(doc, L, W, 'Grade', d.carrierAssureGrade);
-    flagRow(doc, L, W, 'Fraud Flag',         d.fraudFlag);
-    flagRow(doc, L, W, 'Double-Broker Flag', d.doubleBrokerFlag);
-    flagRow(doc, L, W, 'Chameleon Flag',     d.chameleonFlag);
+    flagRow(doc, L, W, 'Fraud Flag', d.fraudFlag);
+    doubleBrokerChameleonRow(doc, L, W, d.doubleBrokerFlag, d.chameleonFlag);
 
     doc.moveDown(0.4);
 
@@ -385,20 +384,21 @@ export function generateVettingPDF(opts) {
     const driverCanHold  = driverYellowAt < hardDriver;
 
     const truckParts = [];
-    if (truckCanHold) truckParts.push(`HOLD \u2265${truckYellowAt.toFixed(1)}%`);
-    truckParts.push(`REJECT \u226520% floor`, `REJECT \u2265${hardTruck}% hard`);
+    if (truckCanHold) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
+    truckParts.push(`REJECT >=20% floor`, `REJECT >=${hardTruck}% hard`);
     const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
 
     const driverParts = [];
-    if (driverCanHold) driverParts.push(`HOLD \u2265${driverYellowAt.toFixed(1)}%`);
-    driverParts.push(`REJECT \u2265${hardDriver}% hard`);
+    if (driverCanHold) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
+    driverParts.push(`REJECT >=${hardDriver}% hard`);
     const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
 
     oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, src('truckOosPct'));
     oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null,      src('driverOosPct'));
 
-    dataRow(doc, L, W, 'Natl Avg Truck OOS %',  `${natAvgTruck.toFixed(2)}%`);
-    dataRow(doc, L, W, 'Natl Avg Driver OOS %', `${natAvgDriver.toFixed(2)}%`);
+    const oosAsOf = d.nationalAvgOosAsOf ? ` (as of ${d.nationalAvgOosAsOf})` : '';
+    dataRow(doc, L, W, `Natl Avg Truck OOS %${oosAsOf}`,  `${natAvgTruck.toFixed(2)}%`);
+    dataRow(doc, L, W, `Natl Avg Driver OOS %${oosAsOf}`, `${natAvgDriver.toFixed(2)}%`);
 
     doc.moveDown(0.4);
 
@@ -409,20 +409,35 @@ export function generateVettingPDF(opts) {
       dataRow(doc, L, W, 'Crashes (24 months)', null, src('crashes24mo'));
     } else {
       dataRow(doc, L, W, 'Crashes (24 months)', String(crashes.count), src('crashes24mo'));
-      if (crashes.count > 0 && Array.isArray(crashes.items)) {
-        crashes.items.forEach((cr, i) => {
-          const detail = [
-            cr.date    ? `Date: ${cr.date}`          : null,
-            cr.state   ? `State: ${cr.state}`         : null,
-            `Fatalities: ${cr.fatalities ?? 0}`,
-            `Injuries: ${cr.injuries ?? 0}`,
-            `Tow-away: ${cr.towaway ? 'Yes' : 'No'}`,
-            cr.hazmatRel ? 'Hazmat release: Yes' : null,
-          ].filter(Boolean).join('  |  ');
+      if (crashes.count > 0) {
+        // Show fatal/injury/tow breakdown when available (from SAFER HTML)
+        const hasSummary = crashes.fatal != null || crashes.injury != null || crashes.tow != null;
+        if (hasSummary) {
+          const parts = [
+            `Fatal: ${crashes.fatal ?? 0}`,
+            `Injury: ${crashes.injury ?? 0}`,
+            `Tow: ${crashes.tow ?? 0}`,
+          ].join('  |  ');
           doc.fontSize(9).font('Helvetica').fillColor(C.darkgray)
-             .text(`  Crash ${i + 1}: ${detail}`, L + 8, doc.y, { width: W - 8 });
+             .text(`  ${parts}`, L + 8, doc.y, { width: W - 8 });
           doc.moveDown(0.15);
-        });
+        }
+        // Show individual crash records when available (legacy QCMobile items)
+        if (Array.isArray(crashes.items) && crashes.items.length > 0) {
+          crashes.items.forEach((cr, i) => {
+            const detail = [
+              cr.date    ? `Date: ${cr.date}`          : null,
+              cr.state   ? `State: ${cr.state}`         : null,
+              `Fatalities: ${cr.fatalities ?? 0}`,
+              `Injuries: ${cr.injuries ?? 0}`,
+              `Tow-away: ${cr.towaway ? 'Yes' : 'No'}`,
+              cr.hazmatRel ? 'Hazmat release: Yes' : null,
+            ].filter(Boolean).join('  |  ');
+            doc.fontSize(9).font('Helvetica').fillColor(C.darkgray)
+               .text(`  Crash ${i + 1}: ${detail}`, L + 8, doc.y, { width: W - 8 });
+            doc.moveDown(0.15);
+          });
+        }
       }
     }
 
@@ -586,6 +601,26 @@ function drugAlcoholRow(doc, L, W, val, source) {
     'Helvetica-Bold', C.darkgray, 'Drug/Alcohol Violation (24 months):',
     isNull ? 'Helvetica-Oblique' : 'Helvetica-Bold',
     isNull ? C.gray : isYes ? C.red : C.black,
+    display);
+}
+
+// Double-Broker and Chameleon combined onto one row: "No / No", "YES / No", etc.
+function doubleBrokerChameleonRow(doc, L, W, dbVal, chamVal) {
+  const fmt = (v) => {
+    const on     = v === true || v === 'true';
+    const isNull = v === null || v === undefined;
+    return { text: isNull ? '?' : (on ? 'YES' : 'No'), on, isNull };
+  };
+  const db  = fmt(dbVal);
+  const ch  = fmt(chamVal);
+  const combined = `${db.text} / ${ch.text}`;
+  const isNull = db.isNull && ch.isNull;
+  const anyOn  = db.on || ch.on;
+  const display = isNull ? 'Not reviewed (no data)' : combined;
+  _twoColRow(doc, L, W,
+    'Helvetica-Bold', C.darkgray, 'Double-Broker / Chameleon Flag:',
+    isNull ? 'Helvetica-Oblique' : anyOn ? 'Helvetica-Bold' : 'Helvetica',
+    isNull ? C.gray : anyOn ? C.red : C.black,
     display);
 }
 

@@ -102,11 +102,15 @@ function normalizeDate(raw) {
   return '';
 }
 
-// Strip currency formatting → plain number string
+// Strip currency formatting → plain number string.
+// Round to nearest $1,000 — insurance policies are always issued in whole-thousand amounts;
+// this prevents floating-point cents from SaferWatch causing near-miss threshold failures
+// (e.g. SaferWatch returning $749,995 when the policy is $750,000).
 function parseMoney(raw) {
   if (raw == null || raw === '') return '';
   const n = parseFloat(String(raw).replace(/[$,\s]/g, ''));
-  return isNaN(n) ? '' : String(n);
+  if (isNaN(n)) return '';
+  return String(Math.round(n / 1000) * 1000);
 }
 
 // Round OOS rate to 2 dp → string (matches FMCSA rounding)

@@ -78,8 +78,9 @@ const INITIAL_FORM = {
   cleanInspections24mo: '',
   truckOosPct:          '',
   driverOosPct:         '',
-  nationalAvgTruckOos:  '5.5',
-  nationalAvgDriverOos: '5.2',
+  nationalAvgTruckOos:  '',
+  nationalAvgDriverOos: '',
+  nationalAvgOosAsOf:   '',
 };
 
 const AUTHORITY_STATUSES = [
@@ -343,7 +344,8 @@ export default function CarrierVetting({ settings }) {
 
     for (const field of (fmcsaJson.filledFields ?? [])) {
       const val = fmcsaJson[field];
-      if (val !== '' && val != null && val !== false) { updates[field] = val; sources[field] = 'fmcsa'; }
+      sources[field] = 'fmcsa';  // always record source — even when value is false/null
+      if (val !== '' && val != null && val !== false) { updates[field] = val; }
     }
 
     const swOk = swRes.ok && swJson.ok !== false;

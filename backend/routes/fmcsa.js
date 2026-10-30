@@ -103,9 +103,17 @@ function extractGrantDate(authorityJson) {
   return dates[0].toISOString().slice(0, 10);
 }
 
-function buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone = '') {
+function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
   const truckInsp = c.vehicleInsp    ?? 0;
   const truckOos  = c.vehicleOosInsp ?? 0;
+  const { phone: saferPhone = '', crashes: saferCrashes = null, oos: saferOos = null } = saferData;
+
+  // National OOS averages: SAFER HTML is live and authoritative; QCMobile values are stale.
+  // Only fall back to QCMobile if SAFER HTML parsing fails entirely.
+  const natTruckOos  = saferOos?.truckNatAvg  != null ? saferOos.truckNatAvg
+                       : c.vehicleOosRateNationalAverage != null ? String(c.vehicleOosRateNationalAverage) : '';
+  const natDriverOos = saferOos?.driverNatAvg != null ? saferOos.driverNatAvg
+                       : c.driverOosRateNationalAverage  != null ? String(c.driverOosRateNationalAverage)  : '';
 
   const fmcsaFields = {
     carrierName:          c.legalName   || '',
@@ -118,10 +126,9 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, safer
     inspections24mo:      String(truckInsp),
     truckOosPct:          c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate).toFixed(2) : '',
     driverOosPct:         c.driverOosRate  != null ? parseFloat(c.driverOosRate).toFixed(2)  : '',
-    nationalAvgTruckOos:  c.vehicleOosRateNationalAverage != null
-                            ? String(c.vehicleOosRateNationalAverage) : '',
-    nationalAvgDriverOos: c.driverOosRateNationalAverage != null
-                            ? String(c.driverOosRateNationalAverage) : '',
+    nationalAvgTruckOos:  natTruckOos,
+    nationalAvgDriverOos: natDriverOos,
+    nationalAvgOosAsOf:   saferOos?.asOf || '',
     fmcsaPhone:           saferPhone,   // parsed from SAFER HTML — QCMobile JSON has no phone field
     hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
   };
@@ -134,15 +141,18 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, safer
   // Best-effort: FMCSA outOfServiceDate present → active federal OOS order
   // SaferWatch (operation.outOfService) is more reliable; this catches it when SW is unavailable.
   const activeFederalOOS = !!c.outOfServiceDate;
-  if (activeFederalOOS) filledFields.push('activeFederalOOS');
+  // Always include activeFederalOOS and hasBrokerAuthority in filledFields — they are always
+  // evaluated from FMCSA data so the PDF certificate can show the source tag even when false.
+  if (!filledFields.includes('activeFederalOOS')) filledFields.push('activeFederalOOS');
+  if (!filledFields.includes('hasBrokerAuthority')) filledFields.push('hasBrokerAuthority');
 
-  const crashData = crashes24mo ?? { count: 0, items: [] };
-  filledFields.push('crashes24mo');
+  // Crashes: primary source is SAFER HTML (live totals); null = not available → "Not reviewed"
+  if (saferCrashes != null) filledFields.push('crashes24mo');
 
   return {
     ...fmcsaFields,
     activeFederalOOS,
-    crashes24mo: crashData,
+    crashes24mo: saferCrashes,   // null when unavailable — never default to 0
     filledFields,
     manualFields: [
       'autoLiability', 'cargoInsurance', 'pendingInsuranceCancellation',
@@ -168,10 +178,10 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, safer
   };
 }
 
-// ── SAFER Company Snapshot — phone number ─────────────────────────────────────
-// QCMobile /carriers/{dot} JSON does not include phone numbers.
-// Phone is only available in the SAFER HTML snapshot (publicly accessible, no key needed).
-// Row: <TH scope="ROW">Phone:</TH> <TD class="queryfield">(xxx) xxx-xxxx</TD>
+// ── SAFER Company Snapshot — phone, crashes, OOS national averages ─────────────
+// These fields are not available from QCMobile JSON; parse directly from the
+// publicly accessible SAFER HTML company snapshot page (no API key required).
+
 function parseSaferPhone(html) {
   const m = html.match(
     /<TH[^>]*SCOPE="ROW"[^>]*>[\s\S]*?Phone:?[\s\S]*?<\/TH>\s*<TD[^>]*class="queryfield"[^>]*>([\s\S]*?)<\/TD>/i
@@ -180,13 +190,118 @@ function parseSaferPhone(html) {
   return m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').replace(/\s+/g, ' ').trim();
 }
 
-async function fetchSaferPhone(dot) {
+// Parse crash totals from SAFER HTML crash section.
+// Returns { count, fatal, injury, tow } or null when section not found.
+function parseSaferCrashes(html) {
+  try {
+    // Find the crash section: TH containing "crash" + "24" followed by the TD content
+    const sectionMatch = html.match(
+      /<TH[^>]*>(?:(?!<\/TH>)[\s\S])*?[Cc]rash(?:(?!<\/TH>)[\s\S])*?24(?:(?!<\/TH>)[\s\S])*?<\/TH>([\s\S]*?)<\/TR>/i
+    );
+    if (!sectionMatch) return null;
+
+    const sectionHtml = sectionMatch[1];
+    const plain = sectionHtml
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Method 1: each label directly precedes its value (e.g. "Fatal: 0  Tow: 4")
+    const adjacent = (label) => {
+      const m = plain.match(new RegExp(`${label}[^\\d]{0,12}(\\d+)`, 'i'));
+      return m ? parseInt(m[1], 10) : null;
+    };
+
+    let fatal  = adjacent('Fatal');
+    let injury = adjacent('Injur');
+    let tow    = adjacent('Tow');
+    let total  = adjacent('Total');
+
+    // Method 2: all headers listed first, then all values in the same order
+    // e.g. "Fatal Injury Tow Total  0  0  4  4"
+    if (total === null && fatal === null) {
+      const labels = [
+        { key: 'fatal',  re: /\bfatal\b/i  },
+        { key: 'injury', re: /\binjur/i    },
+        { key: 'tow',    re: /\btow\b/i    },
+        { key: 'total',  re: /\btotal\b/i  },
+      ];
+      const found = labels
+        .map(l => ({ ...l, pos: plain.search(l.re) }))
+        .filter(l => l.pos >= 0)
+        .sort((a, b) => a.pos - b.pos);
+
+      if (found.length >= 2) {
+        const lastPos = found[found.length - 1].pos;
+        // find the label text length (up to next space or end)
+        const afterAll = plain.slice(lastPos).replace(/^[a-z]+\s*/i, '');
+        const nums = (afterAll.match(/\d+/g) || []).map(Number);
+        if (nums.length >= found.length) {
+          found.forEach((l, i) => {
+            if (l.key === 'fatal')  fatal  = nums[i];
+            if (l.key === 'injury') injury = nums[i];
+            if (l.key === 'tow')    tow    = nums[i];
+            if (l.key === 'total')  total  = nums[i];
+          });
+        }
+      }
+    }
+
+    if (total === null && fatal === null) return null;
+
+    const count = total ?? ((fatal ?? 0) + (injury ?? 0) + (tow ?? 0));
+    return { count, fatal: fatal ?? 0, injury: injury ?? 0, tow: tow ?? 0 };
+  } catch (_) { return null; }
+}
+
+// Parse live national OOS averages + "as of" date from SAFER HTML OOS section.
+// Returns { truckNatAvg, driverNatAvg, asOf } or null when section not found.
+function parseSaferOosAverages(html) {
+  try {
+    // Find the OOS rate section: TH containing "out of service" or "OOS"
+    const sectionMatch = html.match(
+      /<TH[^>]*>(?:(?!<\/TH>)[\s\S])*?(?:out\s*of\s*service|oos\s*rate)(?:(?!<\/TH>)[\s\S])*?<\/TH>([\s\S]*?)<\/TR>/i
+    );
+    if (!sectionMatch) return null;
+
+    const plain = sectionMatch[1]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Find "Natl" or "National" avg + two percentages (vehicle then driver)
+    const natMatch = plain.match(
+      /nat(?:ional|l\.?)[\s\S]{0,40}?(\d+\.?\d*)\s*%[\s\S]{0,60}?(\d+\.?\d*)\s*%/i
+    );
+    if (!natMatch) return null;
+
+    // "as of MM/DD/YYYY"
+    const asOfMatch = plain.match(/as\s+of\s+([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i)
+                   || plain.match(/as\s+of\s+([\d]{4}-[\d]{2}-[\d]{2})/i);
+
+    return {
+      truckNatAvg:  natMatch[1],
+      driverNatAvg: natMatch[2],
+      asOf: asOfMatch ? asOfMatch[1] : null,
+    };
+  } catch (_) { return null; }
+}
+
+// Fetch SAFER snapshot HTML once and extract all three data points.
+async function fetchSaferData(dot) {
   try {
     const url = `${SAFER_BASE}/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dot}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(9_000) });
-    if (!res.ok) return '';
-    return parseSaferPhone(await res.text());
-  } catch (_) { return ''; }
+    const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+    if (!res.ok) return {};
+    const html = await res.text();
+    return {
+      phone:   parseSaferPhone(html),
+      crashes: parseSaferCrashes(html),
+      oos:     parseSaferOosAverages(html),
+    };
+  } catch (_) { return {}; }
 }
 
 async function fetchGrantDate(dot, webKey) {
@@ -194,44 +309,6 @@ async function fetchGrantDate(dot, webKey) {
     const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
     return r.ok ? extractGrantDate(await r.json()) : '';
   } catch (_) { return ''; }
-}
-
-async function fetchCrashes(dot, webKey) {
-  try {
-    const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/crashes`, webKey));
-    if (!r.ok) return { count: 0, items: [] };
-    const json = await r.json();
-
-    // FMCSA returns crashes in various shapes depending on API version
-    let all = [];
-    if (Array.isArray(json?.content))                  all = json.content;
-    else if (Array.isArray(json?.content?.crashes))    all = json.content.crashes;
-    else if (Array.isArray(json?.content?.crash))      all = json.content.crash;
-    else if (Array.isArray(json?.content?.crashResults)) all = json.content.crashResults;
-
-    // Filter to last 24 months
-    const cutoffMs = Date.now() - 2 * 365.25 * 24 * 60 * 60 * 1000;
-    const recent = all.filter(c => {
-      const dateStr = c.reportDate || c.accDate || c.date || '';
-      if (!dateStr) return false;
-      const d = new Date(dateStr);
-      return !isNaN(d.getTime()) && d.getTime() >= cutoffMs;
-    });
-
-    return {
-      count: recent.length,
-      items: recent.map(c => ({
-        date:       c.reportDate || c.accDate || c.date || '',
-        state:      c.reportState || c.state || '',
-        fatalities: parseInt(c.fatal    ?? c.fatalities ?? 0, 10),
-        injuries:   parseInt(c.injure   ?? c.injuries   ?? 0, 10),
-        towaway:    !!(c.towAway ?? c.towaways ?? false),
-        hazmatRel:  !!(c.hazmatRel ?? false),
-      })),
-    };
-  } catch (_) {
-    return { count: 0, items: [] };
-  }
 }
 
 // ── DOT lookup ────────────────────────────────────────────────────────────────
@@ -255,13 +332,12 @@ router.get('/dot/:dot', async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
     const docketJson = docketRes.ok ? await docketRes.json() : null;
-    const [authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
+    const [authorityGrantDate, saferData] = await Promise.all([
       fetchGrantDate(dot, webKey),
-      fetchCrashes(dot, webKey),
-      fetchSaferPhone(dot),
+      fetchSaferData(dot),
     ]);
 
-    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone));
+    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, saferData));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
@@ -287,14 +363,13 @@ router.get('/mc/:mc', async (req, res, next) => {
     if (!c || !c.dotNumber) return res.status(404).json({ error: 'FMCSA returned no carrier record for that MC number' });
 
     const dot = String(c.dotNumber);
-    const [docketsRes, authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
+    const [docketsRes, authorityGrantDate, saferData] = await Promise.all([
       fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)).then(r => r.ok ? r.json() : null),
       fetchGrantDate(dot, webKey),
-      fetchCrashes(dot, webKey),
-      fetchSaferPhone(dot),
+      fetchSaferData(dot),
     ]);
 
-    res.json(buildPayload(c, dot, docketsRes, authorityGrantDate, crashes24mo, saferPhone));
+    res.json(buildPayload(c, dot, docketsRes, authorityGrantDate, saferData));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
@@ -324,13 +399,12 @@ router.get('/:dot', async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
     const docketJson = docketRes.ok ? await docketRes.json() : null;
-    const [authorityGrantDate, crashes24mo, saferPhone] = await Promise.all([
+    const [authorityGrantDate, saferData] = await Promise.all([
       fetchGrantDate(dot, webKey),
-      fetchCrashes(dot, webKey),
-      fetchSaferPhone(dot),
+      fetchSaferData(dot),
     ]);
 
-    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, crashes24mo, saferPhone));
+    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, saferData));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });
