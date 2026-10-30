@@ -287,7 +287,9 @@ router.get('/:dot', async (req, res, next) => {
     const csAlert   = str(safety.controlSubAlert).trim().toLowerCase();
     const csPct     = parseFloat(str(safety.controlSubPCT));
     const drvInspUS = parseInt(str(inspection.inspectDrvUS || ''), 10);
+    const vehInspUS = parseInt(str(inspection.inspectVehUS || ''), 10);
     const hasInsp   = !isNaN(drvInspUS) && drvInspUS > 0;
+    const hasVehInsp = !isNaN(vehInspUS) && vehInspUS > 0;
     const checkedDate = new Date().toISOString().slice(0, 10);
     let drugAlcoholViolation = null;
     let drugAlcoholSource    = null;
@@ -331,10 +333,14 @@ router.get('/:dot', async (req, res, next) => {
       // Safety rating
       safetyRating: normalizeSafetyRating(str(safety.rating)),
 
-      // BASIC percentile scores — the primary gap FMCSA cannot fill
-      unsafeDrivingBasic:      str(safety.unsafeDrvPCT),
-      hosBasic:                str(safety.hosPCT),
-      vehicleMaintenanceBasic: str(safety.vehMaintPCT),
+      // BASIC percentile scores — the primary gap FMCSA cannot fill.
+      // SaferWatch always emits PCT fields; 0.0 is both the XML schema default AND
+      // a genuine 0th-percentile value. Only return them when vehicle inspections
+      // exist — same gate as drug/alcohol uses for drvInspUS.
+      // When inspectVehUS=0, the PCT is a schema default, not a real percentile.
+      unsafeDrivingBasic:      hasVehInsp ? str(safety.unsafeDrvPCT) : '',
+      hosBasic:                hasVehInsp ? str(safety.hosPCT)       : '',
+      vehicleMaintenanceBasic: hasVehInsp ? str(safety.vehMaintPCT)  : '',
 
       // Insurance amounts — was entirely manual before
       autoLiability:  parseMoney(insurance.bipdOnFile),
@@ -398,6 +404,10 @@ router.get('/:dot', async (req, res, next) => {
         controlledSubstances: str(safety.controlSubAlert),
         driverFitness:        str(safety.drvFitAlert),
       },
+      // Inspection breakdown — vehicle vs driver (used for BASIC validity gate above)
+      inspectVehUS:  isNaN(vehInspUS) ? null : vehInspUS,
+      inspectDrvUS:  isNaN(drvInspUS) ? null : drvInspUS,
+
       // Captured but not mapped to current form fields (future expansion)
       extraBasics: {
         controlledSubstancesPct: str(safety.controlSubPCT),
