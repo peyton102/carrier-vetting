@@ -471,10 +471,21 @@ export default function CarrierVetting({ settings }) {
       }
       if (swJson.drugAlcoholViolation !== undefined) {
         updates.drugAlcoholViolation = swJson.drugAlcoholViolation;
-        let daSrc = swJson.drugAlcoholSource ?? null;
-        // Patch SW's driver insp count with the winning source's count when they differ
-        if (daSrc && winDrvInspEarly != null) {
-          daSrc = daSrc.replace(/\d+ driver insp\./, `${winDrvInspEarly} driver insp.`);
+        // Build per-source-attributed text: each number credits its real source
+        const csPctRaw = swJson.extraBasics?.controlledSubstancesPct;
+        const csAlertYes = (swJson.alerts?.controlledSubstances || '').toLowerCase() === 'yes';
+        const inspSrcLabel = useSafer
+          ? (saferSnapshotDate ? `SAFER, as of ${saferSnapshotDate}` : 'SAFER')
+          : (swDate ? `SaferWatch, as of ${swDate}` : 'SaferWatch');
+        let daSrc;
+        if (csAlertYes) {
+          daSrc = `Controlled Substances alert: Yes (SaferWatch)` +
+            (winDrvInspEarly != null ? `, ${winDrvInspEarly} driver inspections (${inspSrcLabel})` : '');
+        } else if (csPctRaw != null && csPctRaw !== '') {
+          daSrc = `controlSubPCT ${csPctRaw} (SaferWatch)` +
+            (winDrvInspEarly != null ? `, ${winDrvInspEarly} driver inspections (${inspSrcLabel})` : '');
+        } else {
+          daSrc = swJson.drugAlcoholSource ?? null;
         }
         setSwDrugAlcohol({ value: swJson.drugAlcoholViolation, source: daSrc });
       }
