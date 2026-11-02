@@ -712,7 +712,7 @@ function basicZeroNote(doc, L, W, sufficiency, rawVal) {
   const v = parseFloat(rawVal);
   if (isNaN(v) || v !== 0 || rawVal === '' || rawVal == null) return;
   doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
-     .text('  0.00% \u2014 no FMCSA percentile assigned (no violations above threshold in this BASIC)',
+     .text('  0.00% (no FMCSA percentile assigned)',
            L + 8, doc.y, { width: W - 8 });
   doc.moveDown(0.15);
 }

@@ -1161,7 +1161,7 @@ export default function CarrierVetting({ settings }) {
             )}
             {basicDataSufficiency.unsafeDriving === 'ok' && parseFloat(form.unsafeDrivingBasic) === 0 && form.unsafeDrivingBasic !== '' && (
               <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
-                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+                0.00% (no FMCSA percentile assigned).
               </div>
             )}
           </Field>
@@ -1184,7 +1184,7 @@ export default function CarrierVetting({ settings }) {
             )}
             {basicDataSufficiency.hos === 'ok' && parseFloat(form.hosBasic) === 0 && form.hosBasic !== '' && (
               <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
-                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+                0.00% (no FMCSA percentile assigned).
               </div>
             )}
           </Field>
@@ -1201,7 +1201,7 @@ export default function CarrierVetting({ settings }) {
             )}
             {basicDataSufficiency.vehicleMaintenance === 'ok' && parseFloat(form.vehicleMaintenanceBasic) === 0 && form.vehicleMaintenanceBasic !== '' && (
               <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
-                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+                0.00% (no FMCSA percentile assigned).
               </div>
             )}
           </Field>
@@ -1225,7 +1225,7 @@ export default function CarrierVetting({ settings }) {
             )}
             {basicDataSufficiency.driverFitness === 'ok' && parseFloat(form.driverFitnessBasic) === 0 && form.driverFitnessBasic !== '' && (
               <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
-                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+                0.00% (no FMCSA percentile assigned).
               </div>
             )}
           </Field>
