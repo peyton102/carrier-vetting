@@ -193,6 +193,7 @@ export function generateVettingPDF(opts) {
     // ── Authority & Insurance ─────────────────────────────────────────────────
     sectionHeader(doc, L, W, 'AUTHORITY & INSURANCE');
     dataRow(doc, L, W, 'Authority Status',    d.authorityStatus,   src('authorityStatus'));
+    autoFilledNote(doc, L, W, d, 'authorityStatus');
     dataRow(doc, L, W, 'Authority Grant Date', d.authorityGrantDate, src('authorityGrantDate'));
     dataRow(doc, L, W, 'Authority Age',
       authorityDays !== null ? `${authorityDays} days` : null);
@@ -204,6 +205,7 @@ export function generateVettingPDF(opts) {
       d.autoLiability != null && d.autoLiability !== ''
         ? `$${Number(d.autoLiability).toLocaleString('en-US')}` : null,
       src('autoLiability'));
+    autoFilledNote(doc, L, W, d, 'autoLiability');
     if (d.autoLiabilityExpiration) {
       const expDays = daysUntilExpiry(d.autoLiabilityExpiration);
       const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
@@ -216,6 +218,7 @@ export function generateVettingPDF(opts) {
       d.cargoInsurance != null && d.cargoInsurance !== ''
         ? `$${Number(d.cargoInsurance).toLocaleString('en-US')}` : null,
       src('cargoInsurance'));
+    autoFilledNote(doc, L, W, d, 'cargoInsurance');
     if (d.cargoExpiration) {
       const expDays = daysUntilExpiry(d.cargoExpiration);
       const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
@@ -250,7 +253,9 @@ export function generateVettingPDF(opts) {
     // ── Safety data ───────────────────────────────────────────────────────────
     sectionHeader(doc, L, W, 'SAFETY DATA');
     dataRow(doc, L, W, 'FMCSA Safety Rating', d.safetyRating || 'None/Unrated', src('safetyRating'));
+    autoFilledNote(doc, L, W, d, 'safetyRating');
     flagRow(doc, L, W, 'Active Federal OOS Order', d.activeFederalOOS, src('activeFederalOOS'));
+    autoFilledNote(doc, L, W, d, 'activeFederalOOS');
 
     // Drug/alcohol row — shows source tag (auto-filled vs dispatcher-answered)
     {
@@ -265,21 +270,25 @@ export function generateVettingPDF(opts) {
     basicRow(doc, L, W,
       `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'));
+    autoFilledNote(doc, L, W, d, 'unsafeDrivingBasic');
     basicRow(doc, L, W,
       `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold, src('crashIndicatorBasic'));
     basicRow(doc, L, W,
       `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold, src('hosBasic'));
+    autoFilledNote(doc, L, W, d, 'hosBasic');
     basicRow(doc, L, W,
       `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'));
+    autoFilledNote(doc, L, W, d, 'vehicleMaintenanceBasic');
     basicRow(doc, L, W,
       `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold, src('vehicleDriverObservedBasic'));
     basicRow(doc, L, W,
       `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'));
+    autoFilledNote(doc, L, W, d, 'driverFitnessBasic');
     basicRow(doc, L, W,
       `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHazmatThreshold}%)`,
       d.hazmatBasic, cfg.basicHazmatThreshold, src('hazmatBasic'));
@@ -364,9 +373,12 @@ export function generateVettingPDF(opts) {
     dataRow(doc, L, W, 'Power Units',
       d.powerUnits != null && d.powerUnits !== '' ? String(d.powerUnits) : null,
       src('powerUnits'));
-    dataRow(doc, L, W, 'Inspections (24 months)',
-      d.inspections24mo != null && d.inspections24mo !== '' ? String(d.inspections24mo) : null,
-      src('inspections24mo'));
+    {
+      const inspVal = d.inspections24mo != null && d.inspections24mo !== '' ? String(d.inspections24mo) : null;
+      const inspSrcLabel = d.saferSnapshotDate ? `SAFER (as of ${d.saferSnapshotDate})` : src('inspections24mo');
+      dataRow(doc, L, W, 'Inspections — vehicle (24 months)', inspVal, inspSrcLabel);
+      autoFilledNote(doc, L, W, d, 'inspections24mo');
+    }
     dataRow(doc, L, W, 'Clean Inspections (24 months)',
       d.cleanInspections24mo != null && d.cleanInspections24mo !== '' ? String(d.cleanInspections24mo) : null,
       src('cleanInspections24mo'));
@@ -394,8 +406,24 @@ export function generateVettingPDF(opts) {
     driverParts.push(`REJECT >${hardDriver}% hard`);
     const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
 
-    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, src('truckOosPct'));
-    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null,      src('driverOosPct'));
+    // Build source label for OOS rows — prefer the stored oosWinLabel from dual-source selection
+    const oosWinLabel = d.oosWinLabel || src('truckOosPct') || null;
+    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, oosWinLabel);
+    autoFilledNote(doc, L, W, d, 'truckOosPct');
+    if (d.truckOosPctAlt && d.truckOosPctAltSrc) {
+      doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
+         .text(`  ${d.truckOosPctAltSrc} showed ${parseFloat(d.truckOosPctAlt).toFixed(2)}% (not used — older data)`,
+               L + 8, doc.y, { width: W - 8 });
+      doc.moveDown(0.15);
+    }
+    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null, oosWinLabel);
+    autoFilledNote(doc, L, W, d, 'driverOosPct');
+    if (d.driverOosPctAlt && d.driverOosPctAltSrc) {
+      doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
+         .text(`  ${d.driverOosPctAltSrc} showed ${parseFloat(d.driverOosPctAlt).toFixed(2)}% (not used — older data)`,
+               L + 8, doc.y, { width: W - 8 });
+      doc.moveDown(0.15);
+    }
 
     const oosAsOf = d.nationalAvgOosAsOf ? ` (as of ${d.nationalAvgOosAsOf})` : '';
     dataRow(doc, L, W, `Natl Avg Truck OOS %${oosAsOf}`,  `${natAvgTruck.toFixed(2)}%`);
@@ -666,6 +694,24 @@ function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock
     isNA ? 'Helvetica-Oblique' : isHard || isYellow ? 'Helvetica-Bold' : 'Helvetica',
     isNA ? C.gray : isHard ? C.red : isYellow ? C.yellow : C.black,
     display);
+}
+
+// Show an amber edit-audit note when a dispatcher changed an auto-filled value.
+// d._autoFilled is stored in carrier_data at /run time; each entry is { value, sourceLabel }.
+// Numeric values are normalized before comparison to avoid "20" !== "20.00" false positives.
+function autoFilledNote(doc, L, W, d, field) {
+  const af = (d._autoFilled || {})[field];
+  if (!af) return;
+  const current  = String(d[field] ?? '').trim();
+  const original = String(af.value).trim();
+  if (current === original) return;
+  // Numeric comparison: "20" vs "20.00" → equal
+  const cn = parseFloat(current), on = parseFloat(original);
+  if (!isNaN(cn) && !isNaN(on) && cn === on) return;
+  doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
+     .text(`  \u26A0 EDITED by dispatcher \u2014 auto-filled value was: ${original} (${af.sourceLabel})`,
+           L + 8, doc.y, { width: W - 8 });
+  doc.moveDown(0.15);
 }
 
 function fmtMoney(n) {

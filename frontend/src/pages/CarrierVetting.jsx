@@ -81,6 +81,13 @@ const INITIAL_FORM = {
   nationalAvgTruckOos:  '',
   nationalAvgDriverOos: '',
   nationalAvgOosAsOf:   '',
+  // Dual-source OOS metadata (set by applyLookupResults, stored for cert)
+  saferSnapshotDate:    '',
+  oosWinLabel:          '',
+  truckOosPctAlt:       '',
+  truckOosPctAltSrc:    '',
+  driverOosPctAlt:      '',
+  driverOosPctAltSrc:   '',
 };
 
 const AUTHORITY_STATUSES = [
@@ -295,6 +302,11 @@ export default function CarrierVetting({ settings }) {
   const [lookupErr,    setLookupErr]    = useState('');
   const [swErr,        setSwErr]        = useState('');
   const [swDrugAlcohol, setSwDrugAlcohol] = useState(null); // { value: bool|null, source: string }
+  const [basicDataSufficiency, setBasicDataSufficiency] = useState({}); // per-BASIC FMCSA data sufficiency
+  const [inspSourceMeta, setInspSourceMeta] = useState(null); // dual-source OOS/insp metadata
+  // autoFilledValues: { fieldName: { value: string, sourceLabel: string } }
+  // Records the exact value auto-filled from each source so dispatcher edits can be flagged on the cert.
+  const [autoFilledValues, setAutoFilledValues] = useState({});
 
   const [blockInfo,          setBlockInfo]          = useState(null);
   const [fmcsaCannotVerify,  setFmcsaCannotVerify]  = useState(false);
@@ -333,9 +345,21 @@ export default function CarrierVetting({ settings }) {
       setLookupErr('');
       setSwErr('');
       setSwDrugAlcohol(null);
+      setBasicDataSufficiency({});
+      setInspSourceMeta(null);
+      setAutoFilledValues({});
       setForm(f => ({ ...f, fmcsaLookupCompleted: false, drugAlcoholViolation: null }));
     }
   }, []);
+
+  // Parse "MM/DD/YYYY" or "YYYY-MM-DD" date strings into Date objects for comparison.
+  function parseUsDate(s) {
+    if (!s) return null;
+    const mdy = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy) return new Date(`${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s.slice(0, 10));
+    return null;
+  }
 
   // ── Shared: merge FMCSA + SW responses into form ────────────────────────────
   function applyLookupResults(fmcsaJson, swRes, swJson) {
@@ -349,10 +373,67 @@ export default function CarrierVetting({ settings }) {
     }
 
     const swOk = swRes.ok && swJson.ok !== false;
+
+    // ── Dual-source OOS/inspection date comparison ─────────────────────────
+    // SAFER HTML snapshot date vs SaferWatch data date (usually null — SW doesn't expose it).
+    // SAFER wins on tie or when SW has no date. This is deterministic: never picks based on
+    // which source gives a better verdict.
+    const saferSnapshotDate = fmcsaJson.saferSnapshotDate || null;
+    const swDate            = swOk ? (swJson.swInspectionsDate || null) : null;
+    const saferDateObj      = parseUsDate(saferSnapshotDate);
+    const swDateObj         = parseUsDate(swDate);
+    const useSafer          = !swDateObj || (saferDateObj != null && saferDateObj >= swDateObj);
+
+    // Raw values from each source (for cert "other value" note)
+    const saferVehicleOosPct = fmcsaJson.saferData?.vehicleOosPct != null
+      ? parseFloat(fmcsaJson.saferData.vehicleOosPct).toFixed(2) : null;
+    const saferDriverOosPct  = fmcsaJson.saferData?.driverOosPct  != null
+      ? parseFloat(fmcsaJson.saferData.driverOosPct).toFixed(2)  : null;
+    const swTruckOosPct  = swOk && swJson.truckOosPct  ? swJson.truckOosPct  : null;
+    const swDriverOosPct = swOk && swJson.driverOosPct ? swJson.driverOosPct : null;
+
+    const winTruckOos  = useSafer ? saferVehicleOosPct : swTruckOosPct;
+    const winDriverOos = useSafer ? saferDriverOosPct  : swDriverOosPct;
+    const altTruckOos  = useSafer ? swTruckOosPct  : saferVehicleOosPct;
+    const altDriverOos = useSafer ? swDriverOosPct : saferDriverOosPct;
+
+    // Build source label — e.g. "SAFER (as of 10/31/2026)" or "SaferWatch (SAFER unavailable)"
+    const saferAvail    = saferSnapshotDate != null;
+    const swAvail       = swOk;
+    let oosWinLabel, oosAltLabel;
+    if (useSafer) {
+      oosWinLabel = saferAvail
+        ? `SAFER (as of ${saferSnapshotDate})`
+        : `FMCSA (QCMobile — no snapshot date)`;
+      oosAltLabel = swAvail && swDate
+        ? `SaferWatch (as of ${swDate}, older)`
+        : swAvail ? 'SaferWatch (no date, older)' : null;
+    } else {
+      oosWinLabel = swDate ? `SaferWatch (as of ${swDate})` : 'SaferWatch';
+      oosAltLabel = saferAvail
+        ? `SAFER (as of ${saferSnapshotDate}, older)`
+        : !saferAvail && fmcsaJson.truckOosPct ? 'SAFER (no date)' : null;
+    }
+
+    // Override truckOosPct/driverOosPct in updates with the winner value
+    if (winTruckOos  != null) { updates.truckOosPct  = winTruckOos;  sources.truckOosPct  = useSafer ? 'fmcsa' : 'saferwatch'; }
+    if (winDriverOos != null) { updates.driverOosPct = winDriverOos; sources.driverOosPct = useSafer ? 'fmcsa' : 'saferwatch'; }
+
+    // Metadata stored in form for PDF cert — "other value" note when sources disagree
+    const truckDisagree  = altTruckOos  != null && altTruckOos  !== winTruckOos;
+    const driverDisagree = altDriverOos != null && altDriverOos !== winDriverOos;
+    updates.oosWinLabel        = oosWinLabel  || '';
+    updates.truckOosPctAlt     = truckDisagree  ? altTruckOos  : '';
+    updates.truckOosPctAltSrc  = truckDisagree  ? oosAltLabel  : '';
+    updates.driverOosPctAlt    = driverDisagree ? altDriverOos : '';
+    updates.driverOosPctAltSrc = driverDisagree ? oosAltLabel  : '';
+
     if (!swOk) {
       setSwErr(swJson.error ?? 'SaferWatch lookup failed — manual entry required for BASIC scores and insurance');
     } else {
       for (const field of (swJson.filledFields ?? [])) {
+        // OOS rates: already set above from the date-winner; skip SW overwrite
+        if (field === 'truckOosPct' || field === 'driverOosPct') continue;
         const val = swJson[field];
         if (val !== '' && val != null && val !== false) {
           updates[field] = val;
@@ -382,6 +463,42 @@ export default function CarrierVetting({ settings }) {
     setFieldSources(sources);
     setFmcsaData(fmcsaJson);
     setSwData(swOk ? swJson : null);
+    setBasicDataSufficiency(swOk && swJson.basicDataSufficiency ? swJson.basicDataSufficiency : {});
+    setInspSourceMeta({
+      useSafer,
+      saferSnapshotDate,
+      swDate,
+      oosWinLabel,
+      oosAltLabel,
+      saferVehicleOosPct,
+      saferDriverOosPct,
+      swTruckOosPct,
+      swDriverOosPct,
+      saferVehicleInsp: fmcsaJson.saferData?.vehicleInsp ?? null,
+      saferDriverInsp:  fmcsaJson.saferData?.driverInsp  ?? null,
+      swVehicleInsp:    swOk ? (swJson.inspectVehUS ?? null) : null,
+      swDriverInsp:     swOk ? (swJson.inspectDrvUS ?? null) : null,
+    });
+
+    // Build autoFilledValues: snapshot of every auto-filled value at lookup time.
+    // Stored in carrier_data on /run so the PDF cert can flag dispatcher edits.
+    // Only fields in `sources` (set by FMCSA or SW) are tracked — not manual fields.
+    const autoFilled = {};
+    for (const [field, sourceType] of Object.entries(sources)) {
+      const val = updates[field];
+      if (val === undefined || val === '') continue;
+      let sourceLabel;
+      if (field === 'truckOosPct' || field === 'driverOosPct') {
+        sourceLabel = oosWinLabel || (sourceType === 'fmcsa' ? 'FMCSA' : 'SaferWatch');
+      } else if (field === 'inspections24mo' && saferSnapshotDate) {
+        sourceLabel = `SAFER (as of ${saferSnapshotDate})`;
+      } else {
+        sourceLabel = sourceType === 'fmcsa' ? 'FMCSA' : 'SaferWatch';
+      }
+      autoFilled[field] = { value: String(val), sourceLabel };
+    }
+    setAutoFilledValues(autoFilled);
+
     setVerdict(null);
     setSavedRecordId(null);
     setSaveStatus(null);
@@ -486,6 +603,7 @@ export default function CarrierVetting({ settings }) {
           fmcsaCannotVerify,
           fmcsaLastAttemptAt,
           drugAlcoholSource: swDrugAlcohol?.source ?? null,
+          _autoFilled: autoFilledValues,
         }),
       });
       const data = await res.json();
@@ -679,6 +797,9 @@ export default function CarrierVetting({ settings }) {
     setLookupErr('');
     setSwErr('');
     setSwDrugAlcohol(null);
+    setBasicDataSufficiency({});
+    setInspSourceMeta(null);
+    setAutoFilledValues({});
   }
 
   // Auto-load audit log on first render
@@ -982,6 +1103,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('unsafeDrivingBasic')}
             />
+            {basicDataSufficiency.unsafeDriving === 'insufficient' && (
+              <div style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>
+                Insufficient data (below FMCSA minimum — needs ≥3 driver insp.; {swData?.inspectDrvUS ?? 0} on record). Not evaluated.
+              </div>
+            )}
+            {basicDataSufficiency.unsafeDriving === 'ok' && parseFloat(form.unsafeDrivingBasic) === 0 && form.unsafeDrivingBasic !== '' && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+              </div>
+            )}
           </Field>
           <Field label={`Crash Indicator BASIC % (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicCrashIndicatorThreshold}) — manual entry`}>
             <TextInput
@@ -995,6 +1126,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('hosBasic')}
             />
+            {basicDataSufficiency.hos === 'insufficient' && (
+              <div style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>
+                Insufficient data (below FMCSA minimum — needs ≥3 driver insp.; {swData?.inspectDrvUS ?? 0} on record). Not evaluated.
+              </div>
+            )}
+            {basicDataSufficiency.hos === 'ok' && parseFloat(form.hosBasic) === 0 && form.hosBasic !== '' && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+              </div>
+            )}
           </Field>
           <Field label={`Vehicle Maintenance BASIC % (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleMaintenanceThreshold})`}>
             <TextInput
@@ -1002,6 +1143,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('vehicleMaintenanceBasic')}
             />
+            {basicDataSufficiency.vehicleMaintenance === 'insufficient' && (
+              <div style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>
+                Insufficient data (below FMCSA minimum — needs ≥5 vehicle insp.; {swData?.inspectVehUS ?? 0} on record). Not evaluated.
+              </div>
+            )}
+            {basicDataSufficiency.vehicleMaintenance === 'ok' && parseFloat(form.vehicleMaintenanceBasic) === 0 && form.vehicleMaintenanceBasic !== '' && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+              </div>
+            )}
           </Field>
           <Field label={`Vehicle Driver-Observed BASIC % (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicVehicleDriverObservedThreshold})`}>
             <TextInput
@@ -1016,6 +1167,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="0–100" min="0" max="100" step="0.01"
               inputStyle={fi('driverFitnessBasic')}
             />
+            {basicDataSufficiency.driverFitness === 'insufficient' && (
+              <div style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>
+                Insufficient data (below FMCSA minimum — needs ≥5 driver insp.; {swData?.inspectDrvUS ?? 0} on record). Not evaluated.
+              </div>
+            )}
+            {basicDataSufficiency.driverFitness === 'ok' && parseFloat(form.driverFitnessBasic) === 0 && form.driverFitnessBasic !== '' && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                0.00% — no FMCSA percentile assigned (no violations above threshold in this BASIC).
+              </div>
+            )}
           </Field>
           <Field label={`Hazardous Materials BASIC % (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} ≥ ${cfg.basicHazmatThreshold})`}>
             <TextInput
@@ -1165,6 +1326,15 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="Total vehicle inspections" min="0"
               inputStyle={fi('inspections24mo')}
             />
+            {inspSourceMeta?.saferSnapshotDate && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                SAFER (as of {inspSourceMeta.saferSnapshotDate}):
+                vehicle {inspSourceMeta.saferVehicleInsp ?? '?'}, driver {inspSourceMeta.saferDriverInsp ?? '?'}
+                {inspSourceMeta.swVehicleInsp != null && (
+                  <span> · SW: veh {inspSourceMeta.swVehicleInsp}, drv {inspSourceMeta.swDriverInsp}</span>
+                )}
+              </div>
+            )}
           </Field>
           <Field label="Clean Inspections — last 24 months (manual entry)">
             <TextInput
@@ -1178,6 +1348,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="e.g. 12.5" min="0" max="100" step="0.1"
               inputStyle={fi('truckOosPct')}
             />
+            {inspSourceMeta?.oosWinLabel && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                Source: {inspSourceMeta.oosWinLabel}
+                {form.truckOosPctAlt && (
+                  <span style={{ color: '#92400e' }}>
+                    {' '}· {inspSourceMeta.oosAltLabel ?? 'Other source'} showed {form.truckOosPctAlt}%
+                  </span>
+                )}
+              </div>
+            )}
           </Field>
           <Field label="Driver OOS %">
             <TextInput
@@ -1185,6 +1365,16 @@ export default function CarrierVetting({ settings }) {
               onChange={handleChange} placeholder="e.g. 5.2" min="0" max="100" step="0.1"
               inputStyle={fi('driverOosPct')}
             />
+            {inspSourceMeta?.oosWinLabel && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                Source: {inspSourceMeta.oosWinLabel}
+                {form.driverOosPctAlt && (
+                  <span style={{ color: '#92400e' }}>
+                    {' '}· {inspSourceMeta.oosAltLabel ?? 'Other source'} showed {form.driverOosPctAlt}%
+                  </span>
+                )}
+              </div>
+            )}
           </Field>
           <div />
           <Field label="National Avg Truck OOS %">

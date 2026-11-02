@@ -106,7 +106,13 @@ function extractGrantDate(authorityJson) {
 function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
   const truckInsp = c.vehicleInsp    ?? 0;
   const truckOos  = c.vehicleOosInsp ?? 0;
-  const { phone: saferPhone = '', crashes: saferCrashes = null, oos: saferOos = null } = saferData;
+  const {
+    phone:        saferPhone        = '',
+    crashes:      saferCrashes      = null,
+    oos:          saferOos          = null,
+    inspections:  saferInsp         = null,
+    snapshotDate: saferSnapshotDate = null,
+  } = saferData;
 
   // National OOS averages: SAFER HTML is live and authoritative; QCMobile values are stale.
   // Only fall back to QCMobile if SAFER HTML parsing fails entirely.
@@ -114,6 +120,17 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
                        : c.vehicleOosRateNationalAverage != null ? String(c.vehicleOosRateNationalAverage) : '';
   const natDriverOos = saferOos?.driverNatAvg != null ? saferOos.driverNatAvg
                        : c.driverOosRateNationalAverage  != null ? String(c.driverOosRateNationalAverage)  : '';
+
+  // Carrier OOS rates: SAFER HTML snapshot (same date shown on cert); fall back to QCMobile.
+  const truckOosPctStr  = saferInsp?.vehicleOosPct != null
+    ? parseFloat(saferInsp.vehicleOosPct).toFixed(2)
+    : c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate).toFixed(2) : '';
+  const driverOosPctStr = saferInsp?.driverOosPct  != null
+    ? parseFloat(saferInsp.driverOosPct).toFixed(2)
+    : c.driverOosRate  != null ? parseFloat(c.driverOosRate).toFixed(2)  : '';
+
+  // Vehicle inspection count: SAFER HTML vehicle count; fall back to QCMobile
+  const vehicleInspCount = saferInsp?.vehicleInsp ?? truckInsp;
 
   const fmcsaFields = {
     carrierName:          c.legalName   || '',
@@ -123,14 +140,15 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     authorityGrantDate,
     safetyRating:         normalizeSafetyRating(c.safetyRating),
     powerUnits:           c.totalPowerUnits != null ? String(c.totalPowerUnits) : '',
-    inspections24mo:      String(truckInsp),
-    truckOosPct:          c.vehicleOosRate != null ? parseFloat(c.vehicleOosRate).toFixed(2) : '',
-    driverOosPct:         c.driverOosRate  != null ? parseFloat(c.driverOosRate).toFixed(2)  : '',
+    inspections24mo:      String(vehicleInspCount),
+    truckOosPct:          truckOosPctStr,
+    driverOosPct:         driverOosPctStr,
     nationalAvgTruckOos:  natTruckOos,
     nationalAvgDriverOos: natDriverOos,
     nationalAvgOosAsOf:   saferOos?.asOf || '',
     fmcsaPhone:           saferPhone,   // parsed from SAFER HTML — QCMobile JSON has no phone field
     hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
+    saferSnapshotDate:    saferSnapshotDate || '',
   };
 
   const filledFields = Object.keys(fmcsaFields).filter(f => {
@@ -174,6 +192,18 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
       vehicleOosRate: c.vehicleOosRate, driverInsp: c.driverInsp,
       driverOosInsp: c.driverOosInsp, driverOosRate: c.driverOosRate,
       crashTotal: c.crashTotal, mcs150Date: c.mcs150Date,
+    },
+    // SAFER HTML parsed inspection/OOS data — exposed for dual-source display on cert.
+    // Frontend compares saferData.snapshotDate vs swInspectionsDate (from SW response) to
+    // determine which source is more recent. SAFER wins on tie or when SW has no date.
+    saferData: {
+      snapshotDate:   saferSnapshotDate,
+      vehicleInsp:    saferInsp?.vehicleInsp    ?? null,
+      driverInsp:     saferInsp?.driverInsp     ?? null,
+      vehicleOosInsp: saferInsp?.vehicleOosInsp ?? null,
+      driverOosInsp:  saferInsp?.driverOosInsp  ?? null,
+      vehicleOosPct:  saferInsp?.vehicleOosPct  ?? null,
+      driverOosPct:   saferInsp?.driverOosPct   ?? null,
     },
   };
 }
@@ -298,7 +328,69 @@ function parseSaferOosAverages(html) {
   } catch (_) { return null; }
 }
 
-// Fetch SAFER snapshot HTML once and extract all three data points.
+// Parse the FMCSA data snapshot date from the SAFER HTML page header.
+// Returns "MM/DD/YYYY" string or null.
+// Page header: "...FMCSA management information systems as of <FONT ...>10/31/2026</FONT>."
+function parseSaferSnapshotDate(html) {
+  const m = html.match(/information\s+systems\s+as\s+of\s*(?:<[^>]+>)?\s*([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i);
+  return m ? m[1] : null;
+}
+
+// Parse the first <TABLE summary="Inspections"> from SAFER HTML (24-month carrier data).
+// Columns: Inspection Type | Vehicle | Driver | Hazmat | IEP
+// Rows: Inspections | Out of Service | Out of Service % | Nat'l Average %
+// Returns { vehicleInsp, driverInsp, vehicleOosInsp, driverOosInsp, vehicleOosPct, driverOosPct }
+// or null when the table cannot be found or parsed.
+function parseSaferInspections(html) {
+  try {
+    const tableMatch = html.match(/<TABLE[^>]*summary="Inspections"[^>]*>([\s\S]*?)<\/TABLE>/i);
+    if (!tableMatch) return null;
+    const tbl = tableMatch[1];
+
+    const rows = [];
+    const rowRe = /<TR[^>]*>([\s\S]*?)<\/TR>/gi;
+    let m;
+    while ((m = rowRe.exec(tbl)) !== null) rows.push(m[1]);
+
+    const tdVals = (row) => [...row.matchAll(/<TD[^>]*>([\s\S]*?)<\/TD>/gi)]
+      .map(td => td[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').replace(/%/g, '').trim());
+
+    let vehicleInsp = null, driverInsp = null;
+    let vehicleOosInsp = null, driverOosInsp = null;
+    let vehicleOosPct = null, driverOosPct = null;
+
+    for (const row of rows) {
+      const th = row.match(/<TH[^>]*SCOPE="ROW"[^>]*>([\s\S]*?)<\/TH>/i);
+      if (!th) continue;
+      const label = th[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, '').trim();
+      const cells = tdVals(row);
+      if (!cells.length) continue;
+
+      if (/^inspections$/i.test(label)) {
+        vehicleInsp = parseInt(cells[0], 10);
+        driverInsp  = parseInt(cells[1], 10);
+      } else if (/^out of service$/i.test(label)) {
+        vehicleOosInsp = parseInt(cells[0], 10);
+        driverOosInsp  = parseInt(cells[1], 10);
+      } else if (/^out of service\s*%$/i.test(label)) {
+        vehicleOosPct = parseFloat(cells[0]);
+        driverOosPct  = parseFloat(cells[1]);
+      }
+    }
+
+    if (vehicleInsp === null && driverInsp === null) return null;
+    return {
+      vehicleInsp:    isNaN(vehicleInsp)    ? 0 : vehicleInsp,
+      driverInsp:     isNaN(driverInsp)     ? 0 : driverInsp,
+      vehicleOosInsp: isNaN(vehicleOosInsp) ? 0 : vehicleOosInsp,
+      driverOosInsp:  isNaN(driverOosInsp)  ? 0 : driverOosInsp,
+      vehicleOosPct:  isNaN(vehicleOosPct)  ? null : vehicleOosPct,
+      driverOosPct:   isNaN(driverOosPct)   ? null : driverOosPct,
+    };
+  } catch (_) { return null; }
+}
+
+// Fetch SAFER snapshot HTML once and extract all data points.
 async function fetchSaferData(dot) {
   try {
     const url = `${SAFER_BASE}/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dot}`;
@@ -306,9 +398,11 @@ async function fetchSaferData(dot) {
     if (!res.ok) return {};
     const html = await res.text();
     return {
-      phone:   parseSaferPhone(html),
-      crashes: parseSaferCrashes(html),
-      oos:     parseSaferOosAverages(html),
+      phone:        parseSaferPhone(html),
+      crashes:      parseSaferCrashes(html),
+      oos:          parseSaferOosAverages(html),
+      inspections:  parseSaferInspections(html),
+      snapshotDate: parseSaferSnapshotDate(html),
     };
   } catch (_) { return {}; }
 }

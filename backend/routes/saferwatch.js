@@ -238,6 +238,9 @@ router.get('/:dot', async (req, res, next) => {
     const code    = str(wrapper.code);
     const dispMsg = str(wrapper.displayMsg);
     const techMsg = str(wrapper.techMsg);
+    // SW data freshness date — present in some XML responses as retrievalDate or similar.
+    // null means SW doesn't expose a freshness date → SAFER snapshot wins by default.
+    const swInspectionsDate = str(wrapper.retrievalDate || wrapper.dataDate || wrapper.asOfDate || '') || null;
 
     if (status !== 'APPROVED' || action !== 'OK') {
       console.warn('[SW] Non-OK response:', { status, action, code, dispMsg, techMsg });
@@ -289,7 +292,44 @@ router.get('/:dot', async (req, res, next) => {
     const drvInspUS = parseInt(str(inspection.inspectDrvUS || ''), 10);
     const vehInspUS = parseInt(str(inspection.inspectVehUS || ''), 10);
     const hasInsp   = !isNaN(drvInspUS) && drvInspUS > 0;
-    const hasVehInsp = !isNaN(vehInspUS) && vehInspUS > 0;
+    // FMCSA SMS data sufficiency — exact wording from §3.x.2 of CSMS Methodology (Sept 2014)
+    // Source: csa.fmcsa.dot.gov/documents/smsmethodology.pdf
+    //
+    // Unsafe Driving (§3.1.2 B): "remove carriers with less than THREE such inspections"
+    //   where "such inspections" = inspections with at least one Unsafe Driving BASIC violation.
+    //   Safety Event Groups are keyed on inspections-WITH-violations, not total driver insp.
+    //   → We proxy with driverInsp >= 3 (best available — SW doesn't supply violation counts per BASIC).
+    //
+    // HOS Compliance (§3.2.2 A): "remove carriers with (1) less than THREE relevant driver
+    //   inspections OR (2) no inspections resulting in at least one BASIC violation."
+    //   Post-group step also eliminates carriers where no violation in past 12 months AND no
+    //   violation in the latest relevant inspection. Cannot check violation recency from SW.
+    //
+    // Driver Fitness (§3.3.2 A): same two-condition rule as HOS but minimum is FIVE
+    //   relevant driver inspections.
+    //
+    // Vehicle Maintenance (§3.5.2 A): "remove carriers with (1) less than FIVE relevant
+    //   [vehicle] inspections OR (2) no inspections resulting in at least one BASIC violation."
+    //   Same 12-month recency elimination applies.
+    //
+    // HM Compliance (§3.6.2 A): same two-condition rule as VM, FIVE relevant HM inspections.
+    //   HM-specific inspection count not available in SW response — gate not applicable.
+    //
+    // Crash Indicator (§3.7.2 B): "For carriers with TWO or more applicable crashes."
+    //   Crash-based, not inspection-based — gate not applicable.
+    //
+    // Controlled Substances/Alcohol (§3.4.2 A): "Remove carriers with no violations in
+    //   this BASIC." No inspection-count floor; grouped by count of inspections-with-violations.
+    //   All violations must be within 12 months. Handled separately via drugAlcoholViolation flag.
+    //
+    // NOTE: The violation-presence condition (part 2 of HOS/DF/VM/HM gates) cannot be checked
+    // directly from SW data. A carrier meeting the inspection count but having 0 violations
+    // gets measure=0 from FMCSA and SW returns 0.0 (schema default). This is harmless —
+    // showing 0.0 does not trigger any rule. The count gate below correctly identifies cases
+    // where SW's 0.0 is definitely a schema default (no inspection history at all).
+    const drvSufficientBasic = !isNaN(drvInspUS) && drvInspUS >= 3;  // Unsafe Driving proxy, HOS
+    const drvSufficientFit   = !isNaN(drvInspUS) && drvInspUS >= 5;  // Driver Fitness
+    const vehSufficient      = !isNaN(vehInspUS) && vehInspUS >= 5;  // Vehicle Maintenance
     const checkedDate = new Date().toISOString().slice(0, 10);
     let drugAlcoholViolation = null;
     let drugAlcoholSource    = null;
@@ -335,12 +375,12 @@ router.get('/:dot', async (req, res, next) => {
 
       // BASIC percentile scores — the primary gap FMCSA cannot fill.
       // SaferWatch always emits PCT fields; 0.0 is both the XML schema default AND
-      // a genuine 0th-percentile value. Only return them when vehicle inspections
-      // exist — same gate as drug/alcohol uses for drvInspUS.
-      // When inspectVehUS=0, the PCT is a schema default, not a real percentile.
-      unsafeDrivingBasic:      hasVehInsp ? str(safety.unsafeDrvPCT) : '',
-      hosBasic:                hasVehInsp ? str(safety.hosPCT)       : '',
-      vehicleMaintenanceBasic: hasVehInsp ? str(safety.vehMaintPCT)  : '',
+      // a genuine 0th-percentile value. Only return them when the carrier meets
+      // FMCSA's data sufficiency minimum for the relevant inspection type.
+      // Unsafe Driving / HOS use driver inspections (≥3); VM uses vehicle (≥5).
+      unsafeDrivingBasic:      drvSufficientBasic ? str(safety.unsafeDrvPCT) : '',
+      hosBasic:                drvSufficientBasic ? str(safety.hosPCT)       : '',
+      vehicleMaintenanceBasic: vehSufficient      ? str(safety.vehMaintPCT)  : '',
 
       // Insurance amounts — was entirely manual before
       autoLiability:  parseMoney(insurance.bipdOnFile),
@@ -404,14 +444,31 @@ router.get('/:dot', async (req, res, next) => {
         controlledSubstances: str(safety.controlSubAlert),
         driverFitness:        str(safety.drvFitAlert),
       },
+      // SW data freshness date (null = SW doesn't expose it → SAFER snapshot wins by default)
+      swInspectionsDate,
+
       // Inspection breakdown — vehicle vs driver (used for BASIC validity gate above)
       inspectVehUS:  isNaN(vehInspUS) ? null : vehInspUS,
       inspectDrvUS:  isNaN(drvInspUS) ? null : drvInspUS,
 
+      // FMCSA SMS data sufficiency per BASIC — null = relevant inspection count unavailable from SW
+      // 'ok' = at or above FMCSA minimum; 'insufficient' = below minimum, percentile not meaningful
+      // Unsafe Driving uses driver-inspection count as a proxy (FMCSA's true minimum is on
+      // inspections-WITH-violations, which SW doesn't expose separately).
+      basicDataSufficiency: {
+        unsafeDriving:         isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'),
+        hos:                   isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'),
+        vehicleMaintenance:    isNaN(vehInspUS) ? null : (vehSufficient      ? 'ok' : 'insufficient'),
+        driverFitness:         isNaN(drvInspUS) ? null : (drvSufficientFit   ? 'ok' : 'insufficient'),
+        crashIndicator:        null,  // manual; crash count not provided by SW
+        vehicleDriverObserved: null,  // manual
+        hazmat:                null,  // manual; HM inspection count not provided by SW
+      },
+
       // Captured but not mapped to current form fields (future expansion)
       extraBasics: {
         controlledSubstancesPct: str(safety.controlSubPCT),
-        driverFitnessPct:        str(safety.drvFitPCT),
+        driverFitnessPct:        drvSufficientFit ? str(safety.drvFitPCT) : '',
       },
       // Raw sections for side-by-side debug comparison
       _raw: { identity, authority, safety, inspection, operation, equipment, insurance, certStatus },
