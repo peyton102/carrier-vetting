@@ -270,29 +270,29 @@ export function generateVettingPDF(opts) {
     const bs = d._basicSufficiency || {};
     basicRow(doc, L, W,
       `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicUnsafeDrivingThreshold}%)`,
-      d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'));
-    basicZeroNote(doc, L, W, bs.unsafeDriving, d.unsafeDrivingBasic);
+      d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'),
+      bs.unsafeDriving === 'ok' && parseFloat(d.unsafeDrivingBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'unsafeDrivingBasic');
     basicRow(doc, L, W,
       `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold, src('crashIndicatorBasic'));
     basicRow(doc, L, W,
       `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHosThreshold}%)`,
-      d.hosBasic, cfg.basicHosThreshold, src('hosBasic'));
-    basicZeroNote(doc, L, W, bs.hos, d.hosBasic);
+      d.hosBasic, cfg.basicHosThreshold, src('hosBasic'),
+      bs.hos === 'ok' && parseFloat(d.hosBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'hosBasic');
     basicRow(doc, L, W,
       `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleMaintenanceThreshold}%)`,
-      d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'));
-    basicZeroNote(doc, L, W, bs.vehicleMaintenance, d.vehicleMaintenanceBasic);
+      d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'),
+      bs.vehicleMaintenance === 'ok' && parseFloat(d.vehicleMaintenanceBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'vehicleMaintenanceBasic');
     basicRow(doc, L, W,
       `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold, src('vehicleDriverObservedBasic'));
     basicRow(doc, L, W,
       `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicDriverFitnessThreshold}%)`,
-      d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'));
-    basicZeroNote(doc, L, W, bs.driverFitness, d.driverFitnessBasic);
+      d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'),
+      bs.driverFitness === 'ok' && parseFloat(d.driverFitnessBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'driverFitnessBasic');
     basicRow(doc, L, W,
       `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHazmatThreshold}%)`,
@@ -665,18 +665,21 @@ function doubleBrokerChameleonRow(doc, L, W, dbVal, chamVal) {
     display);
 }
 
-function basicRow(doc, L, W, label, rawVal, threshold, source) {
+function basicRow(doc, L, W, label, rawVal, threshold, source, zeroNote = null) {
   const val  = parseFloat(rawVal);
   const isNA = isNaN(val) || rawVal == null || rawVal === '';
   const over = !isNA && val > threshold;
+  const isZeroNote = !isNA && zeroNote != null && val === 0;
   const base = isNA
     ? 'Not reviewed (no data)'
-    : `${val.toFixed(2)}%${over ? `  !! ABOVE this broker\u2019s ${threshold}% threshold` : ''}`;
+    : isZeroNote
+      ? zeroNote
+      : `${val.toFixed(2)}%${over ? `  !! ABOVE this broker\u2019s ${threshold}% threshold` : ''}`;
   const display = !isNA && source ? `${base} (${source})` : base;
   _twoColRow(doc, L, W,
     'Helvetica-Bold', C.darkgray, `${label}:`,
-    over ? 'Helvetica-Bold' : isNA ? 'Helvetica-Oblique' : 'Helvetica',
-    over ? C.red : isNA ? C.gray : C.black,
+    over ? 'Helvetica-Bold' : (isNA || isZeroNote) ? 'Helvetica-Oblique' : 'Helvetica',
+    over ? C.red : (isNA || isZeroNote) ? C.gray : C.black,
     display);
 }
 

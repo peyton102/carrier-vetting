@@ -436,6 +436,14 @@ export default function CarrierVetting({ settings }) {
       updates.driverInspections24mo = String(saferDrvInspCount);
     }
 
+    // Compute winning inspection counts here so drug/alcohol source string can use them
+    const winVehInspEarly = useSafer
+      ? (fmcsaJson.saferData?.vehicleInsp ?? (swOk ? swJson.inspectVehUS : null))
+      : ((swOk ? swJson.inspectVehUS : null) ?? fmcsaJson.saferData?.vehicleInsp);
+    const winDrvInspEarly = useSafer
+      ? (saferDrvInspCount ?? (swOk ? swJson.inspectDrvUS : null))
+      : ((swOk ? swJson.inspectDrvUS : null) ?? saferDrvInspCount);
+
     if (!swOk) {
       setSwErr(swJson.error ?? 'SaferWatch lookup failed — manual entry required for BASIC scores and insurance');
     } else {
@@ -463,19 +471,20 @@ export default function CarrierVetting({ settings }) {
       }
       if (swJson.drugAlcoholViolation !== undefined) {
         updates.drugAlcoholViolation = swJson.drugAlcoholViolation;
-        setSwDrugAlcohol({ value: swJson.drugAlcoholViolation, source: swJson.drugAlcoholSource ?? null });
+        let daSrc = swJson.drugAlcoholSource ?? null;
+        // Patch SW's driver insp count with the winning source's count when they differ
+        if (daSrc && winDrvInspEarly != null) {
+          daSrc = daSrc.replace(/\d+ driver insp\./, `${winDrvInspEarly} driver insp.`);
+        }
+        setSwDrugAlcohol({ value: swJson.drugAlcoholViolation, source: daSrc });
       }
     }
 
     // ── BASIC gate recomputation using winning source's inspection counts ───
     // SW computed gates from its own (possibly stale) counts. Recompute using
     // whichever source won so the gates reflect the most current data.
-    const winVehInsp = useSafer
-      ? (fmcsaJson.saferData?.vehicleInsp ?? (swOk ? swJson.inspectVehUS : null))
-      : ((swOk ? swJson.inspectVehUS : null) ?? fmcsaJson.saferData?.vehicleInsp);
-    const winDrvInsp = useSafer
-      ? (saferDrvInspCount ?? (swOk ? swJson.inspectDrvUS : null))
-      : ((swOk ? swJson.inspectDrvUS : null) ?? saferDrvInspCount);
+    const winVehInsp = winVehInspEarly;
+    const winDrvInsp = winDrvInspEarly;
 
     const swSufficiency = swOk && swJson.basicDataSufficiency ? swJson.basicDataSufficiency : {};
     const finalBasicSufficiency = {
