@@ -81,13 +81,15 @@ const INITIAL_FORM = {
   nationalAvgTruckOos:  '',
   nationalAvgDriverOos: '',
   nationalAvgOosAsOf:   '',
-  // Dual-source OOS metadata (set by applyLookupResults, stored for cert)
-  saferSnapshotDate:    '',
-  oosWinLabel:          '',
-  truckOosPctAlt:       '',
-  truckOosPctAltSrc:    '',
-  driverOosPctAlt:      '',
-  driverOosPctAltSrc:   '',
+  // Dual-source OOS/inspection metadata (set by applyLookupResults, stored for cert)
+  saferSnapshotDate:      '',
+  driverInspections24mo:  '',  // driver insp count from SAFER, separate from vehicle
+  oosWinLabel:            '',
+  truckOosPctAlt:         '',
+  truckOosPctAltSrc:      '',
+  driverOosPctAlt:        '',
+  driverOosPctAltSrc:     '',
+  _basicSufficiency:      null,  // per-BASIC gate result using winning source's counts
 };
 
 const AUTHORITY_STATUSES = [
@@ -428,12 +430,19 @@ export default function CarrierVetting({ settings }) {
     updates.driverOosPctAlt    = driverDisagree ? altDriverOos : '';
     updates.driverOosPctAltSrc = driverDisagree ? oosAltLabel  : '';
 
+    // Driver inspection count from SAFER — stored separately for cert display
+    const saferDrvInspCount = fmcsaJson.saferData?.driverInsp ?? null;
+    if (saferDrvInspCount != null) {
+      updates.driverInspections24mo = String(saferDrvInspCount);
+    }
+
     if (!swOk) {
       setSwErr(swJson.error ?? 'SaferWatch lookup failed — manual entry required for BASIC scores and insurance');
     } else {
       for (const field of (swJson.filledFields ?? [])) {
-        // OOS rates: already set above from the date-winner; skip SW overwrite
+        // OOS rates and inspection count: already set from the date-winner; skip SW overwrite
         if (field === 'truckOosPct' || field === 'driverOosPct') continue;
+        if (useSafer && field === 'inspections24mo') continue;
         const val = swJson[field];
         if (val !== '' && val != null && val !== false) {
           updates[field] = val;
@@ -457,13 +466,55 @@ export default function CarrierVetting({ settings }) {
         setSwDrugAlcohol({ value: swJson.drugAlcoholViolation, source: swJson.drugAlcoholSource ?? null });
       }
     }
+
+    // ── BASIC gate recomputation using winning source's inspection counts ───
+    // SW computed gates from its own (possibly stale) counts. Recompute using
+    // whichever source won so the gates reflect the most current data.
+    const winVehInsp = useSafer
+      ? (fmcsaJson.saferData?.vehicleInsp ?? (swOk ? swJson.inspectVehUS : null))
+      : ((swOk ? swJson.inspectVehUS : null) ?? fmcsaJson.saferData?.vehicleInsp);
+    const winDrvInsp = useSafer
+      ? (saferDrvInspCount ?? (swOk ? swJson.inspectDrvUS : null))
+      : ((swOk ? swJson.inspectDrvUS : null) ?? saferDrvInspCount);
+
+    const swSufficiency = swOk && swJson.basicDataSufficiency ? swJson.basicDataSufficiency : {};
+    const finalBasicSufficiency = {
+      unsafeDriving:         winDrvInsp == null ? (swSufficiency.unsafeDriving ?? null)      : (winDrvInsp >= 3 ? 'ok' : 'insufficient'),
+      hos:                   winDrvInsp == null ? (swSufficiency.hos ?? null)                : (winDrvInsp >= 3 ? 'ok' : 'insufficient'),
+      vehicleMaintenance:    winVehInsp == null ? (swSufficiency.vehicleMaintenance ?? null) : (winVehInsp >= 5 ? 'ok' : 'insufficient'),
+      driverFitness:         winDrvInsp == null ? (swSufficiency.driverFitness ?? null)      : (winDrvInsp >= 5 ? 'ok' : 'insufficient'),
+      crashIndicator:        swSufficiency.crashIndicator        ?? null,
+      vehicleDriverObserved: swSufficiency.vehicleDriverObserved ?? null,
+      hazmat:                swSufficiency.hazmat                ?? null,
+    };
+
+    // When a gate flips insufficient → ok (SAFER has more insp than SW counted),
+    // populate the BASIC field from SW's raw ungated PCT value.
+    if (swOk && swJson.rawBasics) {
+      const gateFlips = [
+        ['unsafeDrivingBasic',      'unsafeDriving',      swJson.rawBasics.unsafeDrivingPct],
+        ['hosBasic',                'hos',                swJson.rawBasics.hosPct],
+        ['vehicleMaintenanceBasic', 'vehicleMaintenance', swJson.rawBasics.vehicleMaintenancePct],
+        ['driverFitnessBasic',      'driverFitness',      swJson.rawBasics.driverFitnessPct],
+      ];
+      for (const [formField, suffKey, rawPct] of gateFlips) {
+        if (swSufficiency[suffKey] === 'insufficient'
+            && finalBasicSufficiency[suffKey] === 'ok'
+            && rawPct != null && rawPct !== '') {
+          updates[formField] = rawPct;
+          sources[formField] = 'saferwatch';
+        }
+      }
+    }
+
+    updates._basicSufficiency = finalBasicSufficiency;
     updates.fmcsaLookupCompleted = true;
 
     setForm(f => ({ ...f, ...updates }));
     setFieldSources(sources);
     setFmcsaData(fmcsaJson);
     setSwData(swOk ? swJson : null);
-    setBasicDataSufficiency(swOk && swJson.basicDataSufficiency ? swJson.basicDataSufficiency : {});
+    setBasicDataSufficiency(finalBasicSufficiency);
     setInspSourceMeta({
       useSafer,
       saferSnapshotDate,

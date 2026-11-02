@@ -470,6 +470,14 @@ router.get('/:dot', async (req, res, next) => {
         controlledSubstancesPct: str(safety.controlSubPCT),
         driverFitnessPct:        drvSufficientFit ? str(safety.drvFitPCT) : '',
       },
+      // Raw BASIC PCT values without gate filtering — used by frontend to re-apply gates
+      // when the winning inspection source (SAFER) has higher counts than SaferWatch.
+      rawBasics: {
+        unsafeDrivingPct:      str(safety.unsafeDrvPCT),
+        hosPct:                str(safety.hosPCT),
+        vehicleMaintenancePct: str(safety.vehMaintPCT),
+        driverFitnessPct:      str(safety.drvFitPCT),
+      },
       // Raw sections for side-by-side debug comparison
       _raw: { identity, authority, safety, inspection, operation, equipment, insurance, certStatus },
     });

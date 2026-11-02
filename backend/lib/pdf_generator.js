@@ -267,9 +267,11 @@ export function generateVettingPDF(opts) {
       drugAlcoholRow(doc, L, W, d.drugAlcoholViolation, drugSrc);
     }
 
+    const bs = d._basicSufficiency || {};
     basicRow(doc, L, W,
       `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'));
+    basicZeroNote(doc, L, W, bs.unsafeDriving, d.unsafeDrivingBasic);
     autoFilledNote(doc, L, W, d, 'unsafeDrivingBasic');
     basicRow(doc, L, W,
       `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicCrashIndicatorThreshold}%)`,
@@ -277,10 +279,12 @@ export function generateVettingPDF(opts) {
     basicRow(doc, L, W,
       `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold, src('hosBasic'));
+    basicZeroNote(doc, L, W, bs.hos, d.hosBasic);
     autoFilledNote(doc, L, W, d, 'hosBasic');
     basicRow(doc, L, W,
       `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'));
+    basicZeroNote(doc, L, W, bs.vehicleMaintenance, d.vehicleMaintenanceBasic);
     autoFilledNote(doc, L, W, d, 'vehicleMaintenanceBasic');
     basicRow(doc, L, W,
       `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicVehicleDriverObservedThreshold}%)`,
@@ -288,6 +292,7 @@ export function generateVettingPDF(opts) {
     basicRow(doc, L, W,
       `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'));
+    basicZeroNote(doc, L, W, bs.driverFitness, d.driverFitnessBasic);
     autoFilledNote(doc, L, W, d, 'driverFitnessBasic');
     basicRow(doc, L, W,
       `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} > ${cfg.basicHazmatThreshold}%)`,
@@ -374,9 +379,13 @@ export function generateVettingPDF(opts) {
       d.powerUnits != null && d.powerUnits !== '' ? String(d.powerUnits) : null,
       src('powerUnits'));
     {
-      const inspVal = d.inspections24mo != null && d.inspections24mo !== '' ? String(d.inspections24mo) : null;
       const inspSrcLabel = d.saferSnapshotDate ? `SAFER (as of ${d.saferSnapshotDate})` : src('inspections24mo');
-      dataRow(doc, L, W, 'Inspections — vehicle (24 months)', inspVal, inspSrcLabel);
+      const veh = d.inspections24mo       != null && d.inspections24mo       !== '' ? String(d.inspections24mo)       : null;
+      const drv = d.driverInspections24mo != null && d.driverInspections24mo !== '' ? String(d.driverInspections24mo) : null;
+      const inspDisplay = (veh || drv)
+        ? [veh && `Vehicle: ${veh}`, drv && `Driver: ${drv}`].filter(Boolean).join('  |  ')
+        : null;
+      dataRow(doc, L, W, 'Inspections (24 months)', inspDisplay, inspSrcLabel);
       autoFilledNote(doc, L, W, d, 'inspections24mo');
     }
     dataRow(doc, L, W, 'Clean Inspections (24 months)',
@@ -694,6 +703,18 @@ function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock
     isNA ? 'Helvetica-Oblique' : isHard || isYellow ? 'Helvetica-Bold' : 'Helvetica',
     isNA ? C.gray : isHard ? C.red : isYellow ? C.yellow : C.black,
     display);
+}
+
+// Show a gray note when a BASIC passes the data-sufficiency gate but has value 0.00%
+// (meaning FMCSA assigned no percentile because there were no violations in that BASIC).
+function basicZeroNote(doc, L, W, sufficiency, rawVal) {
+  if (sufficiency !== 'ok') return;
+  const v = parseFloat(rawVal);
+  if (isNaN(v) || v !== 0 || rawVal === '' || rawVal == null) return;
+  doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
+     .text('  0.00% \u2014 no FMCSA percentile assigned (no violations above threshold in this BASIC)',
+           L + 8, doc.y, { width: W - 8 });
+  doc.moveDown(0.15);
 }
 
 // Show an amber edit-audit note when a dispatcher changed an auto-filled value.
