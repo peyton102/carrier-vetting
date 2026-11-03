@@ -897,20 +897,56 @@ function ymdToIso(ymd) {
 
 // (count check is inlined inside refreshInsuranceCancellations — no separate helper needed)
 
-async function fetchAllSocrata(dataset, whereClause) {
+async function fetchAllSocrata(dataset, whereClause, tag) {
   const limit   = 5000;
   const results = [];
   let   offset  = 0;
+  let   pageNum = 0;
   while (true) {
     const url = `${SOCRATA_BASE}/${dataset}.json?$where=${encodeURIComponent(whereClause)}&$limit=${limit}&$offset=${offset}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`Socrata HTTP ${res.status} for ${dataset}`);
     const page = await res.json();
+    pageNum++;
     results.push(...page);
+    console.log(`[${tag}] Page ${pageNum}: ${page.length} rows fetched (running total: ${results.length})`);
     if (page.length < limit) break;
     offset += limit;
   }
   return results;
+}
+
+// Races a load function against a hard time limit.  On timeout, logs "Load failed"
+// so the load never goes silent even if a Supabase call hangs indefinitely.
+async function withLoadTimeout(tag, fn, timeoutMs = 10 * 60 * 1000) {
+  const timer = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`timed out after ${timeoutMs / 60000}min`)), timeoutMs)
+  );
+  try {
+    await Promise.race([fn(), timer]);
+  } catch (e) {
+    console.error(`[${tag}] Load failed: ${e.message}`);
+  }
+}
+
+// Deletes stale rows in batches via the delete_stale_batch() Postgres function so each
+// DELETE is a small, index-backed statement that fits within Supabase's statement timeout.
+// Returns true if sweep completed without error.
+async function batchedSweep(supabase, tag, table, cutoff) {
+  let total = 0;
+  while (true) {
+    const { data, error } = await supabase.rpc('delete_stale_batch', {
+      p_table: table, p_cutoff: cutoff, p_batch_size: 500,
+    });
+    if (error) {
+      console.error(`[${tag}] Sweep error: ${error.message}`);
+      return false;
+    }
+    total += data ?? 0;
+    if ((data ?? 0) < 500) break;
+  }
+  if (total > 0) console.log(`[${tag}] Sweep removed ${total} stale rows`);
+  return true;
 }
 
 export async function refreshInsuranceCancellations(supabase) {
@@ -931,9 +967,9 @@ export async function refreshInsuranceCancellations(supabase) {
 
     // Fetch all active BIPD records (BMC-35 and BMC-91/91X) in parallel
     const [bmc35, activePolicies] = await Promise.all([
-      fetchAllSocrata(INSUR_ACTIVE_DS, bmc35Where),
+      fetchAllSocrata(INSUR_ACTIVE_DS, bmc35Where, 'INSUR-BMC35'),
       fetchAllSocrata(INSUR_ACTIVE_DS,
-        `ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`),
+        `ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`, 'INSUR-ACTIVE'),
     ]);
 
     // Count check: if we got fewer rows than the count query reported, the fetch was
@@ -1026,11 +1062,7 @@ export async function refreshInsuranceCancellations(supabase) {
 
     // Mark-and-sweep: delete rows that weren't touched this run.
     // Those are carriers whose BMC-35 was superseded by a new policy — they're now clean.
-    const { error: sweepErr } = await supabase
-      .from('insurance_cancellations')
-      .delete()
-      .lt('last_verified_at', jobStartedAt);
-    if (sweepErr) console.error('[INSUR] Sweep delete error:', sweepErr.message);
+    await batchedSweep(supabase, 'INSUR', 'insurance_cancellations', jobStartedAt);
 
     console.log('[INSUR] Refresh complete');
   } catch (e) {
@@ -1064,7 +1096,7 @@ export async function refreshOosOrders(supabase) {
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[OOS] Expected rows: ${expected}`);
 
-    const rows = await fetchAllSocrata(OOS_DS, where);
+    const rows = await fetchAllSocrata(OOS_DS, where, 'OOS');
 
     if (rows.length < expected) {
       console.error(`[OOS] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
@@ -1106,9 +1138,7 @@ export async function refreshOosOrders(supabase) {
       return;
     }
 
-    const { error: sweepErr } = await supabase
-      .from('oos_orders').delete().lt('last_verified_at', jobStartedAt);
-    if (sweepErr) console.error('[OOS] Sweep error:', sweepErr.message);
+    await batchedSweep(supabase, 'OOS', 'oos_orders', jobStartedAt);
 
     console.log(`[OOS] Refresh complete — ${dbRows.length} rows`);
   } catch (e) {
@@ -1161,6 +1191,9 @@ export async function refreshSaferRevocations(supabase) {
         });
       }
 
+      const pageNum = Math.floor(offset / limit) + 1;
+      console.log(`[REVOKE] Page ${pageNum}: ${page.length} rows fetched, ${dbPage.length} new after dedup (running total: ${fetched})`);
+
       if (dbPage.length > 0) {
         const { error } = await supabase
           .from('safer_revocations')
@@ -1170,6 +1203,7 @@ export async function refreshSaferRevocations(supabase) {
           upsertError = true;
           break;
         }
+        console.log(`[REVOKE] Page ${pageNum}: saved ${dbPage.length} rows`);
       }
 
       if (page.length < limit) break;
@@ -1186,9 +1220,7 @@ export async function refreshSaferRevocations(supabase) {
       return;
     }
 
-    const { error: sweepErr } = await supabase
-      .from('safer_revocations').delete().lt('last_verified_at', jobStartedAt);
-    if (sweepErr) console.error('[REVOKE] Sweep error:', sweepErr.message);
+    await batchedSweep(supabase, 'REVOKE', 'safer_revocations', jobStartedAt);
 
     console.log(`[REVOKE] Refresh complete — ${fetched} fetched, ${seenKeys.size} unique rows stored`);
   } catch (e) {
@@ -1209,7 +1241,7 @@ export async function refreshMotusSuspensions(supabase) {
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[MOTUS] Expected rows: ${expected}`);
 
-    const rows = await fetchAllSocrata(MOTUS_DS, where);
+    const rows = await fetchAllSocrata(MOTUS_DS, where, 'MOTUS');
 
     if (rows.length < expected) {
       console.error(`[MOTUS] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
@@ -1248,9 +1280,7 @@ export async function refreshMotusSuspensions(supabase) {
       return;
     }
 
-    const { error: sweepErr } = await supabase
-      .from('motus_suspensions').delete().lt('last_verified_at', jobStartedAt);
-    if (sweepErr) console.error('[MOTUS] Sweep error:', sweepErr.message);
+    await batchedSweep(supabase, 'MOTUS', 'motus_suspensions', jobStartedAt);
 
     console.log(`[MOTUS] Refresh complete — ${dbRows.length} rows`);
   } catch (e) {
@@ -1263,11 +1293,13 @@ export function startMonitoringJob(supabase) {
   const intervalMs    = intervalHours * 60 * 60 * 1000;
 
   console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h (per-tenant FMCSA keys)`);
-  const refreshAllDailyTables = () => {
-    refreshInsuranceCancellations(supabase);
-    refreshOosOrders(supabase);
-    refreshSaferRevocations(supabase);
-    refreshMotusSuspensions(supabase);
+  // Runs the four daily loads serially so memory usage stays low and logs are ordered.
+  // Each load has a 10-minute hard timeout so a hung Supabase call can never go silent.
+  const refreshAllDailyTables = async () => {
+    await withLoadTimeout('INSUR',  () => refreshInsuranceCancellations(supabase));
+    await withLoadTimeout('OOS',    () => refreshOosOrders(supabase));
+    await withLoadTimeout('REVOKE', () => refreshSaferRevocations(supabase));
+    await withLoadTimeout('MOTUS',  () => refreshMotusSuspensions(supabase));
   };
 
   // First run 60s after startup to let connections settle
