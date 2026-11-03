@@ -879,6 +879,9 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
 
 const SOCRATA_BASE    = 'https://data.transportation.gov/resource';
 const INSUR_ACTIVE_DS = 'c5y8-a4uz';
+const OOS_DS          = 'p2mt-9ige';   // OOS orders
+const REVOKE_DS       = 'sa6p-acbp';   // SAFER-era revocation history
+const MOTUS_DS        = 'wb4f-neki';   // Motus-era revoke/suspend history
 
 function toYmd(date = new Date()) {
   return date.getFullYear().toString() +
@@ -912,17 +915,19 @@ async function fetchAllSocrata(dataset, whereClause) {
 
 export async function refreshInsuranceCancellations(supabase) {
   console.log('[INSUR] Starting BIPD cancellation refresh…');
-  const todayYmd = toYmd();
-  const bmc35Where = `ins_form_code='BMC-35' AND ins_type_code='1' AND effective_date >= '${todayYmd}'`;
+  const todayYmd     = toYmd();
+  // Fetch ALL BMC-35 rows (past + future) so we can flag lapsed carriers too.
+  const bmc35Where   = `ins_form_code='BMC-35' AND ins_type_code='1'`;
+  const jobStartedAt = new Date().toISOString();
 
   try {
     // Count expected rows BEFORE fetching so we can detect any truncation.
     const countUrl = `${SOCRATA_BASE}/${INSUR_ACTIVE_DS}.json?$select=count(*)&$where=${encodeURIComponent(bmc35Where)}`;
     const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
     if (!countRes.ok) throw new Error(`Socrata count HTTP ${countRes.status}`);
-    const countData   = await countRes.json();
+    const countData     = await countRes.json();
     const expectedBmc35 = parseInt(countData[0]?.count ?? '0', 10);
-    console.log(`[INSUR] Expected BMC-35 with future dates: ${expectedBmc35}`);
+    console.log(`[INSUR] Expected BMC-35 total: ${expectedBmc35}`);
 
     // Fetch all active BIPD records (BMC-35 and BMC-91/91X) in parallel
     const [bmc35, activePolicies] = await Promise.all([
@@ -945,6 +950,8 @@ export async function refreshInsuranceCancellations(supabase) {
     }
 
     console.log(`[INSUR] BMC-35: ${bmc35.length} (confirmed ${expectedBmc35}), active policies: ${activePolicies.length}`);
+    const pendingCount = bmc35.filter(r => String(r.effective_date ?? '').slice(0, 8) >= todayYmd).length;
+    console.log(`[INSUR]   → ${pendingCount} pending (future), ${bmc35.length - pendingCount} past-effective`);
 
     // Build superseding lookup: docket_number → max effective_date of BMC-91/91X
     const activeMaxByDocket = new Map();
@@ -975,9 +982,18 @@ export async function refreshInsuranceCancellations(supabase) {
         continue;
       }
 
-      // Keep soonest effective_date per DOT
+      // Classify: pending = cancellation not yet effective; lapsed = already effective, no replacement.
+      const status = effYmd >= todayYmd ? 'pending' : 'lapsed';
+
+      // Keep soonest effective_date per DOT (soonest = most urgent).
+      // Pending rows take priority over lapsed rows for the same DOT:
+      // if they coexist it means a replacement was filed then cancelled again,
+      // so the pending cancellation is the actionable item.
       const existing = byDot.get(dot);
-      if (!existing || effYmd < existing._effYmd) {
+      const replaces = !existing ||
+        (status === 'pending' && existing.status === 'lapsed') ||
+        (status === existing.status && effYmd < existing._effYmd);
+      if (replaces) {
         byDot.set(dot, {
           _effYmd:           effYmd,  // internal sort key, removed before upsert
           dot_number:        dot,
@@ -987,12 +1003,15 @@ export async function refreshInsuranceCancellations(supabase) {
           insurance_company: rec.insurance_company_name ?? null,
           max_cov_amount:    rec.max_cov_amount != null ? parseFloat(rec.max_cov_amount) : null,
           policy_no:         rec.policy_no ?? null,
+          status,
           last_verified_at:  new Date().toISOString(),
         });
       }
     }
 
-    console.log(`[INSUR] ${byDot.size} confirmed pending (${supersededCount} superseded)`);
+    const lapsedDots  = [...byDot.values()].filter(r => r.status === 'lapsed').length;
+    const pendingDots = byDot.size - lapsedDots;
+    console.log(`[INSUR] ${byDot.size} unique DOTs to store: ${pendingDots} pending, ${lapsedDots} lapsed (${supersededCount} superseded)`);
 
     // Upsert survivors (strip internal _effYmd key)
     if (byDot.size > 0) {
@@ -1005,16 +1024,169 @@ export async function refreshInsuranceCancellations(supabase) {
       }
     }
 
-    // Delete rows whose cancellation date has passed
-    const { error: delErr } = await supabase
+    // Mark-and-sweep: delete rows that weren't touched this run.
+    // Those are carriers whose BMC-35 was superseded by a new policy — they're now clean.
+    const { error: sweepErr } = await supabase
       .from('insurance_cancellations')
       .delete()
-      .lt('effective_date', ymdToIso(todayYmd));
-    if (delErr) console.error('[INSUR] Delete past rows error:', delErr.message);
+      .lt('last_verified_at', jobStartedAt);
+    if (sweepErr) console.error('[INSUR] Sweep delete error:', sweepErr.message);
 
     console.log('[INSUR] Refresh complete');
   } catch (e) {
     console.error('[INSUR] Refresh failed:', e.message);
+  }
+}
+
+// ── OOS / revocation / suspension daily mirrors ───────────────────────────────
+// Loads enforcement datasets into Supabase so chameleon.js can query them without
+// issuing per-vetting Socrata calls. Same mark-and-sweep pattern as insurance_cancellations.
+
+function fourYearsAgoIso() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 4);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function refreshOosOrders(supabase) {
+  console.log('[OOS] Starting OOS orders refresh…');
+  const jobStartedAt = new Date().toISOString();
+  // Load all active (unrescinded) orders plus any order in the last 4 years (covers the
+  // longest reasonable chameleonLookbackDays setting + one year buffer).
+  const cutoff  = fourYearsAgoIso();
+  const where   = `rescind_date IS NULL OR oos_date >= '${cutoff}'`;
+
+  try {
+    const countUrl = `${SOCRATA_BASE}/${OOS_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
+    const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!countRes.ok) throw new Error(`Socrata count HTTP ${countRes.status}`);
+    const countData = await countRes.json();
+    const expected  = parseInt(countData[0]?.count ?? '0', 10);
+    console.log(`[OOS] Expected rows: ${expected}`);
+
+    const rows = await fetchAllSocrata(OOS_DS, where);
+
+    if (rows.length < expected) {
+      console.error(`[OOS] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
+      return;
+    }
+
+    const dbRows = rows
+      .filter(r => r.dot_number && r.oos_date)
+      .map(r => ({
+        dot_number:       String(r.dot_number).trim(),
+        oos_reason:       r.oos_reason ?? '',
+        oos_date:         r.oos_date?.slice(0, 10),
+        rescind_date:     r.rescind_date?.slice(0, 10) ?? null,
+        last_verified_at: jobStartedAt,
+      }));
+
+    for (let i = 0; i < dbRows.length; i += 200) {
+      const { error } = await supabase
+        .from('oos_orders')
+        .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,oos_date,oos_reason' });
+      if (error) console.error('[OOS] Upsert error:', error.message);
+    }
+
+    const { error: sweepErr } = await supabase
+      .from('oos_orders').delete().lt('last_verified_at', jobStartedAt);
+    if (sweepErr) console.error('[OOS] Sweep error:', sweepErr.message);
+
+    console.log(`[OOS] Refresh complete — ${dbRows.length} rows`);
+  } catch (e) {
+    console.error('[OOS] Refresh failed:', e.message);
+  }
+}
+
+export async function refreshSaferRevocations(supabase) {
+  console.log('[REVOKE] Starting SAFER revocations refresh…');
+  const jobStartedAt = new Date().toISOString();
+  const where        = `upper(order2_type_desc) LIKE '%INVOLUNTARY%'`;
+
+  try {
+    const countUrl = `${SOCRATA_BASE}/${REVOKE_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
+    const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!countRes.ok) throw new Error(`Socrata count HTTP ${countRes.status}`);
+    const countData = await countRes.json();
+    const expected  = parseInt(countData[0]?.count ?? '0', 10);
+    console.log(`[REVOKE] Expected rows: ${expected}`);
+
+    const rows = await fetchAllSocrata(REVOKE_DS, where);
+
+    if (rows.length < expected) {
+      console.error(`[REVOKE] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
+      return;
+    }
+
+    const dbRows = rows
+      .filter(r => r.dot_number && r.order2_effective_date)
+      .map(r => ({
+        dot_number:       String(r.dot_number).trim(),
+        order_type_desc:  r.order2_type_desc ?? '',
+        effective_date:   r.order2_effective_date?.slice(0, 10),
+        last_verified_at: jobStartedAt,
+      }));
+
+    for (let i = 0; i < dbRows.length; i += 200) {
+      const { error } = await supabase
+        .from('safer_revocations')
+        .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,effective_date,order_type_desc' });
+      if (error) console.error('[REVOKE] Upsert error:', error.message);
+    }
+
+    const { error: sweepErr } = await supabase
+      .from('safer_revocations').delete().lt('last_verified_at', jobStartedAt);
+    if (sweepErr) console.error('[REVOKE] Sweep error:', sweepErr.message);
+
+    console.log(`[REVOKE] Refresh complete — ${dbRows.length} rows`);
+  } catch (e) {
+    console.error('[REVOKE] Refresh failed:', e.message);
+  }
+}
+
+export async function refreshMotusSuspensions(supabase) {
+  console.log('[MOTUS] Starting Motus suspensions refresh…');
+  const jobStartedAt = new Date().toISOString();
+  const where        = `upper(order1_type_desc) LIKE '%INVOLUNTARY%'`;
+
+  try {
+    const countUrl = `${SOCRATA_BASE}/${MOTUS_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
+    const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!countRes.ok) throw new Error(`Socrata count HTTP ${countRes.status}`);
+    const countData = await countRes.json();
+    const expected  = parseInt(countData[0]?.count ?? '0', 10);
+    console.log(`[MOTUS] Expected rows: ${expected}`);
+
+    const rows = await fetchAllSocrata(MOTUS_DS, where);
+
+    if (rows.length < expected) {
+      console.error(`[MOTUS] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
+      return;
+    }
+
+    const dbRows = rows
+      .filter(r => r.usdot_number && r.order1_effective_date)
+      .map(r => ({
+        dot_number:       String(r.usdot_number).trim(),
+        order_type_desc:  r.order1_type_desc ?? '',
+        effective_date:   r.order1_effective_date?.slice(0, 10),
+        last_verified_at: jobStartedAt,
+      }));
+
+    for (let i = 0; i < dbRows.length; i += 200) {
+      const { error } = await supabase
+        .from('motus_suspensions')
+        .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,effective_date,order_type_desc' });
+      if (error) console.error('[MOTUS] Upsert error:', error.message);
+    }
+
+    const { error: sweepErr } = await supabase
+      .from('motus_suspensions').delete().lt('last_verified_at', jobStartedAt);
+    if (sweepErr) console.error('[MOTUS] Sweep error:', sweepErr.message);
+
+    console.log(`[MOTUS] Refresh complete — ${dbRows.length} rows`);
+  } catch (e) {
+    console.error('[MOTUS] Refresh failed:', e.message);
   }
 }
 
@@ -1023,16 +1195,23 @@ export function startMonitoringJob(supabase) {
   const intervalMs    = intervalHours * 60 * 60 * 1000;
 
   console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h (per-tenant FMCSA keys)`);
+  const refreshAllDailyTables = () => {
+    refreshInsuranceCancellations(supabase);
+    refreshOosOrders(supabase);
+    refreshSaferRevocations(supabase);
+    refreshMotusSuspensions(supabase);
+  };
+
   // First run 60s after startup to let connections settle
   setTimeout(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
-    refreshInsuranceCancellations(supabase);  // populate insurance table on startup
+    refreshAllDailyTables();
   }, 60_000);
   setInterval(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
   }, intervalMs);
-  // Refresh insurance cancellations once every 24 hours
-  setInterval(() => refreshInsuranceCancellations(supabase), 24 * 60 * 60 * 1000);
+  // Refresh all enforcement tables once every 24 hours
+  setInterval(refreshAllDailyTables, 24 * 60 * 60 * 1000);
 }

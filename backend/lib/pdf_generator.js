@@ -246,6 +246,8 @@ export function generateVettingPDF(opts) {
     }
 
     doc.moveDown(0.4);
+    chameleonSection(doc, L, W, d);
+    doc.moveDown(0.4);
 
     // ── Safety data ───────────────────────────────────────────────────────────
     sectionHeader(doc, L, W, 'SAFETY DATA');
@@ -626,6 +628,57 @@ function flagRow(doc, L, W, label, val, source) {
     color, display);
 }
 
+// FMCSA identity linkage (chameleon) section.
+// cert line format per match:
+//   [HOLD] DOT {dot} ({name}), {status} — {matchField}: {matchValue} — {bad reason} ({date})
+//   [INFO] DOT {dot} ({name}), {status} — {matchField}: {matchValue} — no enforcement history
+//   [INFO] {matchField}: {matchValue} shared by 5+ carriers (shared service/dispatch) — not evaluated individually
+function chameleonSection(doc, L, W, d) {
+  const matches = d.fmcsaChameleonMatches;
+  const notReviewed = d.fmcsaChameleonNotReviewed === true || matches === null || matches === undefined;
+
+  sectionHeader(doc, L, W, 'FMCSA IDENTITY LINKAGE');
+
+  if (notReviewed) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Carrier identity check (FMCSA):',
+      'Helvetica-Oblique', C.gray, 'Not reviewed (no data)');
+    return;
+  }
+
+  const relevant = Array.isArray(matches) ? matches : [];
+  if (relevant.length === 0) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Carrier identity check (FMCSA):',
+      'Helvetica', C.black, 'No linked carriers found');
+    return;
+  }
+
+  for (const m of relevant) {
+    let label, text, textColor;
+
+    if (m.sharedService) {
+      label     = 'Carrier identity check (FMCSA):';
+      text      = `${m.matchField}: ${m.matchValue} — shared by 5+ carriers (shared service/dispatch) — informational`;
+      textColor = C.gray;
+    } else {
+      const reasons = (m.badReasons ?? []).map(r => {
+        let s = r.description;
+        if (r.date) { s += ` (${r.date})`; if (r.rescindDate) s += `, rescinded ${r.rescindDate}`; }
+        return s;
+      });
+      const reasonText = reasons.length > 0 ? reasons.join('; ') : 'no enforcement history';
+      const statusPart = m.status ? `, ${m.status}` : '';
+
+      label     = m.isHold ? '[HOLD] Linked carrier (FMCSA):' : '[INFO] Linked carrier (FMCSA):';
+      text      = `DOT ${m.dot} (${m.name})${statusPart} — ${m.matchField}: ${m.matchValue} — ${reasonText}`;
+      textColor = m.isHold ? C.yellow : C.darkgray;
+    }
+
+    _twoColRow(doc, L, W, 'Helvetica-Bold', C.darkgray, label, 'Helvetica', textColor, text);
+  }
+}
+
 // BI&PD cancellation notice row — FMCSA-sourced (new certs) or SW manual (legacy certs).
 // New certs set bipdCancelPending (true/false/null); legacy certs only have pendingInsuranceCancellation.
 function bipdCancellationRow(doc, L, W, d, cancelDays) {
@@ -646,6 +699,26 @@ function bipdCancellationRow(doc, L, W, d, cancelDays) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'BI&PD Cancellation Notice (FMCSA):',
       'Helvetica-Oblique', C.gray, 'Not reviewed (no data)');
+    return;
+  }
+
+  if (d.bipdCancelLapsed) {
+    const fmtD      = (iso) => { if (!iso) return null; const [y, m, dy] = iso.split('-'); return `${m}/${dy}/${y}`; };
+    const swExpDate = d.autoLiabilityExpiration ? new Date(d.autoLiabilityExpiration) : null;
+    const swIsActive = swExpDate && !isNaN(swExpDate.getTime()) && swExpDate >= new Date();
+    let text, color;
+    if (swIsActive) {
+      text  = `FMCSA: cancelled effective ${fmtD(d.bipdCancelEffectiveDate) ?? '?'}, no replacement on file` +
+              ` — SaferWatch shows active (exp ${d.autoLiabilityExpiration}) — SOURCES CONFLICT`;
+      color = C.yellow;
+    } else {
+      text  = `CANCELLED effective ${fmtD(d.bipdCancelEffectiveDate) ?? '?'} — no replacement on file`;
+      if (d.bipdCancelInsuranceCompany) text += ` — ${d.bipdCancelInsuranceCompany}`;
+      color = C.red;
+    }
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'BI&PD Cancellation Notice (FMCSA):',
+      'Helvetica-Bold', color, text);
     return;
   }
 

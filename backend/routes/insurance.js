@@ -50,15 +50,25 @@ router.get('/cancellation/:dot', async (req, res) => {
     if (rowErr) throw rowErr;
 
     if (!row) {
-      return res.json({ bipdCancelPending: false });
+      return res.json({ bipdCancelPending: false, bipdCancelLapsed: false });
+    }
+
+    if (row.status === 'lapsed') {
+      return res.json({
+        bipdCancelPending:   false,
+        bipdCancelLapsed:    true,
+        effectiveDate:       row.effective_date,
+        insuranceCompany:    row.insurance_company,
+      });
     }
 
     return res.json({
-      bipdCancelPending:      true,
-      effectiveDate:          row.effective_date,
-      transDate:              row.trans_date,
-      insuranceCompany:       row.insurance_company,
-      daysUntil:              daysUntil(row.effective_date),
+      bipdCancelPending:   true,
+      bipdCancelLapsed:    false,
+      effectiveDate:       row.effective_date,
+      transDate:           row.trans_date,
+      insuranceCompany:    row.insurance_company,
+      daysUntil:           daysUntil(row.effective_date),
     });
   } catch (e) {
     console.error('[INSURANCE] cancellation lookup error:', e.message);

@@ -48,6 +48,10 @@ export const DEFAULT_SETTINGS = {
   // ── BIPD cancellation notice threshold (days) ────────────────────────────
   // Carriers with a BMC-35 effective within this many days → HOLD
   bipdCancelDays: 30,
+  // ── Chameleon check lookback window (days) ────────────────────────────────
+  // A bad event (OOS, revocation) older than this AND no longer active → informational only.
+  // Default 1095 = 3 years.
+  chameleonLookbackDays: 1095,
   // ── Alert email recipients ────────────────────────────────────────────────
   alertRecipients: '',
 };
@@ -186,6 +190,25 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const cargo = parseFloat(d.cargoInsurance);
   if (!isNaN(cargo) && cargo < cfg.cargoMin) {
     red.push(`Cargo insurance $${fmtMoney(cargo)} is below this broker's $${fmtMoney(cfg.cargoMin)} minimum`);
+  }
+
+  // FMCSA-sourced BIPD already lapsed — cancellation took effect, no replacement on file.
+  // If SaferWatch simultaneously shows a future expiry date the two sources conflict;
+  // downgrade to HOLD so a manager can reconcile rather than auto-rejecting a carrier
+  // that may actually have valid coverage not yet reflected in the FMCSA dataset.
+  if (d.bipdCancelLapsed === true) {
+    const effPart    = d.bipdCancelEffectiveDate ? ` ${d.bipdCancelEffectiveDate}` : '';
+    const swExpDays  = daysUntilExpiry(d.autoLiabilityExpiration);
+    const swIsActive = swExpDays !== null && swExpDays >= 0;
+    if (swIsActive) {
+      yellow.push(
+        `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
+        `but SaferWatch shows active coverage (expires ${d.autoLiabilityExpiration}); ` +
+        `sources conflict, manager review required`
+      );
+    } else {
+      red.push(`Liability insurance cancelled${effPart}, no replacement on file (FMCSA)`);
+    }
   }
 
   // Insurance expiry — already expired → hard fail
@@ -383,6 +406,20 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       );
     }
     // Far out (> threshold): the cert row is informational only — no rule violation
+  }
+
+  // FMCSA identity linkage (chameleon check) — one HOLD per linked carrier with bad history
+  if (Array.isArray(d.fmcsaChameleonMatches)) {
+    for (const m of d.fmcsaChameleonMatches) {
+      if (!m.isHold) continue;
+      const reasons = (m.badReasons ?? []).map(r => {
+        const datePart = r.date ? ` (${r.date})` : '';
+        return r.description + datePart;
+      }).join('; ');
+      yellow.push(
+        `Identity linkage: DOT ${m.dot} (${m.name}) shares ${m.matchField} — ${reasons}`
+      );
+    }
   }
 
   // OOS yellow-flag — classifyOos() result from above; already handles all range guards

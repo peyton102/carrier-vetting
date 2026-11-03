@@ -48,11 +48,15 @@ const INITIAL_FORM = {
   pendingInsuranceCancellation: false,  // legacy SW field; kept for old cert compat
   // FMCSA-sourced BIPD cancellation (BMC-35)
   bipdCancelPending:         null,   // null = not reviewed, true/false = checked
+  bipdCancelLapsed:          false,  // true = cancellation already effective, no replacement
   bipdCancelEffectiveDate:   '',
   bipdCancelTransDate:       '',
   bipdCancelInsuranceCompany: '',
   bipdCancelDaysUntil:       null,
   bipdCancelNotReviewed:     false,
+  // FMCSA identity linkage (chameleon check)
+  fmcsaChameleonMatches:     null,   // null = not reviewed; [] = clean; array of match objects
+  fmcsaChameleonNotReviewed: false,
   // Carrier Assure
   carrierAssureGrade: '',
   fraudFlag:         false,
@@ -593,11 +597,12 @@ export default function CarrierVetting({ settings }) {
     setBlockInfo(null);
     setLookingUp(true);
     try {
-      const [fmcsaRes, swRes, blockRes, insRes] = await Promise.all([
+      const [fmcsaRes, swRes, blockRes, insRes, chamRes] = await Promise.all([
         fetch(`/api/fmcsa/dot/${dot}`),
         fetch(`/api/saferwatch/${dot}`),
         fetch(`/api/monitoring/blocks/${dot}`),
         fetch(`/api/insurance/cancellation/${dot}`),
+        fetch(`/api/chameleon/${dot}`),
       ]);
       const fmcsaJson = await fmcsaRes.json();
       const swJson    = await swRes.json();
@@ -620,19 +625,29 @@ export default function CarrierVetting({ settings }) {
         const insJson = await insRes.json();
         if (insJson.notReviewed) {
           setForm(f => ({ ...f,
-            bipdCancelPending: null, bipdCancelNotReviewed: true,
+            bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true,
             bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
             bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
           }));
         } else {
           setForm(f => ({ ...f,
-            bipdCancelPending:         insJson.bipdCancelPending,
-            bipdCancelNotReviewed:     false,
-            bipdCancelEffectiveDate:   insJson.effectiveDate   ?? '',
-            bipdCancelTransDate:       insJson.transDate       ?? '',
+            bipdCancelPending:          insJson.bipdCancelPending,
+            bipdCancelLapsed:           insJson.bipdCancelLapsed ?? false,
+            bipdCancelNotReviewed:      false,
+            bipdCancelEffectiveDate:    insJson.effectiveDate    ?? '',
+            bipdCancelTransDate:        insJson.transDate        ?? '',
             bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
-            bipdCancelDaysUntil:       insJson.daysUntil       ?? null,
+            bipdCancelDaysUntil:        insJson.daysUntil        ?? null,
           }));
+        }
+      }
+
+      if (chamRes.ok) {
+        const chamJson = await chamRes.json();
+        if (chamJson.notReviewed) {
+          setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true }));
+        } else {
+          setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false }));
         }
       }
     } catch (e) {
@@ -678,18 +693,19 @@ export default function CarrierVetting({ settings }) {
             if (insJson) {
               if (insJson.notReviewed) {
                 setForm(f => ({ ...f,
-                  bipdCancelPending: null, bipdCancelNotReviewed: true,
+                  bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true,
                   bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
                   bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
                 }));
               } else {
                 setForm(f => ({ ...f,
-                  bipdCancelPending:         insJson.bipdCancelPending,
-                  bipdCancelNotReviewed:     false,
-                  bipdCancelEffectiveDate:   insJson.effectiveDate    ?? '',
-                  bipdCancelTransDate:       insJson.transDate        ?? '',
+                  bipdCancelPending:          insJson.bipdCancelPending,
+                  bipdCancelLapsed:           insJson.bipdCancelLapsed ?? false,
+                  bipdCancelNotReviewed:      false,
+                  bipdCancelEffectiveDate:    insJson.effectiveDate    ?? '',
+                  bipdCancelTransDate:        insJson.transDate        ?? '',
                   bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
-                  bipdCancelDaysUntil:       insJson.daysUntil        ?? null,
+                  bipdCancelDaysUntil:        insJson.daysUntil        ?? null,
                 }));
               }
             }
@@ -1187,16 +1203,62 @@ export default function CarrierVetting({ settings }) {
             <span style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>BI&amp;PD Cancellation (FMCSA)</span>
             {form.bipdCancelPending === null
               ? <span style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Not reviewed (no data)</span>
-              : form.bipdCancelPending
-                ? <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>
-                    Cancellation on file — effective {form.bipdCancelEffectiveDate || '?'}
-                    {form.bipdCancelDaysUntil !== null ? ` (${form.bipdCancelDaysUntil}d)` : ''}
-                    {form.bipdCancelInsuranceCompany ? ` — ${form.bipdCancelInsuranceCompany}` : ''}
-                  </span>
-                : <span style={{ fontSize: 12, color: '#111827' }}>No pending cancellation</span>
+              : form.bipdCancelLapsed
+                ? (() => {
+                    const swExp = form.autoLiabilityExpiration ? new Date(form.autoLiabilityExpiration) : null;
+                    const conflict = swExp && !isNaN(swExp) && swExp >= new Date();
+                    return conflict
+                      ? <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>
+                          FMCSA: cancelled {form.bipdCancelEffectiveDate || '?'} no replacement —
+                          SaferWatch: active (exp {form.autoLiabilityExpiration}) — sources conflict
+                        </span>
+                      : <span style={{ fontSize: 12, fontWeight: 700, color: '#dc2626' }}>
+                          CANCELLED {form.bipdCancelEffectiveDate || '?'} — no replacement on file
+                          {form.bipdCancelInsuranceCompany ? ` — ${form.bipdCancelInsuranceCompany}` : ''}
+                        </span>;
+                  })()
+                : form.bipdCancelPending
+                  ? <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>
+                      Cancellation on file — effective {form.bipdCancelEffectiveDate || '?'}
+                      {form.bipdCancelDaysUntil !== null ? ` (${form.bipdCancelDaysUntil}d)` : ''}
+                      {form.bipdCancelInsuranceCompany ? ` — ${form.bipdCancelInsuranceCompany}` : ''}
+                    </span>
+                  : <span style={{ fontSize: 12, color: '#111827' }}>No pending cancellation</span>
             }
           </div>
         </div>
+      </div>
+
+      {/* ── Section 3b: FMCSA Identity Linkage ── */}
+      <div style={s.card}>
+        <div style={s.cardHead}>FMCSA Identity Linkage</div>
+        {form.fmcsaChameleonMatches === null
+          ? <span style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Not reviewed (no data)</span>
+          : form.fmcsaChameleonMatches.length === 0
+            ? <span style={{ fontSize: 12, color: '#111827' }}>No linked carriers found</span>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {form.fmcsaChameleonMatches.map((m, i) => {
+                  if (m.sharedService) {
+                    return (
+                      <div key={i} style={{ fontSize: 12, color: '#6b7280' }}>
+                        <strong>{m.matchField}:</strong> {m.matchValue} — shared by 5+ carriers (shared service/dispatch) — informational
+                      </div>
+                    );
+                  }
+                  const reasons = (m.badReasons ?? []).map(r => {
+                    let s = r.description;
+                    if (r.date) { s += ` (${r.date})`; if (r.rescindDate) s += `, rescinded ${r.rescindDate}`; }
+                    return s;
+                  }).join('; ') || 'no enforcement history';
+                  return (
+                    <div key={i} style={{ fontSize: 12, fontWeight: m.isHold ? 700 : 400, color: m.isHold ? '#b45309' : '#374151' }}>
+                      {m.isHold ? '[HOLD] ' : '[INFO] '}
+                      DOT {m.dot} ({m.name}), {m.status} — {m.matchField}: {m.matchValue} — {reasons}
+                    </div>
+                  );
+                })}
+              </div>
+        }
       </div>
 
       {/* ── Section 4: Safety Rating & BASICs ── */}

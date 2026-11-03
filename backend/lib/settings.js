@@ -37,6 +37,7 @@ export function rowToCfg(row) {
     oosHardBlockDriver:                     row.oos_hard_block_driver,
     inspectionVolumeMin:                    row.inspection_volume_min,
     bipdCancelDays:                         row.bipd_cancel_days,
+    chameleonLookbackDays:                  row.chameleon_lookback_days,
     alertRecipients:                        row.alert_recipients ?? '',
   };
 }

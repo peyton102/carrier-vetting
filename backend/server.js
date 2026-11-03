@@ -23,6 +23,7 @@ import credentialsRouter  from './routes/credentials.js';
 import brokerCheckRouter  from './routes/broker_check.js';
 import monitoringRouter   from './routes/monitoring.js';
 import insuranceRouter    from './routes/insurance.js';
+import chameleonRouter    from './routes/chameleon.js';
 import { startMonitoringJob } from './lib/monitor.js';
 
 const app = express();
@@ -109,6 +110,7 @@ app.use('/api/credentials',   credentialsRouter);
 app.use('/api/broker-check',  brokerCheckRouter);
 app.use('/api/monitoring',    monitoringRouter);
 app.use('/api/insurance',     insuranceRouter);
+app.use('/api/chameleon',     chameleonRouter);
 
 // ── Serve built React frontend ────────────────────────────────────────────────
 const DIST = resolve(__dirname, '../frontend/dist');
