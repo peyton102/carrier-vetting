@@ -1153,12 +1153,15 @@ export async function refreshSaferRevocations(supabase) {
   const jobStartedAt = new Date().toISOString();
   // Involuntary only + last 4 years — filters out the ~1.3M historical voluntary rows
   // that caused OOM on the free Render instance.
-  // order2_effective_date is serialised as MM/DD/YYYY text in JSON, so >= ISO string
-  // comparisons always return 0.  Use date_extract_y() which operates on the internal
-  // Socrata date type regardless of serialisation format.
-  // Also include rows where order2_effective_date IS NULL (order issued, not yet effective).
-  const cutoffYear = new Date().getFullYear() - 4;
-  const where = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND (order2_effective_date IS NULL OR date_extract_y(order2_effective_date) >= ${cutoffYear})`;
+  // ALL columns in sa6p-acbp are plain text; order2_effective_date is stored as MM/DD/YYYY.
+  // date_extract_y() silently returns 0 on text columns.  ISO >= comparisons also fail
+  // because '12/...' < '20...' as strings.  Match the year as the last 4 chars instead.
+  // Include IS NULL rows (order issued, effective date not yet set).
+  const currentYear = new Date().getFullYear();
+  const cutoffYear  = currentYear - 4;
+  const yearFilters = [];
+  for (let y = cutoffYear; y <= currentYear; y++) yearFilters.push(`order2_effective_date LIKE '%/${y}'`);
+  const where = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND (order2_effective_date IS NULL OR ${yearFilters.join(' OR ')})`;
 
   try {
     const countUrl = `${SOCRATA_BASE}/${REVOKE_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
