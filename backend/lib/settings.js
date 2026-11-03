@@ -36,6 +36,7 @@ export function rowToCfg(row) {
     oosHardBlockTruck:                      row.oos_hard_block_truck,
     oosHardBlockDriver:                     row.oos_hard_block_driver,
     inspectionVolumeMin:                    row.inspection_volume_min,
+    bipdCancelDays:                         row.bipd_cancel_days,
     alertRecipients:                        row.alert_recipients ?? '',
   };
 }

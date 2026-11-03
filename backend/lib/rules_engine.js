@@ -45,6 +45,9 @@ export const DEFAULT_SETTINGS = {
   oosHardBlockDriver:  7,
   // ── Inspection volume minimum ─────────────────────────────────────────────
   inspectionVolumeMin: 3,
+  // ── BIPD cancellation notice threshold (days) ────────────────────────────
+  // Carriers with a BMC-35 effective within this many days → HOLD
+  bipdCancelDays: 30,
   // ── Alert email recipients ────────────────────────────────────────────────
   alertRecipients: '',
 };
@@ -363,9 +366,23 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     yellow.push(`Cargo insurance expires in ${cargoExpDays} day${cargoExpDays === 1 ? '' : 's'} (${d.cargoExpiration}) — confirm renewal before booking`);
   }
 
-  // Pending insurance cancellation
-  if (d.pendingInsuranceCancellation) {
+  // Pending insurance cancellation (legacy SW-based field — kept for existing certs)
+  if (d.pendingInsuranceCancellation && d.bipdCancelPending == null) {
     yellow.push('Pending insurance cancellation notice on file');
+  }
+
+  // FMCSA-sourced BIPD cancellation (BMC-35) — within threshold → HOLD
+  if (d.bipdCancelPending === true) {
+    const daysOut   = d.bipdCancelDaysUntil;
+    const threshold = parseInt(cfg.bipdCancelDays, 10) || 30;
+    if (daysOut !== null && daysOut !== undefined && daysOut <= threshold) {
+      const effPart = d.bipdCancelEffectiveDate ? ` effective ${d.bipdCancelEffectiveDate}` : '';
+      yellow.push(
+        `BI&PD cancellation notice on file (FMCSA BMC-35)${effPart} — ` +
+        `${daysOut} day${daysOut === 1 ? '' : 's'} until cancellation, within this broker's ${threshold}-day threshold`
+      );
+    }
+    // Far out (> threshold): the cert row is informational only — no rule violation
   }
 
   // OOS yellow-flag — classifyOos() result from above; already handles all range guards

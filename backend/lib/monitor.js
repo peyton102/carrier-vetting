@@ -870,6 +870,131 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
   }
 }
 
+// ── Insurance cancellation refresh (daily) ────────────────────────────────────
+// Queries FMCSA data.transportation.gov c5y8-a4uz for active BMC-35 BIPD filings.
+// Applies superseding check: if carrier also has BMC-91/91X with effective_date
+// >= the BMC-35 effective_date, the cancellation is covered by new policy → skipped.
+// Stores one row per DOT (soonest effective_date) in insurance_cancellations table.
+// Deny-all RLS; service role writes bypass RLS.
+
+const SOCRATA_BASE    = 'https://data.transportation.gov/resource';
+const INSUR_ACTIVE_DS = 'c5y8-a4uz';
+
+function toYmd(date = new Date()) {
+  return date.getFullYear().toString() +
+    (date.getMonth() + 1).toString().padStart(2, '0') +
+    date.getDate().toString().padStart(2, '0');
+}
+
+function ymdToIso(ymd) {
+  if (!ymd || String(ymd).length < 8) return null;
+  const s = String(ymd);
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
+async function fetchAllSocrata(dataset, whereClause) {
+  const limit   = 5000;
+  const results = [];
+  let   offset  = 0;
+  while (true) {
+    const url = `${SOCRATA_BASE}/${dataset}.json?$where=${encodeURIComponent(whereClause)}&$limit=${limit}&$offset=${offset}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`Socrata HTTP ${res.status} for ${dataset}`);
+    const page = await res.json();
+    results.push(...page);
+    if (page.length < limit) break;
+    offset += limit;
+  }
+  return results;
+}
+
+export async function refreshInsuranceCancellations(supabase) {
+  console.log('[INSUR] Starting BIPD cancellation refresh…');
+  const todayYmd = toYmd();
+
+  try {
+    // Fetch all future BMC-35 (pending cancellation notices) and all active BMC-91/91X
+    const [bmc35, activePolicies] = await Promise.all([
+      fetchAllSocrata(INSUR_ACTIVE_DS,
+        `ins_form_code='BMC-35' AND ins_type_code='1' AND effective_date >= '${todayYmd}'`),
+      fetchAllSocrata(INSUR_ACTIVE_DS,
+        `ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`),
+    ]);
+
+    console.log(`[INSUR] BMC-35: ${bmc35.length}, active policies: ${activePolicies.length}`);
+
+    // Build superseding lookup: docket_number → max effective_date of BMC-91/91X
+    const activeMaxByDocket = new Map();
+    for (const pol of activePolicies) {
+      const docket = pol.docket_number;
+      if (!docket) continue;
+      const effYmd = String(pol.effective_date ?? '0').slice(0, 8);
+      const prev   = activeMaxByDocket.get(docket) ?? '0';
+      if (effYmd > prev) activeMaxByDocket.set(docket, effYmd);
+    }
+
+    // Filter superseded records; group by DOT keeping soonest effective_date
+    const byDot = new Map();  // dot_number → row object
+    let supersededCount = 0;
+
+    for (const rec of bmc35) {
+      const dot    = rec.usdot_number ? String(rec.usdot_number).trim() : null;
+      const docket = rec.docket_number;
+      const effYmd = String(rec.effective_date ?? '').slice(0, 8);
+      if (!dot || !effYmd) continue;
+
+      // Superseding check: does this carrier have a BMC-91/91X with
+      // effective_date >= this BMC-35's effective_date?
+      const latestActive = activeMaxByDocket.get(docket) ?? '0';
+      if (latestActive >= effYmd) {
+        supersededCount++;
+        console.log(`[INSUR] DOT ${dot} BMC-35 ${effYmd} superseded by BMC-91X ${latestActive}`);
+        continue;
+      }
+
+      // Keep soonest effective_date per DOT
+      const existing = byDot.get(dot);
+      if (!existing || effYmd < existing._effYmd) {
+        byDot.set(dot, {
+          _effYmd:           effYmd,  // internal sort key, removed before upsert
+          dot_number:        dot,
+          docket_number:     docket,
+          effective_date:    ymdToIso(effYmd),
+          trans_date:        ymdToIso(String(rec.trans_date ?? '').slice(0, 8)),
+          insurance_company: rec.insurance_company_name ?? null,
+          max_cov_amount:    rec.max_cov_amount != null ? parseFloat(rec.max_cov_amount) : null,
+          policy_no:         rec.policy_no ?? null,
+          last_verified_at:  new Date().toISOString(),
+        });
+      }
+    }
+
+    console.log(`[INSUR] ${byDot.size} confirmed pending (${supersededCount} superseded)`);
+
+    // Upsert survivors (strip internal _effYmd key)
+    if (byDot.size > 0) {
+      const rows = [...byDot.values()].map(({ _effYmd, ...r }) => r);
+      for (let i = 0; i < rows.length; i += 200) {
+        const { error } = await supabase
+          .from('insurance_cancellations')
+          .upsert(rows.slice(i, i + 200), { onConflict: 'dot_number' });
+        if (error) console.error('[INSUR] Upsert error:', error.message);
+      }
+    }
+
+    // Delete rows whose cancellation date has passed
+    const { error: delErr } = await supabase
+      .from('insurance_cancellations')
+      .delete()
+      .lt('effective_date', ymdToIso(todayYmd));
+    if (delErr) console.error('[INSUR] Delete past rows error:', delErr.message);
+
+    console.log('[INSUR] Refresh complete');
+  } catch (e) {
+    console.error('[INSUR] Refresh failed:', e.message);
+  }
+}
+
 export function startMonitoringJob(supabase) {
   const intervalHours = parseFloat(process.env.MONITOR_INTERVAL_HOURS || '4');
   const intervalMs    = intervalHours * 60 * 60 * 1000;
@@ -879,9 +1004,12 @@ export function startMonitoringJob(supabase) {
   setTimeout(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
+    refreshInsuranceCancellations(supabase);  // populate insurance table on startup
   }, 60_000);
   setInterval(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
   }, intervalMs);
+  // Refresh insurance cancellations once every 24 hours
+  setInterval(() => refreshInsuranceCancellations(supabase), 24 * 60 * 60 * 1000);
 }

@@ -227,10 +227,7 @@ export function generateVettingPDF(opts) {
       dataRow(doc, L, W, 'Cargo Insurance Expiration', null);
     }
 
-    flagRow(doc, L, W, 'Pending Cancellation Notice', d.pendingInsuranceCancellation, 'Manual');
-    if (d.insuranceCancellationDate) {
-      dataRow(doc, L, W, 'Cancellation Effective Date', d.insuranceCancellationDate);
-    }
+    bipdCancellationRow(doc, L, W, d, cfg.bipdCancelDays ?? 30);
 
     // Insurance data timestamp
     if (d.insuranceDataAsOf) {
@@ -627,6 +624,66 @@ function flagRow(doc, L, W, label, val, source) {
     'Helvetica-Bold', C.darkgray, `${label}:`,
     isNull ? 'Helvetica-Oblique' : 'Helvetica-Bold',
     color, display);
+}
+
+// BI&PD cancellation notice row — FMCSA-sourced (new certs) or SW manual (legacy certs).
+// New certs set bipdCancelPending (true/false/null); legacy certs only have pendingInsuranceCancellation.
+function bipdCancellationRow(doc, L, W, d, cancelDays) {
+  const hasNew = d.bipdCancelPending !== undefined;
+
+  if (!hasNew) {
+    // Legacy cert: fall back to old SaferWatch / manual field
+    flagRow(doc, L, W, 'Pending Cancellation Notice', d.pendingInsuranceCancellation, 'Manual');
+    if (d.insuranceCancellationDate) {
+      dataRow(doc, L, W, 'Cancellation Effective Date', d.insuranceCancellationDate);
+    }
+    return;
+  }
+
+  const notReviewed = d.bipdCancelNotReviewed === true || d.bipdCancelPending === null;
+
+  if (notReviewed) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'BI&PD Cancellation Notice (FMCSA):',
+      'Helvetica-Oblique', C.gray, 'Not reviewed (no data)');
+    return;
+  }
+
+  if (!d.bipdCancelPending) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'BI&PD Cancellation Notice (FMCSA):',
+      'Helvetica', C.black, 'No pending cancellation');
+    return;
+  }
+
+  // Pending = true
+  const effDate   = d.bipdCancelEffectiveDate;
+  const transDate = d.bipdCancelTransDate;
+  const company   = d.bipdCancelInsuranceCompany;
+  const daysOut   = d.bipdCancelDaysUntil;
+  const withinThreshold = daysOut !== null && daysOut !== undefined && daysOut <= cancelDays;
+
+  const fmtDate = (iso) => {
+    if (!iso) return null;
+    const [y, m, dy] = iso.split('-');
+    return `${m}/${dy}/${y}`;
+  };
+
+  let text = `BI\u0026PD cancellation on file, effective ${fmtDate(effDate) ?? '?'}`;
+  if (transDate) text += ` (FMCSA, filed ${fmtDate(transDate)})`;
+  else text += ' (FMCSA)';
+  if (company) text += ` \u2014 ${company}`;
+  if (daysOut !== null && daysOut !== undefined) {
+    if (daysOut <= 0)              text += '  !! IN EFFECT OR PAST';
+    else if (withinThreshold)      text += `  !! ${daysOut} day${daysOut === 1 ? '' : 's'} until cancellation`;
+    else                           text += `  (${daysOut} days out \u2014 informational)`;
+  }
+
+  _twoColRow(doc, L, W,
+    'Helvetica-Bold', C.darkgray, 'BI&PD Cancellation Notice (FMCSA):',
+    'Helvetica-Bold',
+    withinThreshold ? C.yellow : C.darkgray,
+    text);
 }
 
 function drugAlcoholRow(doc, L, W, val, source) {

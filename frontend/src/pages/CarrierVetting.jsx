@@ -45,7 +45,14 @@ const INITIAL_FORM = {
   autoLiabilityExpiration:      '',
   cargoInsurance:               '',
   cargoExpiration:              '',
-  pendingInsuranceCancellation: false,
+  pendingInsuranceCancellation: false,  // legacy SW field; kept for old cert compat
+  // FMCSA-sourced BIPD cancellation (BMC-35)
+  bipdCancelPending:         null,   // null = not reviewed, true/false = checked
+  bipdCancelEffectiveDate:   '',
+  bipdCancelTransDate:       '',
+  bipdCancelInsuranceCompany: '',
+  bipdCancelDaysUntil:       null,
+  bipdCancelNotReviewed:     false,
   // Carrier Assure
   carrierAssureGrade: '',
   fraudFlag:         false,
@@ -586,10 +593,11 @@ export default function CarrierVetting({ settings }) {
     setBlockInfo(null);
     setLookingUp(true);
     try {
-      const [fmcsaRes, swRes, blockRes] = await Promise.all([
+      const [fmcsaRes, swRes, blockRes, insRes] = await Promise.all([
         fetch(`/api/fmcsa/dot/${dot}`),
         fetch(`/api/saferwatch/${dot}`),
         fetch(`/api/monitoring/blocks/${dot}`),
+        fetch(`/api/insurance/cancellation/${dot}`),
       ]);
       const fmcsaJson = await fmcsaRes.json();
       const swJson    = await swRes.json();
@@ -606,6 +614,26 @@ export default function CarrierVetting({ settings }) {
       if (blockRes.ok) {
         const blockJson = await blockRes.json();
         if (blockJson) setBlockInfo(blockJson);
+      }
+
+      if (insRes.ok) {
+        const insJson = await insRes.json();
+        if (insJson.notReviewed) {
+          setForm(f => ({ ...f,
+            bipdCancelPending: null, bipdCancelNotReviewed: true,
+            bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
+            bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
+          }));
+        } else {
+          setForm(f => ({ ...f,
+            bipdCancelPending:         insJson.bipdCancelPending,
+            bipdCancelNotReviewed:     false,
+            bipdCancelEffectiveDate:   insJson.effectiveDate   ?? '',
+            bipdCancelTransDate:       insJson.transDate       ?? '',
+            bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
+            bipdCancelDaysUntil:       insJson.daysUntil       ?? null,
+          }));
+        }
       }
     } catch (e) {
       setLookupErr(e.message);
@@ -639,13 +667,33 @@ export default function CarrierVetting({ settings }) {
         throw new Error(fmcsaJson.error ?? 'FMCSA MC lookup failed');
       } else {
         applyLookupResults(fmcsaJson, swRes, swJson);
-        // Check for carrier block using DOT resolved from FMCSA
+        // Check block and insurance using DOT resolved from FMCSA
         const dot = fmcsaJson.dotNumber;
         if (dot) {
-          fetch(`/api/monitoring/blocks/${dot}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(b => { if (b) setBlockInfo(b); })
-            .catch(() => {});
+          Promise.all([
+            fetch(`/api/monitoring/blocks/${dot}`).then(r => r.ok ? r.json() : null).catch(() => null),
+            fetch(`/api/insurance/cancellation/${dot}`).then(r => r.ok ? r.json() : null).catch(() => null),
+          ]).then(([blockJson, insJson]) => {
+            if (blockJson) setBlockInfo(blockJson);
+            if (insJson) {
+              if (insJson.notReviewed) {
+                setForm(f => ({ ...f,
+                  bipdCancelPending: null, bipdCancelNotReviewed: true,
+                  bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
+                  bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
+                }));
+              } else {
+                setForm(f => ({ ...f,
+                  bipdCancelPending:         insJson.bipdCancelPending,
+                  bipdCancelNotReviewed:     false,
+                  bipdCancelEffectiveDate:   insJson.effectiveDate    ?? '',
+                  bipdCancelTransDate:       insJson.transDate        ?? '',
+                  bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
+                  bipdCancelDaysUntil:       insJson.daysUntil        ?? null,
+                }));
+              }
+            }
+          });
         }
       }
     } catch (e) {
@@ -1135,13 +1183,18 @@ export default function CarrierVetting({ settings }) {
               inputStyle={fi('cargoExpiration')}
             />
           </Field>
-          <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 4 }}>
-            <CheckField
-              name="pendingInsuranceCancellation"
-              label="Pending insurance cancellation notice on file"
-              checked={form.pendingInsuranceCancellation}
-              onChange={handleChange}
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>BI&amp;PD Cancellation (FMCSA)</span>
+            {form.bipdCancelPending === null
+              ? <span style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Not reviewed (no data)</span>
+              : form.bipdCancelPending
+                ? <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>
+                    Cancellation on file — effective {form.bipdCancelEffectiveDate || '?'}
+                    {form.bipdCancelDaysUntil !== null ? ` (${form.bipdCancelDaysUntil}d)` : ''}
+                    {form.bipdCancelInsuranceCompany ? ` — ${form.bipdCancelInsuranceCompany}` : ''}
+                  </span>
+                : <span style={{ fontSize: 12, color: '#111827' }}>No pending cancellation</span>
+            }
           </div>
         </div>
       </div>
