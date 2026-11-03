@@ -1071,21 +1071,39 @@ export async function refreshOosOrders(supabase) {
       return;
     }
 
-    const dbRows = rows
-      .filter(r => r.dot_number && r.oos_date)
-      .map(r => ({
+    // Deduplicate on conflict key before upserting — Socrata sometimes returns
+    // the same (dot_number, oos_date, oos_reason) in one batch, which causes
+    // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+    const seen = new Map();
+    for (const r of rows) {
+      if (!r.dot_number || !r.oos_date) continue;
+      const key = `${String(r.dot_number).trim()}|${r.oos_date.slice(0, 10)}|${r.oos_reason ?? ''}`;
+      seen.set(key, {
         dot_number:       String(r.dot_number).trim(),
         oos_reason:       r.oos_reason ?? '',
-        oos_date:         r.oos_date?.slice(0, 10),
+        oos_date:         r.oos_date.slice(0, 10),
         rescind_date:     r.rescind_date?.slice(0, 10) ?? null,
         last_verified_at: jobStartedAt,
-      }));
+      });
+    }
+    const dbRows = [...seen.values()];
+    console.log(`[OOS] ${rows.length} raw → ${dbRows.length} after dedup`);
 
+    let upsertError = false;
     for (let i = 0; i < dbRows.length; i += 200) {
       const { error } = await supabase
         .from('oos_orders')
         .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,oos_date,oos_reason' });
-      if (error) console.error('[OOS] Upsert error:', error.message);
+      if (error) {
+        console.error(`[OOS] Upsert error at offset ${i}: ${error.message}`);
+        upsertError = true;
+        break;
+      }
+    }
+
+    if (upsertError) {
+      console.error('[OOS] Load failed — skipping sweep, last_verified_at NOT updated');
+      return;
     }
 
     const { error: sweepErr } = await supabase
@@ -1101,7 +1119,10 @@ export async function refreshOosOrders(supabase) {
 export async function refreshSaferRevocations(supabase) {
   console.log('[REVOKE] Starting SAFER revocations refresh…');
   const jobStartedAt = new Date().toISOString();
-  const where        = `upper(order2_type_desc) LIKE '%INVOLUNTARY%'`;
+  // Involuntary only + last 4 years — filters out the ~1.3M historical voluntary rows
+  // that caused OOM on the free Render instance.
+  const cutoff = fourYearsAgoIso();
+  const where  = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND order2_effective_date >= '${cutoff}'`;
 
   try {
     const countUrl = `${SOCRATA_BASE}/${REVOKE_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
@@ -1111,34 +1132,65 @@ export async function refreshSaferRevocations(supabase) {
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[REVOKE] Expected rows: ${expected}`);
 
-    const rows = await fetchAllSocrata(REVOKE_DS, where);
+    // Stream page-by-page: upsert each page immediately instead of holding all rows in memory.
+    const limit      = 5000;
+    let   offset     = 0;
+    let   fetched    = 0;
+    let   upsertError = false;
+    const seenKeys   = new Set();  // dedup across pages on the conflict key
 
-    if (rows.length < expected) {
-      console.error(`[REVOKE] INCOMPLETE: fetched ${rows.length} of ${expected} — aborting, table unchanged`);
+    while (true) {
+      const url = `${SOCRATA_BASE}/${REVOKE_DS}.json?$where=${encodeURIComponent(where)}&$limit=${limit}&$offset=${offset}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) throw new Error(`Socrata HTTP ${res.status} for ${REVOKE_DS}`);
+      const page = await res.json();
+      if (page.length === 0) break;
+      fetched += page.length;
+
+      const dbPage = [];
+      for (const r of page) {
+        if (!r.dot_number || !r.order2_effective_date) continue;
+        const key = `${String(r.dot_number).trim()}|${r.order2_effective_date.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        dbPage.push({
+          dot_number:       String(r.dot_number).trim(),
+          order_type_desc:  r.order2_type_desc ?? '',
+          effective_date:   r.order2_effective_date.slice(0, 10),
+          last_verified_at: jobStartedAt,
+        });
+      }
+
+      if (dbPage.length > 0) {
+        const { error } = await supabase
+          .from('safer_revocations')
+          .upsert(dbPage, { onConflict: 'dot_number,effective_date,order_type_desc' });
+        if (error) {
+          console.error(`[REVOKE] Upsert error at offset ${offset}: ${error.message}`);
+          upsertError = true;
+          break;
+        }
+      }
+
+      if (page.length < limit) break;
+      offset += limit;
+    }
+
+    if (upsertError) {
+      console.error('[REVOKE] Load failed — skipping sweep, last_verified_at NOT updated');
       return;
     }
 
-    const dbRows = rows
-      .filter(r => r.dot_number && r.order2_effective_date)
-      .map(r => ({
-        dot_number:       String(r.dot_number).trim(),
-        order_type_desc:  r.order2_type_desc ?? '',
-        effective_date:   r.order2_effective_date?.slice(0, 10),
-        last_verified_at: jobStartedAt,
-      }));
-
-    for (let i = 0; i < dbRows.length; i += 200) {
-      const { error } = await supabase
-        .from('safer_revocations')
-        .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,effective_date,order_type_desc' });
-      if (error) console.error('[REVOKE] Upsert error:', error.message);
+    if (fetched < expected) {
+      console.error(`[REVOKE] INCOMPLETE: fetched ${fetched} of ${expected} — aborting, table unchanged`);
+      return;
     }
 
     const { error: sweepErr } = await supabase
       .from('safer_revocations').delete().lt('last_verified_at', jobStartedAt);
     if (sweepErr) console.error('[REVOKE] Sweep error:', sweepErr.message);
 
-    console.log(`[REVOKE] Refresh complete — ${dbRows.length} rows`);
+    console.log(`[REVOKE] Refresh complete — ${fetched} fetched, ${seenKeys.size} unique rows stored`);
   } catch (e) {
     console.error('[REVOKE] Refresh failed:', e.message);
   }
@@ -1164,20 +1216,36 @@ export async function refreshMotusSuspensions(supabase) {
       return;
     }
 
-    const dbRows = rows
-      .filter(r => r.usdot_number && r.order1_effective_date)
-      .map(r => ({
+    // Deduplicate on conflict key before upserting — same "cannot affect row a second time" risk.
+    const seen = new Map();
+    for (const r of rows) {
+      if (!r.usdot_number || !r.order1_effective_date) continue;
+      const key = `${String(r.usdot_number).trim()}|${r.order1_effective_date.slice(0, 10)}|${r.order1_type_desc ?? ''}`;
+      seen.set(key, {
         dot_number:       String(r.usdot_number).trim(),
         order_type_desc:  r.order1_type_desc ?? '',
-        effective_date:   r.order1_effective_date?.slice(0, 10),
+        effective_date:   r.order1_effective_date.slice(0, 10),
         last_verified_at: jobStartedAt,
-      }));
+      });
+    }
+    const dbRows = [...seen.values()];
+    console.log(`[MOTUS] ${rows.length} raw → ${dbRows.length} after dedup`);
 
+    let upsertError = false;
     for (let i = 0; i < dbRows.length; i += 200) {
       const { error } = await supabase
         .from('motus_suspensions')
         .upsert(dbRows.slice(i, i + 200), { onConflict: 'dot_number,effective_date,order_type_desc' });
-      if (error) console.error('[MOTUS] Upsert error:', error.message);
+      if (error) {
+        console.error(`[MOTUS] Upsert error at offset ${i}: ${error.message}`);
+        upsertError = true;
+        break;
+      }
+    }
+
+    if (upsertError) {
+      console.error('[MOTUS] Load failed — skipping sweep, last_verified_at NOT updated');
+      return;
     }
 
     const { error: sweepErr } = await supabase

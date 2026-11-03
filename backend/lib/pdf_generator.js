@@ -391,26 +391,29 @@ export function generateVettingPDF(opts) {
       d.cleanInspections24mo != null && d.cleanInspections24mo !== '' ? String(d.cleanInspections24mo) : null,
       src('cleanInspections24mo'));
 
-    // Use live SAFER national averages; fall back to FMCSA SMS published values only when absent.
-    const natAvgTruck  = parseFloat(d.nationalAvgTruckOos)  || 22.26;
-    const natAvgDriver = parseFloat(d.nationalAvgDriverOos) || 6.67;
+    // National OOS averages from SAFER HTML only — null when unavailable (no fallback).
+    const natAvgTruckRaw  = parseFloat(d.nationalAvgTruckOos);
+    const natAvgDriverRaw = parseFloat(d.nationalAvgDriverOos);
+    const natAvgTruck  = isNaN(natAvgTruckRaw)  ? null : natAvgTruckRaw;
+    const natAvgDriver = isNaN(natAvgDriverRaw) ? null : natAvgDriverRaw;
     const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
     const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
     const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
     const ABS_FLOOR    = 20;
 
-    const truckYellowAt  = natAvgTruck  * mult;
-    const driverYellowAt = natAvgDriver * mult;
-    const truckCanHold   = truckYellowAt  < ABS_FLOOR;
-    const driverCanHold  = driverYellowAt < hardDriver;
-
     const truckParts = [];
-    if (truckCanHold) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
+    if (natAvgTruck != null) {
+      const truckYellowAt = natAvgTruck * mult;
+      if (truckYellowAt < ABS_FLOOR) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
+    }
     truckParts.push(`REJECT >20% floor`, `REJECT >${hardTruck}% hard`);
     const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
 
     const driverParts = [];
-    if (driverCanHold) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
+    if (natAvgDriver != null) {
+      const driverYellowAt = natAvgDriver * mult;
+      if (driverYellowAt < hardDriver) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
+    }
     driverParts.push(`REJECT >${hardDriver}% hard`);
     const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
 
@@ -434,8 +437,8 @@ export function generateVettingPDF(opts) {
     }
 
     const oosAsOf = d.nationalAvgOosAsOf ? ` (as of ${d.nationalAvgOosAsOf})` : '';
-    dataRow(doc, L, W, `Natl Avg Truck OOS %${oosAsOf}`,  `${natAvgTruck.toFixed(2)}%`);
-    dataRow(doc, L, W, `Natl Avg Driver OOS %${oosAsOf}`, `${natAvgDriver.toFixed(2)}%`);
+    dataRow(doc, L, W, `Natl Avg Truck OOS %${oosAsOf}`,  natAvgTruck  != null ? `${natAvgTruck.toFixed(2)}%`  : null);
+    dataRow(doc, L, W, `Natl Avg Driver OOS %${oosAsOf}`, natAvgDriver != null ? `${natAvgDriver.toFixed(2)}%` : null);
 
     doc.moveDown(0.4);
 

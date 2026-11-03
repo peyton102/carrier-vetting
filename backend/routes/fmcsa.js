@@ -114,12 +114,10 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     snapshotDate: saferSnapshotDate = null,
   } = saferData;
 
-  // National OOS averages: SAFER HTML is live and authoritative; QCMobile values are stale.
-  // Only fall back to QCMobile if SAFER HTML parsing fails entirely.
-  const natTruckOos  = saferOos?.truckNatAvg  != null ? saferOos.truckNatAvg
-                       : c.vehicleOosRateNationalAverage != null ? String(c.vehicleOosRateNationalAverage) : '';
-  const natDriverOos = saferOos?.driverNatAvg != null ? saferOos.driverNatAvg
-                       : c.driverOosRateNationalAverage  != null ? String(c.driverOosRateNationalAverage)  : '';
+  // National OOS averages: SAFER HTML only — QCMobile values are stale and must not be used.
+  // If SAFER HTML parsing fails, leave blank; rules engine and PDF will show "Not reviewed (no data)".
+  const natTruckOos  = saferOos?.truckNatAvg  != null ? saferOos.truckNatAvg  : '';
+  const natDriverOos = saferOos?.driverNatAvg != null ? saferOos.driverNatAvg : '';
 
   // Carrier OOS rates: SAFER HTML snapshot (same date shown on cert); fall back to QCMobile.
   const truckOosPctStr  = saferInsp?.vehicleOosPct != null
@@ -391,20 +389,57 @@ function parseSaferInspections(html) {
 }
 
 // Fetch SAFER snapshot HTML once and extract all data points.
+// Retries once on timeout (SAFER occasionally drops connections under load).
+function isSaferRetryable(e, status) {
+  if (status != null) return status >= 500;
+  return (
+    e?.name === 'TimeoutError' ||
+    e?.name === 'AbortError'   ||
+    e?.code === 'ECONNRESET'   ||
+    e?.code === 'ENOTFOUND'    ||
+    e?.code === 'ECONNREFUSED'
+  );
+}
+
 async function fetchSaferData(dot) {
-  try {
-    const url = `${SAFER_BASE}/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dot}`;
+  const url = `${SAFER_BASE}/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${dot}`;
+
+  async function attempt() {
     const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-    if (!res.ok) return {};
-    const html = await res.text();
-    return {
-      phone:        parseSaferPhone(html),
-      crashes:      parseSaferCrashes(html),
-      oos:          parseSaferOosAverages(html),
-      inspections:  parseSaferInspections(html),
-      snapshotDate: parseSaferSnapshotDate(html),
-    };
-  } catch (_) { return {}; }
+    if (!res.ok) {
+      const err = new Error(`SAFER HTTP ${res.status}`);
+      err._httpStatus = res.status;
+      throw err;
+    }
+    return res.text();
+  }
+
+  let html = null;
+  try {
+    html = await attempt();
+  } catch (e) {
+    const reason = e?.message || String(e);
+    if (isSaferRetryable(e, e?._httpStatus)) {
+      console.warn(`[SAFER] DOT ${dot} — attempt 1 failed (${reason}), retrying in 2s`);
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        html = await attempt();
+      } catch (e2) {
+        console.error(`[SAFER] DOT ${dot} — attempt 2 failed (${e2?.message || e2}), giving up`);
+      }
+    } else {
+      console.error(`[SAFER] DOT ${dot} — fetch failed (${reason}), not retryable`);
+    }
+  }
+
+  if (!html) return {};
+  return {
+    phone:        parseSaferPhone(html),
+    crashes:      parseSaferCrashes(html),
+    oos:          parseSaferOosAverages(html),
+    inspections:  parseSaferInspections(html),
+    snapshotDate: parseSaferSnapshotDate(html),
+  };
 }
 
 async function fetchGrantDate(dot, webKey) {
