@@ -964,6 +964,7 @@ export async function refreshInsuranceCancellations(supabase) {
     const countData     = await countRes.json();
     const expectedBmc35 = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[INSUR] Expected BMC-35 total: ${expectedBmc35}`);
+    if (expectedBmc35 === 0) throw new Error('count query returned 0 rows — $where filter may be broken');
 
     // Fetch all active BIPD records (BMC-35 and BMC-91/91X) in parallel
     const [bmc35, activePolicies] = await Promise.all([
@@ -1095,6 +1096,7 @@ export async function refreshOosOrders(supabase) {
     const countData = await countRes.json();
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[OOS] Expected rows: ${expected}`);
+    if (expected === 0) throw new Error('count query returned 0 rows — $where filter may be broken');
 
     const rows = await fetchAllSocrata(OOS_DS, where, 'OOS');
 
@@ -1151,8 +1153,12 @@ export async function refreshSaferRevocations(supabase) {
   const jobStartedAt = new Date().toISOString();
   // Involuntary only + last 4 years — filters out the ~1.3M historical voluntary rows
   // that caused OOM on the free Render instance.
-  const cutoff = fourYearsAgoIso();
-  const where  = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND order2_effective_date >= '${cutoff}'`;
+  // order2_effective_date is serialised as MM/DD/YYYY text in JSON, so >= ISO string
+  // comparisons always return 0.  Use date_extract_y() which operates on the internal
+  // Socrata date type regardless of serialisation format.
+  // Also include rows where order2_effective_date IS NULL (order issued, not yet effective).
+  const cutoffYear = new Date().getFullYear() - 4;
+  const where = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND (order2_effective_date IS NULL OR date_extract_y(order2_effective_date) >= ${cutoffYear})`;
 
   try {
     const countUrl = `${SOCRATA_BASE}/${REVOKE_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
@@ -1161,6 +1167,7 @@ export async function refreshSaferRevocations(supabase) {
     const countData = await countRes.json();
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[REVOKE] Expected rows: ${expected}`);
+    if (expected === 0) throw new Error('count query returned 0 rows — $where filter may be broken');
 
     // Stream page-by-page: upsert each page immediately instead of holding all rows in memory.
     const limit      = 5000;
@@ -1240,6 +1247,7 @@ export async function refreshMotusSuspensions(supabase) {
     const countData = await countRes.json();
     const expected  = parseInt(countData[0]?.count ?? '0', 10);
     console.log(`[MOTUS] Expected rows: ${expected}`);
+    if (expected === 0) throw new Error('count query returned 0 rows — $where filter may be broken');
 
     const rows = await fetchAllSocrata(MOTUS_DS, where, 'MOTUS');
 
