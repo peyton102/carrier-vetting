@@ -892,6 +892,8 @@ function ymdToIso(ymd) {
   return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
 }
 
+// (count check is inlined inside refreshInsuranceCancellations — no separate helper needed)
+
 async function fetchAllSocrata(dataset, whereClause) {
   const limit   = 5000;
   const results = [];
@@ -911,17 +913,38 @@ async function fetchAllSocrata(dataset, whereClause) {
 export async function refreshInsuranceCancellations(supabase) {
   console.log('[INSUR] Starting BIPD cancellation refresh…');
   const todayYmd = toYmd();
+  const bmc35Where = `ins_form_code='BMC-35' AND ins_type_code='1' AND effective_date >= '${todayYmd}'`;
 
   try {
-    // Fetch all future BMC-35 (pending cancellation notices) and all active BMC-91/91X
+    // Count expected rows BEFORE fetching so we can detect any truncation.
+    const countUrl = `${SOCRATA_BASE}/${INSUR_ACTIVE_DS}.json?$select=count(*)&$where=${encodeURIComponent(bmc35Where)}`;
+    const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!countRes.ok) throw new Error(`Socrata count HTTP ${countRes.status}`);
+    const countData   = await countRes.json();
+    const expectedBmc35 = parseInt(countData[0]?.count ?? '0', 10);
+    console.log(`[INSUR] Expected BMC-35 with future dates: ${expectedBmc35}`);
+
+    // Fetch all active BIPD records (BMC-35 and BMC-91/91X) in parallel
     const [bmc35, activePolicies] = await Promise.all([
-      fetchAllSocrata(INSUR_ACTIVE_DS,
-        `ins_form_code='BMC-35' AND ins_type_code='1' AND effective_date >= '${todayYmd}'`),
+      fetchAllSocrata(INSUR_ACTIVE_DS, bmc35Where),
       fetchAllSocrata(INSUR_ACTIVE_DS,
         `ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`),
     ]);
 
-    console.log(`[INSUR] BMC-35: ${bmc35.length}, active policies: ${activePolicies.length}`);
+    // Count check: if we got fewer rows than the count query reported, the fetch was
+    // truncated (network error, API hiccup, undocumented limit). Clear the table so
+    // every carrier shows "Not reviewed (no data)" until the next successful run.
+    // Never silently serve stale or partial data as a definitive answer.
+    if (bmc35.length < expectedBmc35) {
+      console.error(
+        `[INSUR] INCOMPLETE: fetched ${bmc35.length} of ${expectedBmc35} BMC-35 rows — ` +
+        `clearing table; carriers will show "Not reviewed" until next successful run`
+      );
+      await supabase.from('insurance_cancellations').delete().gte('last_verified_at', '1970-01-01T00:00:00Z');
+      return;
+    }
+
+    console.log(`[INSUR] BMC-35: ${bmc35.length} (confirmed ${expectedBmc35}), active policies: ${activePolicies.length}`);
 
     // Build superseding lookup: docket_number → max effective_date of BMC-91/91X
     const activeMaxByDocket = new Map();
