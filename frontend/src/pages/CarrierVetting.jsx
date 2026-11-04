@@ -31,6 +31,7 @@ const INITIAL_FORM = {
   loadRef:    '',
   dispatcher: '',
   fmcsaLookupCompleted: false,
+  fmcsaLookupDot:       '',   // DOT that was actually looked up — backend rejects if ≠ dotNumber
   // Carrier identity
   dotNumber:   '',
   mcNumber:    '',
@@ -350,7 +351,7 @@ export default function CarrierVetting({ settings }) {
     setSaveStatus(null);
     setRunErr('');
     setFinalErr('');
-    // Clear lookup data when DOT or MC changes — results are stale
+    // Clear ALL lookup data when DOT or MC changes — nothing carries over between carriers
     if (name === 'dotNumber' || name === 'mcNumber') {
       setFmcsaData(null);
       setSwData(null);
@@ -361,7 +362,15 @@ export default function CarrierVetting({ settings }) {
       setBasicDataSufficiency({});
       setInspSourceMeta(null);
       setAutoFilledValues({});
-      setForm(f => ({ ...f, fmcsaLookupCompleted: false, drugAlcoholViolation: null }));
+      setBlockInfo(null);
+      setFmcsaCannotVerify(false);
+      setFmcsaLastAttemptAt(null);
+      setForm(f => ({
+        ...INITIAL_FORM,
+        loadRef:    f.loadRef,
+        dispatcher: f.dispatcher,
+        [name]:     value,
+      }));
     }
   }, []);
 
@@ -379,9 +388,16 @@ export default function CarrierVetting({ settings }) {
     const sources = {};
     const updates = {};
 
+    const DATE_FIELDS_SET = new Set(['authorityGrantDate', 'autoLiabilityExpiration', 'cargoExpiration', 'bipdCancelEffectiveDate', 'bipdCancelTransDate']);
     for (const field of (fmcsaJson.filledFields ?? [])) {
-      const val = fmcsaJson[field];
+      let val = fmcsaJson[field];
       sources[field] = 'fmcsa';  // always record source — even when value is false/null
+      // Sanitize invalid dates: 0000-00-00, NaN, Invalid Date → blank
+      if (DATE_FIELDS_SET.has(field) && val) {
+        const s = String(val);
+        if (s === '0000-00-00' || s === 'NaN' || s === 'Invalid Date') val = '';
+        else { const d = new Date(s); if (isNaN(d.getTime())) val = ''; }
+      }
       if (val !== '' && val != null && val !== false) { updates[field] = val; }
     }
 
@@ -540,6 +556,7 @@ export default function CarrierVetting({ settings }) {
 
     updates._basicSufficiency = finalBasicSufficiency;
     updates.fmcsaLookupCompleted = true;
+    updates.fmcsaLookupDot = fmcsaJson.dotNumber ? String(fmcsaJson.dotNumber) : '';
 
     setForm(f => ({ ...f, ...updates }));
     setFieldSources(sources);
@@ -1249,7 +1266,7 @@ export default function CarrierVetting({ settings }) {
                     let s = r.description;
                     if (r.date) { s += ` (${r.date})`; if (r.rescindDate) s += `, rescinded ${r.rescindDate}`; }
                     return s;
-                  }).join('; ') || 'no enforcement history';
+                  }).join('; ') || 'no enforcement in the last 4 years';
                   return (
                     <div key={i} style={{ fontSize: 12, fontWeight: m.isHold ? 700 : 400, color: m.isHold ? '#b45309' : '#374151' }}>
                       {m.isHold ? '[HOLD] ' : '[INFO] '}

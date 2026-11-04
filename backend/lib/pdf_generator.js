@@ -72,6 +72,17 @@ export function generateVettingPDF(opts) {
       reissuedAt = null,
     } = opts;
 
+    // Sanitize date fields: treat '0000-00-00', 'Invalid Date', or unparseable strings as blank
+    const DATE_FIELDS = ['authorityGrantDate', 'autoLiabilityExpiration', 'cargoExpiration', 'bipdCancelEffectiveDate', 'bipdCancelTransDate'];
+    for (const f of DATE_FIELDS) {
+      const v = d[f];
+      if (!v) continue;
+      const s = String(v);
+      if (s === '0000-00-00' || s === 'Invalid Date' || s === 'NaN') { d = { ...d, [f]: '' }; continue; }
+      const parsed = new Date(s);
+      if (isNaN(parsed.getTime())) d = { ...d, [f]: '' };
+    }
+
     const cfg  = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
     const name = brokerName || 'Carrier Vetting';
 
@@ -670,7 +681,7 @@ function chameleonSection(doc, L, W, d) {
         if (r.date) { s += ` (${r.date})`; if (r.rescindDate) s += `, rescinded ${r.rescindDate}`; }
         return s;
       });
-      const reasonText = reasons.length > 0 ? reasons.join('; ') : 'no enforcement history';
+      const reasonText = reasons.length > 0 ? reasons.join('; ') : 'no enforcement in the last 4 years';
       const statusPart = m.status ? `, ${m.status}` : '';
 
       label     = m.isHold ? '[HOLD] Linked carrier (FMCSA):' : '[INFO] Linked carrier (FMCSA):';

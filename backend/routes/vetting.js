@@ -27,6 +27,13 @@ function validateCarrierData(d) {
   // fmcsaCannotVerify is an acceptable substitute for a completed lookup
   if (!d?.fmcsaLookupCompleted && !d?.fmcsaCannotVerify)
     return 'FMCSA lookup must be completed before running vetting';
+  // Reject if the lookup was done for a different DOT than the one being submitted
+  if (d?.fmcsaLookupCompleted && d?.fmcsaLookupDot) {
+    const submittedDot = String(d.dotNumber ?? '').replace(/\D/g, '');
+    const lookedUpDot  = String(d.fmcsaLookupDot).replace(/\D/g, '');
+    if (submittedDot && lookedUpDot && submittedDot !== lookedUpDot)
+      return `Carrier data was looked up for DOT ${lookedUpDot} but submitted for DOT ${submittedDot}. Re-run the lookup.`;
+  }
   return null;
 }
 
