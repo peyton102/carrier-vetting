@@ -208,7 +208,7 @@ export function generateVettingPDF(opts) {
     autoFilledNote(doc, L, W, d, 'authorityStatus');
     dataRow(doc, L, W, 'Authority Grant Date', d.authorityGrantDate, src('authorityGrantDate'));
     dataRow(doc, L, W, 'Authority Age',
-      authorityDays !== null ? `${authorityDays} days` : null);
+      authorityDays != null && !isNaN(authorityDays) ? `${authorityDays} days` : null);
     dataRow(doc, L, W, 'Holds Broker Authority',
       d.hasBrokerAuthority === true ? 'YES — carrier also holds broker authority' : (d.hasBrokerAuthority === false ? 'No' : null),
       src('hasBrokerAuthority'));
@@ -431,15 +431,17 @@ export function generateVettingPDF(opts) {
 
     // Build source label for OOS rows — prefer the stored oosWinLabel from dual-source selection
     const oosWinLabel = d.oosWinLabel || src('truckOosPct') || null;
-    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, oosWinLabel);
+    const noVehInsp = Number(d.inspections24mo) === 0;
+    const noDrvInsp = Number(d.driverInspections24mo) === 0;
+    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, oosWinLabel, noVehInsp);
     autoFilledNote(doc, L, W, d, 'truckOosPct');
-    if (d.truckOosPctAlt && d.truckOosPctAltSrc) {
+    if (!noVehInsp && d.truckOosPctAlt && d.truckOosPctAltSrc) {
       doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
          .text(`  ${d.truckOosPctAltSrc} showed ${parseFloat(d.truckOosPctAlt).toFixed(2)}% (not used — older data)`,
                L + 8, doc.y, { width: W - 8 });
       doc.moveDown(0.15);
     }
-    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null, oosWinLabel);
+    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null, oosWinLabel, noDrvInsp);
     autoFilledNote(doc, L, W, d, 'driverOosPct');
     if (d.driverOosPctAlt && d.driverOosPctAltSrc) {
       doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
@@ -828,7 +830,13 @@ function basicRow(doc, L, W, label, rawVal, threshold, source, zeroNote = null) 
     display);
 }
 
-function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock, absFloor, source) {
+function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock, absFloor, source, noInspections = false) {
+  if (noInspections) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, `${label}:`,
+      'Helvetica-Oblique', C.gray, 'Not reviewed (no inspections)');
+    return;
+  }
   const val = parseFloat(rawVal);
   const cls = classifyOos(
     val,
