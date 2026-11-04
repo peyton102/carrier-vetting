@@ -62,7 +62,7 @@ const REVIEWABLE_FIELDS = [
 export function generateVettingPDF(opts) {
   return new Promise((resolve, reject) => {
     const {
-      carrierData: d,
+      carrierData: carrierDataRaw,
       verdict, tier, reasons, warnings = [], authorityDays,
       override, generatedAt, recordId,
       settings, brokerName,
@@ -73,14 +73,15 @@ export function generateVettingPDF(opts) {
     } = opts;
 
     // Sanitize date fields: treat '0000-00-00', 'Invalid Date', or unparseable strings as blank
+    let d = { ...carrierDataRaw };
     const DATE_FIELDS = ['authorityGrantDate', 'autoLiabilityExpiration', 'cargoExpiration', 'bipdCancelEffectiveDate', 'bipdCancelTransDate'];
     for (const f of DATE_FIELDS) {
       const v = d[f];
       if (!v) continue;
       const s = String(v);
-      if (s === '0000-00-00' || s === 'Invalid Date' || s === 'NaN') { d = { ...d, [f]: '' }; continue; }
+      if (s === '0000-00-00' || s === 'Invalid Date' || s === 'NaN') { d[f] = ''; continue; }
       const parsed = new Date(s);
-      if (isNaN(parsed.getTime())) d = { ...d, [f]: '' };
+      if (isNaN(parsed.getTime())) d[f] = '';
     }
 
     const cfg  = { ...DEFAULT_SETTINGS, ...(settings ?? {}) };
