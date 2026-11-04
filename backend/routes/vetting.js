@@ -72,19 +72,6 @@ router.post('/run', async (req, res, next) => {
       });
     if (logErr) throw logErr;
 
-    // certificates row (non-fatal — vetting_logs is the authoritative audit record)
-    getSupabase()
-      .from('certificates')
-      .insert({
-        id:           recordId,
-        org_id:       orgId,
-        carrier_name: req.body.carrierName || null,
-        dot_number:   req.body.dotNumber   || null,
-        mc_number:    req.body.mcNumber    || null,
-        verdict:      result.verdict,
-      })
-      .then(({ error }) => { if (error) console.warn('[CERT INSERT]', error.message); });
-
     res.json({ ...result, recordId });
   } catch (e) { next(e); }
 });
@@ -219,12 +206,19 @@ router.post('/pdf', async (req, res, next) => {
       }
     }
 
-    // Update certificates table (non-fatal)
+    // Insert certificates row only after PDF is successfully uploaded (non-fatal)
     if (certSaved) {
       supabase.from('certificates')
-        .update({ storage_path: storagePath, verdict: finalVerdict })
-        .eq('id', recordId).eq('org_id', orgId)
-        .then(({ error }) => { if (error) console.warn('[CERT PATH UPDATE]', error.message); });
+        .insert({
+          id:           recordId,
+          org_id:       orgId,
+          carrier_name: row.carrier_name || null,
+          dot_number:   row.dot_number   || null,
+          mc_number:    row.mc_number    || null,
+          verdict:      finalVerdict,
+          storage_path: storagePath,
+        })
+        .then(({ error }) => { if (error) console.warn('[CERT INSERT]', error.message); });
     }
 
     res.setHeader('Content-Type', 'application/pdf');
