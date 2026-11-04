@@ -1192,14 +1192,19 @@ export async function refreshSaferRevocations(supabase) {
       const pageKeys = new Set();
       const dbPage   = [];
       for (const r of page) {
-        if (!r.dot_number || !r.order2_effective_date) continue;
-        const key = `${String(r.dot_number).trim()}|${r.order2_effective_date.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
+        // order2_effective_date is null for ~44K rows where FMCSA recorded the serve
+        // date but hasn't set an effective date yet.  These are real active revocations;
+        // fall back to order1_serve_date so they aren't silently dropped.
+        // Rows with neither date cannot satisfy the NOT NULL column — skip them.
+        const dateVal = r.order2_effective_date || r.order1_serve_date;
+        if (!r.dot_number || !dateVal) continue;
+        const key = `${String(r.dot_number).trim()}|${dateVal.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
         if (pageKeys.has(key)) continue;
         pageKeys.add(key);
         dbPage.push({
           dot_number:       String(r.dot_number).trim(),
           order_type_desc:  r.order2_type_desc ?? '',
-          effective_date:   r.order2_effective_date.slice(0, 10),
+          effective_date:   dateVal.slice(0, 10),
           last_verified_at: jobStartedAt,
         });
       }
