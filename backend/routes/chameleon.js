@@ -126,7 +126,7 @@ async function getBadReasons(dot, ccRow, supabase) {
     });
   }
 
-  // SAFER involuntary revocations — Supabase mirror of sa6p-acbp (refreshed daily)
+  // SAFER involuntary revocations — confirmed (order2_effective_date present)
   const { data: revRows } = await supabase
     .from('safer_revocations')
     .select('order_type_desc,effective_date')
@@ -135,6 +135,26 @@ async function getBadReasons(dot, ccRow, supabase) {
   for (const r of (revRows ?? [])) {
     const d = r.effective_date ?? null;
     reasons.push({ type: 'revocation', description: r.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
+  }
+
+  // SAFER revocation notices — order served but no effective date on record.
+  // The revocation may never have taken effect (dismissed, contested, not finalised).
+  // stillActive: false → condA fails for active carriers → informational only, never HOLD.
+  const { data: noticeRows } = await supabase
+    .from('safer_revocation_notices')
+    .select('order_type_desc,serve_date')
+    .eq('dot_number', dot)
+    .limit(5);
+  for (const n of (noticeRows ?? [])) {
+    const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
+    reasons.push({
+      type:        'revocation_notice',
+      description: `Revocation notice ${serveLabel} — no effective date on record`,
+      date:        null,
+      rescindDate: null,
+      stillActive: false,
+      eventDate:   null,
+    });
   }
 
   // Motus involuntary suspensions — Supabase mirror of wb4f-neki (refreshed daily)

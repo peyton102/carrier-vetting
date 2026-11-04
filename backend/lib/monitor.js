@@ -1188,29 +1188,47 @@ export async function refreshSaferRevocations(supabase) {
       if (page.length === 0) break;
       fetched += page.length;
 
-      // Fresh Set each page — freed by GC before the next page loads.
-      const pageKeys = new Set();
-      const dbPage   = [];
+      // Fresh Sets each page — freed by GC before the next page loads.
+      // Rows with order2_effective_date → confirmed revocations → safer_revocations.
+      // Rows without order2_effective_date → notice served, no effective date on record
+      //   → safer_revocation_notices (informational only, never HOLD-worthy).
+      const pageKeys   = new Set();
+      const noticeKeys = new Set();
+      const dbPage     = [];
+      const dbNotices  = [];
       for (const r of page) {
-        // order2_effective_date is null for ~44K rows where FMCSA recorded the serve
-        // date but hasn't set an effective date yet.  These are real active revocations;
-        // fall back to order1_serve_date so they aren't silently dropped.
-        // Rows with neither date cannot satisfy the NOT NULL column — skip them.
-        const dateVal = r.order2_effective_date || r.order1_serve_date;
-        if (!r.dot_number || !dateVal) continue;
-        const key = `${String(r.dot_number).trim()}|${dateVal.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
-        if (pageKeys.has(key)) continue;
-        pageKeys.add(key);
-        dbPage.push({
-          dot_number:       String(r.dot_number).trim(),
-          order_type_desc:  r.order2_type_desc ?? '',
-          effective_date:   dateVal.slice(0, 10),
-          last_verified_at: jobStartedAt,
-        });
+        const dot = r.dot_number ? String(r.dot_number).trim() : null;
+        if (!dot) continue;
+
+        if (r.order2_effective_date) {
+          const key = `${dot}|${r.order2_effective_date.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
+          if (pageKeys.has(key)) continue;
+          pageKeys.add(key);
+          dbPage.push({
+            dot_number:       dot,
+            order_type_desc:  r.order2_type_desc ?? '',
+            effective_date:   r.order2_effective_date.slice(0, 10),
+            last_verified_at: jobStartedAt,
+          });
+        } else {
+          const docket = r.docket_number ?? '';
+          const lic    = r.type_license  ?? '';
+          const key    = `${dot}|${docket}|${lic}`;
+          if (noticeKeys.has(key)) continue;
+          noticeKeys.add(key);
+          dbNotices.push({
+            dot_number:       dot,
+            docket_number:    docket,
+            type_license:     lic,
+            order_type_desc:  r.order2_type_desc ?? '',
+            serve_date:       r.order1_serve_date ?? null,
+            last_verified_at: jobStartedAt,
+          });
+        }
       }
 
       const pageNum = Math.floor(offset / limit) + 1;
-      console.log(`[REVOKE] Page ${pageNum}: ${page.length} rows fetched, ${dbPage.length} unique (running total: ${fetched})`);
+      console.log(`[REVOKE] Page ${pageNum}: ${page.length} rows → ${dbPage.length} revocations, ${dbNotices.length} notices (running total: ${fetched})`);
       if (pageNum % 10 === 0) {
         const m = process.memoryUsage();
         console.log(`[REVOKE] Memory at page ${pageNum} — RSS: ${Math.round(m.rss / 1048576)} MB, heap: ${Math.round(m.heapUsed / 1048576)}/${Math.round(m.heapTotal / 1048576)} MB`);
@@ -1225,7 +1243,16 @@ export async function refreshSaferRevocations(supabase) {
           upsertError = true;
           break;
         }
-        console.log(`[REVOKE] Page ${pageNum}: saved ${dbPage.length} rows`);
+      }
+      if (dbNotices.length > 0) {
+        const { error } = await supabase
+          .from('safer_revocation_notices')
+          .upsert(dbNotices, { onConflict: 'dot_number,docket_number,type_license' });
+        if (error) {
+          console.error(`[REVOKE] Notice upsert error at offset ${offset}: ${error.message}`);
+          upsertError = true;
+          break;
+        }
       }
 
       if (page.length < limit) break;
@@ -1242,7 +1269,8 @@ export async function refreshSaferRevocations(supabase) {
       return;
     }
 
-    await batchedSweep(supabase, 'REVOKE', 'safer_revocations', jobStartedAt);
+    await batchedSweep(supabase, 'REVOKE',         'safer_revocations',         jobStartedAt);
+    await batchedSweep(supabase, 'REVOKE-NOTICES', 'safer_revocation_notices',  jobStartedAt);
 
     console.log(`[REVOKE] Refresh complete — ${fetched} rows`);
   } catch (e) {
