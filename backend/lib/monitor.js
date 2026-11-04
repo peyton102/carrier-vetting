@@ -1163,8 +1163,12 @@ export async function refreshSaferRevocations(supabase) {
   for (let y = cutoffYear; y <= currentYear; y++) yearFilters.push(`order2_effective_date LIKE '%/${y}'`);
   const where = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND (order2_effective_date IS NULL OR ${yearFilters.join(' OR ')})`;
 
-  // Skip the full 434K-row load when Socrata reports the dataset hasn't changed since
-  // our last successful run.  A metadata fetch failure is non-fatal — we proceed anyway.
+  // Skip the full 434K-row load when Socrata reports the dataset hasn't changed.
+  // Skip only fires when BOTH target tables have a daily_load_status entry — this
+  // guarantees safer_revocation_notices is populated on its first run before any skip
+  // can happen.  Set FORCE_REVOKE_RELOAD=true in the cron env to bypass for one run.
+  // On skip: daily_load_status is updated so the chameleon freshness check stays current.
+  // A metadata fetch failure is non-fatal — proceed and load anyway.
   try {
     const metaRes = await fetch(
       `https://data.transportation.gov/api/views/${REVOKE_DS}.json`,
@@ -1173,16 +1177,27 @@ export async function refreshSaferRevocations(supabase) {
     if (metaRes.ok) {
       const { rowsUpdatedAt } = await metaRes.json();
       const datasetUpdatedAt  = new Date(rowsUpdatedAt * 1000);
-      const { data: lastRow } = await supabase
-        .from('safer_revocations')
-        .select('last_verified_at')
-        .order('last_verified_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (lastRow && new Date(lastRow.last_verified_at) > datasetUpdatedAt) {
-        console.log(`[REVOKE] Dataset unchanged since ${datasetUpdatedAt.toISOString()} (last load: ${lastRow.last_verified_at}) — skipping`);
+
+      const [{ data: sRevoke }, { data: sNotices }] = await Promise.all([
+        supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocations').maybeSingle(),
+        supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocation_notices').maybeSingle(),
+      ]);
+
+      const bothLoaded    = sRevoke && sNotices;
+      const dataUnchanged = bothLoaded && new Date(sRevoke.last_verified_at) > datasetUpdatedAt;
+      const forced        = !!process.env.FORCE_REVOKE_RELOAD;
+
+      if (dataUnchanged && !forced) {
+        const now = new Date().toISOString();
+        await supabase.from('daily_load_status').upsert([
+          { table_name: 'safer_revocations',        last_verified_at: now },
+          { table_name: 'safer_revocation_notices', last_verified_at: now },
+        ], { onConflict: 'table_name' });
+        console.log(`[REVOKE] Dataset unchanged since ${datasetUpdatedAt.toISOString()} — skipping; freshness updated`);
         return;
       }
+      if (forced)      console.log('[REVOKE] FORCE_REVOKE_RELOAD set — bypassing skip');
+      if (!bothLoaded) console.log('[REVOKE] daily_load_status incomplete — skipping skip check');
       console.log(`[REVOKE] Dataset rowsUpdatedAt ${datasetUpdatedAt.toISOString()} — proceeding with load`);
     }
   } catch (e) {
@@ -1297,6 +1312,12 @@ export async function refreshSaferRevocations(supabase) {
 
     await batchedSweep(supabase, 'REVOKE',         'safer_revocations',         jobStartedAt);
     await batchedSweep(supabase, 'REVOKE-NOTICES', 'safer_revocation_notices',  jobStartedAt);
+
+    const loadedAt = new Date().toISOString();
+    await supabase.from('daily_load_status').upsert([
+      { table_name: 'safer_revocations',        last_verified_at: loadedAt },
+      { table_name: 'safer_revocation_notices', last_verified_at: loadedAt },
+    ], { onConflict: 'table_name' });
 
     console.log(`[REVOKE] Refresh complete — ${fetched} rows`);
   } catch (e) {

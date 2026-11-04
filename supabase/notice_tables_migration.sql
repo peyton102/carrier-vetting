@@ -57,6 +57,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS motus_suspension_notices_natural
 CREATE INDEX IF NOT EXISTS motus_suspension_notices_last_verified
   ON motus_suspension_notices (last_verified_at);
 
+-- ── daily_load_status ─────────────────────────────────────────────────────────
+-- Lightweight freshness signal written by refreshSaferRevocations on both full
+-- loads and skips.  Lets getEnforcementTableStatus in chameleon.js tell the
+-- difference between "data loaded today" and "skipped because dataset unchanged"
+-- without touching every row in the 434K-row enforcement tables.
+-- Guards the REVOKE skip: skip only fires when BOTH table entries exist here,
+-- ensuring safer_revocation_notices is always populated on first run.
+
+CREATE TABLE IF NOT EXISTS daily_load_status (
+  table_name       text        PRIMARY KEY,
+  last_verified_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE daily_load_status ENABLE ROW LEVEL SECURITY;
+
 -- ── delete_stale_batch — updated allowlist (6 tables) ────────────────────────
 
 CREATE OR REPLACE FUNCTION delete_stale_batch(

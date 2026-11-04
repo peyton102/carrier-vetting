@@ -210,16 +210,18 @@ async function getEnforcementTableStatus(supabase) {
   const MAX_AGE_MS = 25 * 60 * 60 * 1000;  // 25 h covers daily job + scheduling drift
   const now        = Date.now();
 
-  const [oos, rev, motus] = await Promise.all([
-    supabase.from('oos_orders')        .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
-    supabase.from('safer_revocations') .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
-    supabase.from('motus_suspensions') .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
+  const [oos, motus, rev] = await Promise.all([
+    supabase.from('oos_orders')       .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('motus_suspensions').select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
+    // REVOKE reads daily_load_status so a dataset-unchanged skip still counts as fresh.
+    // Checking the data table directly would go stale on consecutive skip days.
+    supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocations').maybeSingle(),
   ]);
 
   const timestamps = [
     oos.data?.last_verified_at,
-    rev.data?.last_verified_at,
     motus.data?.last_verified_at,
+    rev.data?.last_verified_at,
   ];
 
   for (const ts of timestamps) {
