@@ -918,7 +918,7 @@ async function fetchAllSocrata(dataset, whereClause, tag) {
 
 // Races a load function against a hard time limit.  On timeout, logs "Load failed"
 // so the load never goes silent even if a Supabase call hangs indefinitely.
-async function withLoadTimeout(tag, fn, timeoutMs = 10 * 60 * 1000) {
+export async function withLoadTimeout(tag, fn, timeoutMs = 10 * 60 * 1000) {
   const timer = new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`timed out after ${timeoutMs / 60000}min`)), timeoutMs)
   );
@@ -1173,11 +1173,12 @@ export async function refreshSaferRevocations(supabase) {
     if (expected === 0) throw new Error('count query returned 0 rows — $where filter may be broken');
 
     // Stream page-by-page: upsert each page immediately instead of holding all rows in memory.
-    const limit      = 5000;
-    let   offset     = 0;
-    let   fetched    = 0;
+    // seenKeys is intentionally scoped per-page; cross-page duplicates are handled by
+    // ON CONFLICT DO UPDATE so last_verified_at stays current and the sweep won't delete them.
+    const limit       = 5000;
+    let   offset      = 0;
+    let   fetched     = 0;
     let   upsertError = false;
-    const seenKeys   = new Set();  // dedup across pages on the conflict key
 
     while (true) {
       const url = `${SOCRATA_BASE}/${REVOKE_DS}.json?$where=${encodeURIComponent(where)}&$limit=${limit}&$offset=${offset}`;
@@ -1187,12 +1188,14 @@ export async function refreshSaferRevocations(supabase) {
       if (page.length === 0) break;
       fetched += page.length;
 
-      const dbPage = [];
+      // Fresh Set each page — freed by GC before the next page loads.
+      const pageKeys = new Set();
+      const dbPage   = [];
       for (const r of page) {
         if (!r.dot_number || !r.order2_effective_date) continue;
         const key = `${String(r.dot_number).trim()}|${r.order2_effective_date.slice(0, 10)}|${r.order2_type_desc ?? ''}`;
-        if (seenKeys.has(key)) continue;
-        seenKeys.add(key);
+        if (pageKeys.has(key)) continue;
+        pageKeys.add(key);
         dbPage.push({
           dot_number:       String(r.dot_number).trim(),
           order_type_desc:  r.order2_type_desc ?? '',
@@ -1202,7 +1205,11 @@ export async function refreshSaferRevocations(supabase) {
       }
 
       const pageNum = Math.floor(offset / limit) + 1;
-      console.log(`[REVOKE] Page ${pageNum}: ${page.length} rows fetched, ${dbPage.length} new after dedup (running total: ${fetched})`);
+      console.log(`[REVOKE] Page ${pageNum}: ${page.length} rows fetched, ${dbPage.length} unique (running total: ${fetched})`);
+      if (pageNum % 10 === 0) {
+        const m = process.memoryUsage();
+        console.log(`[REVOKE] Memory at page ${pageNum} — RSS: ${Math.round(m.rss / 1048576)} MB, heap: ${Math.round(m.heapUsed / 1048576)}/${Math.round(m.heapTotal / 1048576)} MB`);
+      }
 
       if (dbPage.length > 0) {
         const { error } = await supabase
@@ -1232,7 +1239,7 @@ export async function refreshSaferRevocations(supabase) {
 
     await batchedSweep(supabase, 'REVOKE', 'safer_revocations', jobStartedAt);
 
-    console.log(`[REVOKE] Refresh complete — ${fetched} fetched, ${seenKeys.size} unique rows stored`);
+    console.log(`[REVOKE] Refresh complete — ${fetched} rows`);
   } catch (e) {
     console.error('[REVOKE] Refresh failed:', e.message);
   }
@@ -1304,25 +1311,17 @@ export function startMonitoringJob(supabase) {
   const intervalMs    = intervalHours * 60 * 60 * 1000;
 
   console.log(`[MONITOR] Carrier monitoring started — interval: ${intervalHours}h (per-tenant FMCSA keys)`);
-  // Runs the four daily loads serially so memory usage stays low and logs are ordered.
-  // Each load has a 10-minute hard timeout so a hung Supabase call can never go silent.
-  const refreshAllDailyTables = async () => {
-    await withLoadTimeout('INSUR',  () => refreshInsuranceCancellations(supabase));
-    await withLoadTimeout('OOS',    () => refreshOosOrders(supabase));
-    await withLoadTimeout('REVOKE', () => refreshSaferRevocations(supabase));
-    await withLoadTimeout('MOTUS',  () => refreshMotusSuspensions(supabase));
-  };
+  // Daily enforcement-table loads (INSUR/OOS/REVOKE/MOTUS) are handled by the
+  // separate Render cron job (backend/scripts/daily-loads.js) so an OOM during a
+  // load can never kill this web process.
 
-  // First run 60s after startup to let connections settle
+  // First run 60s after startup to let connections settle.
   setTimeout(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
-    refreshAllDailyTables();
   }, 60_000);
   setInterval(() => {
     runMonitoringCheck(supabase);
     runWatchedCarriersCheck(supabase);
   }, intervalMs);
-  // Refresh all enforcement tables once every 24 hours
-  setInterval(refreshAllDailyTables, 24 * 60 * 60 * 1000);
 }

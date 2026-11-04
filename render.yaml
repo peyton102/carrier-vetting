@@ -21,3 +21,19 @@ services:
         sync: false
       - key: SAFERWATCH_CUSTOMER_KEY
         sync: false
+
+  - type: cron
+    name: carrier-vetting-daily-loads
+    env: node
+    region: oregon
+    plan: free
+    schedule: "0 4 * * *"
+    buildCommand: npm install --prefix backend
+    startCommand: node backend/scripts/daily-loads.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
