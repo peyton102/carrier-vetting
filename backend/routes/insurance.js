@@ -22,6 +22,8 @@ function daysUntil(dateStr) {
   return Math.floor((exp.getTime() - todayMs) / 86_400_000);
 }
 
+function ms(start) { return `${Date.now() - start}ms`; }
+
 router.get('/cancellation/:dot', async (req, res) => {
   const dot = req.params.dot.replace(/\D/g, '');
   if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
@@ -30,9 +32,11 @@ router.get('/cancellation/:dot', async (req, res) => {
     const supabase = getSupabase();
 
     // Check if the table has ever been populated (daily job has run at least once)
+    const tCount = Date.now();
     const { count, error: countErr } = await supabase
       .from('insurance_cancellations')
       .select('*', { count: 'exact', head: true });
+    console.log(`[TIMING][INSUR] Supabase insurance_cancellations count (DOT ${dot}): ${ms(tCount)}`);
 
     if (countErr) throw countErr;
 
@@ -41,11 +45,13 @@ router.get('/cancellation/:dot', async (req, res) => {
       return res.json({ notReviewed: true });
     }
 
+    const tRow = Date.now();
     const { data: row, error: rowErr } = await supabase
       .from('insurance_cancellations')
       .select('*')
       .eq('dot_number', dot)
       .maybeSingle();
+    console.log(`[TIMING][INSUR] Supabase insurance_cancellations row (DOT ${dot}): ${ms(tRow)}`);
 
     if (rowErr) throw rowErr;
 

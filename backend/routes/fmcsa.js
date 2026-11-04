@@ -13,6 +13,8 @@ const BASE             = 'https://mobile.fmcsa.dot.gov/qc/services';
 const SAFER_BASE       = 'https://safer.fmcsa.dot.gov';
 const FMCSA_TIMEOUT_MS = 15_000;
 
+function ms(start) { return `${Date.now() - start}ms`; }
+
 function isNetworkError(e) {
   return (
     e?.name === 'TimeoutError' ||
@@ -32,11 +34,13 @@ function getSupabase() {
 }
 
 async function getTenantWebKey(tenantSlug) {
+  const t = Date.now();
   const { data } = await getSupabase()
     .from('tenant_credentials')
     .select('fmcsa_webkey')
     .eq('tenant_slug', tenantSlug)
     .single();
+  console.log(`[TIMING][FMCSA] Supabase tenant_credentials read: ${ms(t)}`);
   if (!data?.fmcsa_webkey) return null;
   return decrypt(data.fmcsa_webkey);
 }
@@ -415,8 +419,10 @@ async function fetchSaferData(dot) {
   }
 
   let html = null;
+  const tSafer = Date.now();
   try {
     html = await attempt();
+    console.log(`[TIMING][FMCSA] SAFER HTML snapshot (DOT ${dot}): ${ms(tSafer)}`);
   } catch (e) {
     const reason = e?.message || String(e);
     if (isSaferRetryable(e, e?._httpStatus)) {
@@ -424,11 +430,14 @@ async function fetchSaferData(dot) {
       await new Promise(r => setTimeout(r, 2000));
       try {
         html = await attempt();
+        console.log(`[TIMING][FMCSA] SAFER HTML snapshot (DOT ${dot}): ${ms(tSafer)} (retry)`);
       } catch (e2) {
         console.error(`[SAFER] DOT ${dot} — attempt 2 failed (${e2?.message || e2}), giving up`);
+        console.log(`[TIMING][FMCSA] SAFER HTML snapshot (DOT ${dot}): ${ms(tSafer)} (failed after retry)`);
       }
     } else {
       console.error(`[SAFER] DOT ${dot} — fetch failed (${reason}), not retryable`);
+      console.log(`[TIMING][FMCSA] SAFER HTML snapshot (DOT ${dot}): ${ms(tSafer)} (failed)`);
     }
   }
 
@@ -443,14 +452,21 @@ async function fetchSaferData(dot) {
 }
 
 async function fetchGrantDate(dot, webKey) {
+  const t = Date.now();
   try {
     const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
-    return r.ok ? extractGrantDate(await r.json()) : '';
-  } catch (_) { return ''; }
+    const result = r.ok ? extractGrantDate(await r.json()) : '';
+    console.log(`[TIMING][FMCSA] QCMobile authority (DOT ${dot}): ${ms(t)}`);
+    return result;
+  } catch (_) {
+    console.log(`[TIMING][FMCSA] QCMobile authority (DOT ${dot}): ${ms(t)} (failed)`);
+    return '';
+  }
 }
 
 // ── DOT lookup ────────────────────────────────────────────────────────────────
 router.get('/dot/:dot', async (req, res, next) => {
+  const tTotal = Date.now();
   try {
     const webKey = await getTenantWebKey(req.auth.tenant);
     if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — add your key in Settings' });
@@ -458,10 +474,13 @@ router.get('/dot/:dot', async (req, res, next) => {
     const dot = req.params.dot.replace(/\D/g, '');
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
 
+    console.log(`[TIMING][FMCSA] DOT ${dot}: wave 1 start — carrier + docket-numbers in parallel`);
+    const tWave1 = Date.now();
     const [carrierRes, docketRes] = await Promise.all([
       fetchFmcsa(fmcsaUrl(`/carriers/${dot}`, webKey)),
       fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)),
     ]);
+    console.log(`[TIMING][FMCSA] DOT ${dot}: wave 1 (carrier+docket parallel): ${ms(tWave1)}`);
 
     if (carrierRes.status === 404) return res.status(404).json({ error: `DOT ${dot} not found in FMCSA database` });
     if (!carrierRes.ok) throw new Error(`FMCSA API HTTP ${carrierRes.status} for DOT ${dot}`);
@@ -470,10 +489,15 @@ router.get('/dot/:dot', async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
     const docketJson = docketRes.ok ? await docketRes.json() : null;
+
+    console.log(`[TIMING][FMCSA] DOT ${dot}: wave 2 start — authority + SAFER in parallel (sequential after wave 1)`);
+    const tWave2 = Date.now();
     const [authorityGrantDate, saferData] = await Promise.all([
       fetchGrantDate(dot, webKey),
       fetchSaferData(dot),
     ]);
+    console.log(`[TIMING][FMCSA] DOT ${dot}: wave 2 (authority+SAFER parallel): ${ms(tWave2)}`);
+    console.log(`[TIMING][FMCSA] DOT ${dot}: /dot total: ${ms(tTotal)}`);
 
     res.json(buildPayload(c, dot, docketJson, authorityGrantDate, saferData));
   } catch (e) {

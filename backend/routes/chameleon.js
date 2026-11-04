@@ -39,6 +39,8 @@ const CC_DS = 'az4n-8mr2';  // Company Census File (live Socrata)
 
 const SHARED_SERVICE_THRESHOLD = 5;  // >5 sharing same value → shared service
 
+function ms(start) { return `${Date.now() - start}ms`; }
+
 function socrataUrl(ds, where, select, limit) {
   const token  = process.env.SOCRATA_APP_TOKEN ?? '';
   const params = new URLSearchParams({ '$where': where, '$select': select, '$limit': String(limit) });
@@ -50,20 +52,24 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // Fetch Socrata with up to 3 attempts; backs off 2s then 4s on 429 or transient errors.
 // Any persistent failure is re-thrown — callers wrap in try/catch → notReviewed fallback.
-async function sq(ds, where, select, limit = 10) {
+async function sq(ds, where, select, limit = 10, label = '') {
   const url = socrataUrl(ds, where, select, limit);
+  const tag = label ? ` [${label}]` : '';
   let delay   = 2_000;
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const t = Date.now();
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
       if (r.status === 429) throw new Error(`Socrata ${ds} rate limited`);
       if (!r.ok)            throw new Error(`Socrata ${ds} HTTP ${r.status}`);
       const j = await r.json();
       if (!Array.isArray(j)) throw new Error(`Socrata ${ds}: ${JSON.stringify(j).slice(0, 80)}`);
+      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`);
       return j;
     } catch (e) {
       lastErr = e;
+      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)} (attempt ${attempt + 1} failed: ${e.message})`);
       if (attempt < 2) { await sleep(delay); delay *= 2; }
     }
   }
@@ -97,6 +103,7 @@ function statusLabel(code) {
 //   rating      — proxy: carrier is currently inactive
 //   lapsed_bipd — always true (removed from table when replaced by new policy)
 async function getBadReasons(dot, ccRow, supabase) {
+  const tTotal  = Date.now();
   const reasons    = [];
   const isInactive = ccRow?.status_code === 'I';
 
@@ -108,12 +115,15 @@ async function getBadReasons(dot, ccRow, supabase) {
     reasons.push({ type: 'rating', description: 'Safety rating: Conditional',   date: null, rescindDate: null, stillActive: isInactive, eventDate: null });
   }
 
+  // NOTE: the 6 queries below are sequential (each awaited individually)
   // OOS orders — Supabase mirror of p2mt-9ige (refreshed daily)
+  let t = Date.now();
   const { data: oosRows } = await supabase
     .from('oos_orders')
     .select('oos_reason,oos_date,rescind_date')
     .eq('dot_number', dot)
     .limit(5);
+  console.log(`[TIMING][CHAM]   Supabase oos_orders (linked DOT ${dot}): ${ms(t)}`);
   for (const o of (oosRows ?? [])) {
     const rescindDate = o.rescind_date ?? null;
     reasons.push({
@@ -127,24 +137,27 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // SAFER involuntary revocations — confirmed (order2_effective_date present)
+  t = Date.now();
   const { data: revRows } = await supabase
     .from('safer_revocations')
     .select('order_type_desc,effective_date')
     .eq('dot_number', dot)
     .limit(5);
+  console.log(`[TIMING][CHAM]   Supabase safer_revocations (linked DOT ${dot}): ${ms(t)}`);
   for (const r of (revRows ?? [])) {
     const d = r.effective_date ?? null;
     reasons.push({ type: 'revocation', description: r.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
   }
 
   // SAFER revocation notices — order served but no effective date on record.
-  // The revocation may never have taken effect (dismissed, contested, not finalised).
-  // stillActive: false → condA fails for active carriers → informational only, never HOLD.
+  // stillActive: false → informational only, never HOLD.
+  t = Date.now();
   const { data: noticeRows } = await supabase
     .from('safer_revocation_notices')
     .select('order_type_desc,serve_date')
     .eq('dot_number', dot)
     .limit(5);
+  console.log(`[TIMING][CHAM]   Supabase safer_revocation_notices (linked DOT ${dot}): ${ms(t)}`);
   for (const n of (noticeRows ?? [])) {
     const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
     reasons.push({
@@ -158,22 +171,26 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // Motus involuntary suspensions — confirmed (order1_effective_date present)
+  t = Date.now();
   const { data: motusRows } = await supabase
     .from('motus_suspensions')
     .select('order_type_desc,effective_date')
     .eq('dot_number', dot)
     .limit(5);
+  console.log(`[TIMING][CHAM]   Supabase motus_suspensions (linked DOT ${dot}): ${ms(t)}`);
   for (const m of (motusRows ?? [])) {
     const d = m.effective_date ?? null;
     reasons.push({ type: 'suspension', description: m.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
   }
 
-  // Motus suspension notices — order served but no effective date on record → informational only
+  // Motus suspension notices — informational only
+  t = Date.now();
   const { data: motusNoticeRows } = await supabase
     .from('motus_suspension_notices')
     .select('order_type_desc,serve_date')
     .eq('dot_number', dot)
     .limit(5);
+  console.log(`[TIMING][CHAM]   Supabase motus_suspension_notices (linked DOT ${dot}): ${ms(t)}`);
   for (const n of (motusNoticeRows ?? [])) {
     const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
     reasons.push({
@@ -187,16 +204,19 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // Lapsed BIPD — insurance_cancellations table (refreshed daily from FMCSA BMC-35)
+  t = Date.now();
   const { data: lapsedRow } = await supabase
     .from('insurance_cancellations')
     .select('effective_date')
     .eq('dot_number', dot)
     .eq('status', 'lapsed')
     .maybeSingle();
+  console.log(`[TIMING][CHAM]   Supabase insurance_cancellations (linked DOT ${dot}): ${ms(t)}`);
   if (lapsedRow) {
     reasons.push({ type: 'lapsed_bipd', description: 'Lapsed BIPD insurance, no replacement on file', date: lapsedRow.effective_date ?? null, rescindDate: null, stillActive: true, eventDate: lapsedRow.effective_date ?? null });
   }
 
+  console.log(`[TIMING][CHAM]   getBadReasons total (linked DOT ${dot}): ${ms(tTotal)} — 6 sequential Supabase queries`);
   return reasons;
 }
 
@@ -210,6 +230,7 @@ async function getEnforcementTableStatus(supabase) {
   const MAX_AGE_MS = 25 * 60 * 60 * 1000;  // 25 h covers daily job + scheduling drift
   const now        = Date.now();
 
+  const tStatus = Date.now();
   const [oos, motus, rev] = await Promise.all([
     supabase.from('oos_orders')       .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('motus_suspensions').select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
@@ -217,6 +238,7 @@ async function getEnforcementTableStatus(supabase) {
     // Checking the data table directly would go stale on consecutive skip days.
     supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocations').maybeSingle(),
   ]);
+  console.log(`[TIMING][CHAM] Supabase enforcement table status (3 parallel): ${ms(tStatus)}`);
 
   const timestamps = [
     oos.data?.last_verified_at,
@@ -251,6 +273,7 @@ function isHoldWorthy(ccRow, reasons, lookbackDays) {
 }
 
 router.get('/:dot', async (req, res) => {
+  const tTotal = Date.now();
   const dot = req.params.dot.replace(/\D/g, '');
   if (!dot) return res.status(400).json({ error: 'Invalid DOT' });
 
@@ -259,20 +282,26 @@ router.get('/:dot', async (req, res) => {
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 
+  let t = Date.now();
   const cfg          = await fetchSettings(req.auth.tenant);
+  console.log(`[TIMING][CHAM] DOT ${dot}: fetchSettings: ${ms(t)}`);
   const lookbackDays = parseInt(cfg.chameleonLookbackDays, 10) || 1095;
 
   // 24-hour cache: FMCSA contact data updates at most daily.
   // Same DOT vetted by many brokers = one set of Socrata queries per 24 h.
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  t = Date.now();
   const { data: cached } = await supabase
     .from('chameleon_cache')
     .select('pulled_at,result')
     .eq('dot_number', dot)
     .maybeSingle();
+  console.log(`[TIMING][CHAM] DOT ${dot}: Supabase chameleon_cache read: ${ms(t)}`);
   if (cached && (Date.now() - new Date(cached.pulled_at).getTime()) < CACHE_TTL_MS) {
+    console.log(`[TIMING][CHAM] DOT ${dot}: cache HIT — returning cached result, /chameleon total: ${ms(tTotal)}`);
     return res.json({ ...cached.result, pulledAt: cached.pulled_at, fromCache: true });
   }
+  console.log(`[TIMING][CHAM] DOT ${dot}: cache MISS — running full lookup`);
 
   // Enforcement tables must be populated and fresh before proceeding.
   // Empty tables would make every linked carrier appear to have no bad history.
@@ -289,7 +318,8 @@ router.get('/:dot', async (req, res) => {
     const selfRows = await sq(CC_DS,
       `dot_number='${esc(dot)}'`,
       'dot_number,legal_name,phone,email_address,company_officer_1,company_officer_2,phy_street,phy_city,phy_state,safety_rating',
-      1
+      1,
+      `self CC row`
     );
     if (!selfRows.length) return res.json({ notReviewed: false, matches: [] });
     const self = selfRows[0];
@@ -354,7 +384,8 @@ router.get('/:dot', async (req, res) => {
       const rows = await sq(CC_DS,
         s.where + excludeSelf,
         'dot_number,legal_name,status_code,safety_rating,phy_city,phy_state',
-        SHARED_SERVICE_THRESHOLD + 1
+        SHARED_SERVICE_THRESHOLD + 1,
+        `search field=${s.field}`
       );
 
       if (rows.length > SHARED_SERVICE_THRESHOLD) {
@@ -396,6 +427,7 @@ router.get('/:dot', async (req, res) => {
 
     const matches  = [...matchMap.values()];
     const pulledAt = new Date().toISOString();
+    console.log(`[TIMING][CHAM] DOT ${dot}: /chameleon total: ${ms(tTotal)} — ${searches.length} searches, ${matches.length} matches`);
     // Cache only complete successful results — never cache notReviewed or errors
     supabase.from('chameleon_cache')
       .upsert({ dot_number: dot, pulled_at: pulledAt,

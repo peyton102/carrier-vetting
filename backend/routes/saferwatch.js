@@ -46,6 +46,8 @@ async function resolveSwKeys(tenantSlug) {
 const router  = express.Router();
 const SW_BASE = 'https://www.saferwatch.com/webservices/CarrierService32.php';
 
+function ms(start) { return `${Date.now() - start}ms`; }
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // type: 'dot' (default) | 'mc'
@@ -193,8 +195,11 @@ function extractPendingCancellation(certData) {
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 router.get('/:dot', async (req, res, next) => {
+  const tTotal = Date.now();
   try {
+    const tKeys = Date.now();
     const { serviceKey, customerKey } = await resolveSwKeys(req.auth.tenant);
+    console.log(`[TIMING][SW] Supabase tenant_credentials read: ${ms(tKeys)}`);
 
     if (!serviceKey || !customerKey) {
       return res.status(503).json({
@@ -210,7 +215,9 @@ router.get('/:dot', async (req, res, next) => {
 
     // ── Fetch ──────────────────────────────────────────────────────────────
     const url   = swLookupUrl(identifier, lookupType, serviceKey, customerKey);
+    const tFetch = Date.now();
     const swRes = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+    console.log(`[TIMING][SW] SaferWatch HTTP (${identifier}): ${ms(tFetch)}`);
     if (!swRes.ok) throw new Error(`SaferWatch HTTP ${swRes.status}`);
 
     const xmlText = await swRes.text();
@@ -418,6 +425,7 @@ router.get('/:dot', async (req, res, next) => {
       .filter(([, v]) => v !== '' && v !== false && v != null)
       .map(([k]) => k);
 
+    console.log(`[TIMING][SW] /saferwatch total (${identifier}): ${ms(tTotal)}`);
     res.json({
       ok: true,
       ...swFields,
