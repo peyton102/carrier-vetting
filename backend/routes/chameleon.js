@@ -157,7 +157,7 @@ async function getBadReasons(dot, ccRow, supabase) {
     });
   }
 
-  // Motus involuntary suspensions — Supabase mirror of wb4f-neki (refreshed daily)
+  // Motus involuntary suspensions — confirmed (order1_effective_date present)
   const { data: motusRows } = await supabase
     .from('motus_suspensions')
     .select('order_type_desc,effective_date')
@@ -166,6 +166,24 @@ async function getBadReasons(dot, ccRow, supabase) {
   for (const m of (motusRows ?? [])) {
     const d = m.effective_date ?? null;
     reasons.push({ type: 'suspension', description: m.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
+  }
+
+  // Motus suspension notices — order served but no effective date on record → informational only
+  const { data: motusNoticeRows } = await supabase
+    .from('motus_suspension_notices')
+    .select('order_type_desc,serve_date')
+    .eq('dot_number', dot)
+    .limit(5);
+  for (const n of (motusNoticeRows ?? [])) {
+    const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
+    reasons.push({
+      type:        'suspension_notice',
+      description: `Suspension notice ${serveLabel} — no effective date on record`,
+      date:        null,
+      rescindDate: null,
+      stillActive: false,
+      eventDate:   null,
+    });
   }
 
   // Lapsed BIPD — insurance_cancellations table (refreshed daily from FMCSA BMC-35)

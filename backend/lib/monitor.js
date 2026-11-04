@@ -1325,20 +1325,38 @@ export async function refreshMotusSuspensions(supabase) {
       return;
     }
 
-    // Deduplicate on conflict key before upserting — same "cannot affect row a second time" risk.
-    const seen = new Map();
+    // Split on effective date: confirmed suspensions vs. notices (served, no effective date).
+    const seen        = new Map();
+    const seenNotices = new Map();
     for (const r of rows) {
-      if (!r.usdot_number || !r.order1_effective_date) continue;
-      const key = `${String(r.usdot_number).trim()}|${r.order1_effective_date.slice(0, 10)}|${r.order1_type_desc ?? ''}`;
-      seen.set(key, {
-        dot_number:       String(r.usdot_number).trim(),
-        order_type_desc:  r.order1_type_desc ?? '',
-        effective_date:   r.order1_effective_date.slice(0, 10),
-        last_verified_at: jobStartedAt,
-      });
+      const dot = r.usdot_number ? String(r.usdot_number).trim() : null;
+      if (!dot) continue;
+
+      if (r.order1_effective_date) {
+        const key = `${dot}|${r.order1_effective_date.slice(0, 10)}|${r.order1_type_desc ?? ''}`;
+        seen.set(key, {
+          dot_number:       dot,
+          order_type_desc:  r.order1_type_desc ?? '',
+          effective_date:   r.order1_effective_date.slice(0, 10),
+          last_verified_at: jobStartedAt,
+        });
+      } else {
+        const docket = r.docket_number ?? '';
+        const opType = r.op_auth_type  ?? '';
+        const key    = `${dot}|${docket}|${opType}`;
+        seenNotices.set(key, {
+          dot_number:       dot,
+          docket_number:    docket,
+          op_auth_type:     opType,
+          order_type_desc:  r.order1_type_desc ?? '',
+          serve_date:       r.order1_serve_date ?? null,
+          last_verified_at: jobStartedAt,
+        });
+      }
     }
-    const dbRows = [...seen.values()];
-    console.log(`[MOTUS] ${rows.length} raw → ${dbRows.length} after dedup`);
+    const dbRows    = [...seen.values()];
+    const dbNotices = [...seenNotices.values()];
+    console.log(`[MOTUS] ${rows.length} raw → ${dbRows.length} suspensions, ${dbNotices.length} notices`);
 
     let upsertError = false;
     for (let i = 0; i < dbRows.length; i += 200) {
@@ -1351,15 +1369,28 @@ export async function refreshMotusSuspensions(supabase) {
         break;
       }
     }
+    if (!upsertError) {
+      for (let i = 0; i < dbNotices.length; i += 200) {
+        const { error } = await supabase
+          .from('motus_suspension_notices')
+          .upsert(dbNotices.slice(i, i + 200), { onConflict: 'dot_number,docket_number,op_auth_type' });
+        if (error) {
+          console.error(`[MOTUS] Notice upsert error at offset ${i}: ${error.message}`);
+          upsertError = true;
+          break;
+        }
+      }
+    }
 
     if (upsertError) {
-      console.error('[MOTUS] Load failed — skipping sweep, last_verified_at NOT updated');
+      console.error('[MOTUS] Load failed — skipping sweeps, last_verified_at NOT updated');
       return;
     }
 
-    await batchedSweep(supabase, 'MOTUS', 'motus_suspensions', jobStartedAt);
+    await batchedSweep(supabase, 'MOTUS',         'motus_suspensions',         jobStartedAt);
+    await batchedSweep(supabase, 'MOTUS-NOTICES', 'motus_suspension_notices',  jobStartedAt);
 
-    console.log(`[MOTUS] Refresh complete — ${dbRows.length} rows`);
+    console.log(`[MOTUS] Refresh complete — ${dbRows.length} suspensions, ${dbNotices.length} notices`);
   } catch (e) {
     console.error('[MOTUS] Refresh failed:', e.message);
   }
