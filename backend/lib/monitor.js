@@ -1163,6 +1163,32 @@ export async function refreshSaferRevocations(supabase) {
   for (let y = cutoffYear; y <= currentYear; y++) yearFilters.push(`order2_effective_date LIKE '%/${y}'`);
   const where = `upper(order2_type_desc) LIKE '%INVOLUNTARY%' AND (order2_effective_date IS NULL OR ${yearFilters.join(' OR ')})`;
 
+  // Skip the full 434K-row load when Socrata reports the dataset hasn't changed since
+  // our last successful run.  A metadata fetch failure is non-fatal — we proceed anyway.
+  try {
+    const metaRes = await fetch(
+      `https://data.transportation.gov/api/views/${REVOKE_DS}.json`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    if (metaRes.ok) {
+      const { rowsUpdatedAt } = await metaRes.json();
+      const datasetUpdatedAt  = new Date(rowsUpdatedAt * 1000);
+      const { data: lastRow } = await supabase
+        .from('safer_revocations')
+        .select('last_verified_at')
+        .order('last_verified_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastRow && new Date(lastRow.last_verified_at) > datasetUpdatedAt) {
+        console.log(`[REVOKE] Dataset unchanged since ${datasetUpdatedAt.toISOString()} (last load: ${lastRow.last_verified_at}) — skipping`);
+        return;
+      }
+      console.log(`[REVOKE] Dataset rowsUpdatedAt ${datasetUpdatedAt.toISOString()} — proceeding with load`);
+    }
+  } catch (e) {
+    console.warn(`[REVOKE] Freshness check failed (${e.message}) — proceeding anyway`);
+  }
+
   try {
     const countUrl = `${SOCRATA_BASE}/${REVOKE_DS}.json?$select=count(*)&$where=${encodeURIComponent(where)}`;
     const countRes = await fetch(countUrl, { signal: AbortSignal.timeout(30_000) });
