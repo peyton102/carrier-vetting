@@ -396,6 +396,18 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     }
   }
 
+  // FMCSA contact info change (snapshot-based)
+  if (d.fmcsaContactChange) {
+    const { changedAt, diffs, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
+    const since = changedAt
+      ? new Date(changedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'an unknown date';
+    let msg = `FMCSA contact info changed since ${since}: ${diffs.join('; ')} — confirm carrier identity before booking`;
+    if (mcs150Recent && mcs150Date) msg += `; MCS-150 also updated ${mcs150Date}`;
+    msg += `. Report suspicious activity: ${FMCSA_COMPLAINT_URL}`;
+    yellow.push(msg);
+  }
+
   // Inspection volume safeguard
   if (lowVolume) {
     yellow.push(

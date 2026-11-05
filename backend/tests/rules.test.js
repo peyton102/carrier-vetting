@@ -106,6 +106,7 @@ const CLEAN = {
   fmcsaRegisteredEmail:      null,
   fmcsaEmailNotReviewed:     false,
   fmcsaEnforcementLoadedAt:  null,
+  fmcsaContactChange:        null,
   fmcsaChameleonMatches:     [],
 };
 
@@ -392,6 +393,39 @@ export async function runAll() {
     assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
     assert(r.reasons.some(s => s.includes('free provider')),
       `free-provider reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 29. Contact info changed (phone) → HOLD with "changed since" in reason
+  results.push(await t('contact info changed (phone) → HOLD', async () => {
+    const d = { ...CLEAN, fmcsaContactChange: {
+      changedAt:    '2026-10-15T14:00:00Z',
+      diffs:        ['Phone: "(555) 111-2222" → "(555) 999-0000"'],
+      mcs150Recent: false,
+      mcs150Date:   null,
+    }};
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('changed since')),
+      `"changed since" not in reasons: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 30. Contact info changed + MCS-150 recently updated → HOLD with MCS-150 in reason
+  results.push(await t('contact info changed + MCS-150 recent → HOLD with MCS-150 note', async () => {
+    const recentDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const d = { ...CLEAN, fmcsaContactChange: {
+      changedAt:    '2026-10-15T14:00:00Z',
+      diffs:        ['Email: "old@carrier.com" → "new@carrier.com"'],
+      mcs150Recent: true,
+      mcs150Date:   recentDate,
+    }};
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('MCS-150')),
+      `MCS-150 not in reasons: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));

@@ -233,6 +233,94 @@ async function getEnforcementTableStatus(supabase) {
   return { ok: true, loadedAt: [...timestamps].sort()[0] };  // oldest = weakest link
 }
 
+// Compare carrier's current CC contact fields against the stored snapshot for this DOT.
+// Returns null if no previous snapshot (first lookup — no flag, just records it) or if nothing changed.
+// Returns { changedAt, diffs, mcs150Recent, mcs150Date } if any field differs.
+// DB write is fire-and-forget — never blocks the vetting response.
+async function checkContactSnapshot(dot, self, supabase) {
+  const FIELDS = [
+    { key: 'phone',             label: 'Phone'     },
+    { key: 'email_address',     label: 'Email'     },
+    { key: 'phy_street',        label: 'Street'    },
+    { key: 'phy_city',          label: 'City'      },
+    { key: 'phy_state',         label: 'State'     },
+    { key: 'company_officer_1', label: 'Officer 1' },
+    { key: 'company_officer_2', label: 'Officer 2' },
+  ];
+
+  const t = Date.now();
+  const { data: snap } = await supabase
+    .from('carrier_contact_snapshots')
+    .select('phone,email_address,phy_street,phy_city,phy_state,company_officer_1,company_officer_2,last_seen_at')
+    .eq('dot_number', dot)
+    .maybeSingle();
+  console.log(`[TIMING][CHAM] Supabase snapshot read (DOT ${dot}): ${ms(t)}`);
+
+  const nrm = s => (s ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const now = new Date().toISOString();
+
+  if (!snap) {
+    // First time — record snapshot, no flag
+    supabase.from('carrier_contact_snapshots')
+      .insert({
+        dot_number:        dot,
+        phone:             self.phone             ?? null,
+        email_address:     self.email_address     ?? null,
+        phy_street:        self.phy_street        ?? null,
+        phy_city:          self.phy_city          ?? null,
+        phy_state:         self.phy_state         ?? null,
+        company_officer_1: self.company_officer_1 ?? null,
+        company_officer_2: self.company_officer_2 ?? null,
+        mcs150_date:       self.mcs150_date       ?? null,
+        first_seen_at:     now,
+        last_seen_at:      now,
+      })
+      .then(({ error }) => { if (error) console.warn('[CHAM] Snapshot insert failed:', error.message); })
+      .catch(e => console.warn('[CHAM] Snapshot insert exception:', e.message));
+    return null;
+  }
+
+  // Detect changed fields
+  const diffs = [];
+  for (const { key, label } of FIELDS) {
+    if (nrm(snap[key]) !== nrm(self[key])) {
+      diffs.push(`${label}: "${snap[key] ?? ''}" → "${self[key] ?? ''}"`);
+    }
+  }
+
+  // Update snapshot — always refresh last_seen_at; update fields + last_changed_at if changed
+  const updatePayload = {
+    phone:             self.phone             ?? null,
+    email_address:     self.email_address     ?? null,
+    phy_street:        self.phy_street        ?? null,
+    phy_city:          self.phy_city          ?? null,
+    phy_state:         self.phy_state         ?? null,
+    company_officer_1: self.company_officer_1 ?? null,
+    company_officer_2: self.company_officer_2 ?? null,
+    mcs150_date:       self.mcs150_date       ?? null,
+    last_seen_at:      now,
+    ...(diffs.length > 0 ? { last_changed_at: now } : {}),
+  };
+  supabase.from('carrier_contact_snapshots')
+    .update(updatePayload)
+    .eq('dot_number', dot)
+    .then(({ error }) => { if (error) console.warn('[CHAM] Snapshot update failed:', error.message); })
+    .catch(e => console.warn('[CHAM] Snapshot update exception:', e.message));
+
+  if (diffs.length === 0) return null;
+
+  // Check if MCS-150 was updated within 60 days (alongside a contact change)
+  const mcs150Date = self.mcs150_date ?? null;
+  const mcs150Recent = (() => {
+    if (!mcs150Date) return false;
+    const dt = new Date(mcs150Date);
+    if (isNaN(dt.getTime())) return false;
+    return (Date.now() - dt.getTime()) < 60 * 24 * 60 * 60 * 1000;
+  })();
+
+  return { changedAt: snap.last_seen_at, diffs, mcs150Recent, mcs150Date };
+}
+
 // A match is HOLD-worthy when, for at least one bad reason:
 //   condA — carrier is inactive OR the event is still active (not rescinded/reinstated)
 //   condB — the event is still active OR it falls within the lookback window
@@ -297,7 +385,7 @@ router.get('/:dot', async (req, res) => {
     // 1. Fetch carrier's own CC row to get contact fields
     const selfRows = await sq(CC_DS,
       `dot_number='${esc(dot)}'`,
-      'dot_number,legal_name,phone,email_address,company_officer_1,company_officer_2,phy_street,phy_city,phy_state,safety_rating',
+      'dot_number,legal_name,phone,email_address,company_officer_1,company_officer_2,phy_street,phy_city,phy_state,safety_rating,mcs150_date',
       1,
       `self CC row`
     );
@@ -355,18 +443,21 @@ router.get('/:dot', async (req, res) => {
       }
     }
 
-    // 2. Run all field searches in parallel, then deduplicate results by linked DOT.
+    // 2. Run all field searches AND snapshot check in parallel.
     // Results are processed in original search order so first-match-wins attribution
     // is deterministic (same as the old sequential loop).
     const excludeSelf = ` AND dot_number!='${esc(dot)}'`;
-    const searchResults = await Promise.all(searches.map(s =>
-      sq(CC_DS,
-        s.where + excludeSelf,
-        'dot_number,legal_name,status_code,safety_rating,phy_city,phy_state',
-        SHARED_SERVICE_THRESHOLD + 1,
-        `search field=${s.field}`
-      ).then(rows => ({ s, rows }))
-    ));
+    const [searchResults, contactChange] = await Promise.all([
+      Promise.all(searches.map(s =>
+        sq(CC_DS,
+          s.where + excludeSelf,
+          'dot_number,legal_name,status_code,safety_rating,phy_city,phy_state',
+          SHARED_SERVICE_THRESHOLD + 1,
+          `search field=${s.field}`
+        ).then(rows => ({ s, rows }))
+      )),
+      checkContactSnapshot(dot, self, supabase),
+    ]);
 
     // Build deduped list of unique linked carriers to check (in original search order)
     const matchMap   = new Map();  // key: dot number or __shared_${field}_${val}
@@ -424,11 +515,11 @@ router.get('/:dot', async (req, res) => {
     const fmcsaRegisteredEmail = self.email_address || null;
     supabase.from('chameleon_cache')
       .upsert({ dot_number: dot, pulled_at: pulledAt,
-                result: { notReviewed: false, matches, enforcementTablesLoadedAt, fmcsaRegisteredEmail } },
+                result: { notReviewed: false, matches, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange } },
                { onConflict: 'dot_number' })
       .then(({ error }) => { if (error) console.warn('[CHAMELEON] Cache write failed:', error.message); })
       .catch(e => console.warn('[CHAMELEON] Cache write exception:', e.message));
-    return res.json({ notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt, fmcsaRegisteredEmail });
+    return res.json({ notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange });
 
   } catch (e) {
     console.error('[CHAMELEON] error for DOT', dot, ':', e.message);

@@ -706,8 +706,18 @@ function chameleonSection(doc, L, W, d) {
   if (d.fmcsaEnforcementLoadedAt) {
     const asOf = new Date(d.fmcsaEnforcementLoadedAt);
     const asOfStr = isNaN(asOf.getTime()) ? d.fmcsaEnforcementLoadedAt
-      : asOf.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+      : asOf.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' }) + ' EST';
     dataRow(doc, L, W, 'Enforcement data as of', asOfStr);
+  }
+
+  if (d.fmcsaContactChange) {
+    const { changedAt, diffs, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
+    const since = changedAt
+      ? new Date(changedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })
+      : 'unknown date';
+    let text = `Changed since ${since}: ${diffs.join('; ')}`;
+    if (mcs150Recent && mcs150Date) text += ` — MCS-150 updated ${mcs150Date}`;
+    _twoColRow(doc, L, W, 'Helvetica-Bold', C.yellow, 'Contact info change (FMCSA):', 'Helvetica', C.yellow, text);
   }
 
   if (notReviewed) {
