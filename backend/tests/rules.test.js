@@ -437,6 +437,16 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // 32. Chameleon timed out → PDF renders "FMCSA slow to respond" (no crash)
+  // contactEmail cleared so the census-unreachable email HOLD doesn't fire (tested separately in test 28)
+  results.push(await t('chameleon timeout → PDF renders "slow to respond", no crash', async () => {
+    const d = { ...CLEAN, contactEmail: null, fmcsaChameleonTimedOut: true, fmcsaChameleonNotReviewed: true, fmcsaChameleonMatches: null, fmcsaEmailNotReviewed: true };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // 27. Skipped night: enforcementLoadedAt 30h ago (within 48h window) → APPROVE + PDF shows timestamp
   results.push(await t('skipped night: enforcement data 30h old → APPROVE, PDF renders timestamp', async () => {
     const thirtyHoursAgo = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();

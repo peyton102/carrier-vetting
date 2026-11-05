@@ -413,9 +413,11 @@ router.get('/:dot', async (req, res) => {
   const enforcementTablesLoadedAt = tableStatus.loadedAt;
 
   try {
-    // 1. Fetch carrier's own CC row to get contact fields
+    // 1. Fetch carrier's own CC row to get contact fields.
+    // dot_number is a Number column in Socrata — no quotes; string-quoted equality
+    // causes a full-table type-converting scan (~6s vs ~200ms with numeric literal).
     const selfRows = await sq(CC_DS,
-      `dot_number='${esc(dot)}'`,
+      `dot_number=${dot}`,
       'dot_number,legal_name,phone,email_address,company_officer_1,company_officer_2,phy_street,phy_city,phy_state,safety_rating,mcs150_date',
       1,
       `self CC row`
@@ -447,11 +449,13 @@ router.get('/:dot', async (req, res) => {
         where:      `phone='${esc(selfPhone)}'`,
       });
     }
-    if (selfEmail) {
+    if (self.email_address) {
+      // Exact match on the stored value — no upper() wrapper, which forces a full scan.
+      // Case is consistent: we're querying back the same value the CC dataset returned.
       searches.push({
         field:      'email',
         displayVal: self.email_address,
-        where:      `upper(email_address)='${esc(selfEmail)}'`,
+        where:      `email_address='${esc(self.email_address)}'`,
       });
     }
     if (selfStreet && selfCity && selfState) {

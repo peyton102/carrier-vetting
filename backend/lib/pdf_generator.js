@@ -332,8 +332,9 @@ export function generateVettingPDF(opts) {
     dataRow(doc, L, W, 'Contact Email (dispatcher)', d.contactEmail);
     dataRow(doc, L, W, 'Registered Email (FMCSA)',
       d.fmcsaRegisteredEmail ||
-      (d.fmcsaEmailNotReviewed ? 'Not reviewed (couldn\'t reach FMCSA)' :
-        (d.contactEmail ? 'No email on FMCSA record' : null)));
+      (d.fmcsaEmailNotReviewed
+        ? (d.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed (couldn\'t reach FMCSA)')
+        : (d.contactEmail ? 'No email on FMCSA record' : null)));
 
     // Email match check + identity summary
     {
@@ -730,7 +731,8 @@ function chameleonSection(doc, L, W, d) {
   if (notReviewed) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'Carrier identity check (FMCSA):',
-      'Helvetica-Oblique', C.gray, 'Not reviewed (no data)');
+      'Helvetica-Oblique', C.gray,
+      d.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed');
     return;
   }
 
