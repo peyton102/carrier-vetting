@@ -115,15 +115,26 @@ async function getBadReasons(dot, ccRow, supabase) {
     reasons.push({ type: 'rating', description: 'Safety rating: Conditional',   date: null, rescindDate: null, stillActive: isInactive, eventDate: null });
   }
 
-  // NOTE: the 6 queries below are sequential (each awaited individually)
-  // OOS orders — Supabase mirror of p2mt-9ige (refreshed daily)
-  let t = Date.now();
-  const { data: oosRows } = await supabase
-    .from('oos_orders')
-    .select('oos_reason,oos_date,rescind_date')
-    .eq('dot_number', dot)
-    .limit(5);
-  console.log(`[TIMING][CHAM]   Supabase oos_orders (linked DOT ${dot}): ${ms(t)}`);
+  // Run all 6 Supabase queries in parallel
+  const tQueries = Date.now();
+  const [
+    { data: oosRows },
+    { data: revRows },
+    { data: noticeRows },
+    { data: motusRows },
+    { data: motusNoticeRows },
+    { data: lapsedRow },
+  ] = await Promise.all([
+    supabase.from('oos_orders')              .select('oos_reason,oos_date,rescind_date')  .eq('dot_number', dot).limit(5),
+    supabase.from('safer_revocations')       .select('order_type_desc,effective_date')    .eq('dot_number', dot).limit(5),
+    supabase.from('safer_revocation_notices').select('order_type_desc,serve_date')        .eq('dot_number', dot).limit(5),
+    supabase.from('motus_suspensions')       .select('order_type_desc,effective_date')    .eq('dot_number', dot).limit(5),
+    supabase.from('motus_suspension_notices').select('order_type_desc,serve_date')        .eq('dot_number', dot).limit(5),
+    supabase.from('insurance_cancellations') .select('effective_date').eq('dot_number', dot).eq('status', 'lapsed').maybeSingle(),
+  ]);
+  console.log(`[TIMING][CHAM]   Supabase 6 queries parallel (linked DOT ${dot}): ${ms(tQueries)}`);
+
+  // OOS orders
   for (const o of (oosRows ?? [])) {
     const rescindDate = o.rescind_date ?? null;
     reasons.push({
@@ -137,13 +148,6 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // SAFER involuntary revocations — confirmed (order2_effective_date present)
-  t = Date.now();
-  const { data: revRows } = await supabase
-    .from('safer_revocations')
-    .select('order_type_desc,effective_date')
-    .eq('dot_number', dot)
-    .limit(5);
-  console.log(`[TIMING][CHAM]   Supabase safer_revocations (linked DOT ${dot}): ${ms(t)}`);
   for (const r of (revRows ?? [])) {
     const d = r.effective_date ?? null;
     reasons.push({ type: 'revocation', description: r.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
@@ -151,13 +155,6 @@ async function getBadReasons(dot, ccRow, supabase) {
 
   // SAFER revocation notices — order served but no effective date on record.
   // stillActive: false → informational only, never HOLD.
-  t = Date.now();
-  const { data: noticeRows } = await supabase
-    .from('safer_revocation_notices')
-    .select('order_type_desc,serve_date')
-    .eq('dot_number', dot)
-    .limit(5);
-  console.log(`[TIMING][CHAM]   Supabase safer_revocation_notices (linked DOT ${dot}): ${ms(t)}`);
   for (const n of (noticeRows ?? [])) {
     const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
     reasons.push({
@@ -171,26 +168,12 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // Motus involuntary suspensions — confirmed (order1_effective_date present)
-  t = Date.now();
-  const { data: motusRows } = await supabase
-    .from('motus_suspensions')
-    .select('order_type_desc,effective_date')
-    .eq('dot_number', dot)
-    .limit(5);
-  console.log(`[TIMING][CHAM]   Supabase motus_suspensions (linked DOT ${dot}): ${ms(t)}`);
   for (const m of (motusRows ?? [])) {
     const d = m.effective_date ?? null;
     reasons.push({ type: 'suspension', description: m.order_type_desc, date: d, rescindDate: null, stillActive: isInactive, eventDate: d });
   }
 
   // Motus suspension notices — informational only
-  t = Date.now();
-  const { data: motusNoticeRows } = await supabase
-    .from('motus_suspension_notices')
-    .select('order_type_desc,serve_date')
-    .eq('dot_number', dot)
-    .limit(5);
-  console.log(`[TIMING][CHAM]   Supabase motus_suspension_notices (linked DOT ${dot}): ${ms(t)}`);
   for (const n of (motusNoticeRows ?? [])) {
     const serveLabel = n.serve_date ? `served ${n.serve_date}` : '(serve date unknown)';
     reasons.push({
@@ -204,19 +187,11 @@ async function getBadReasons(dot, ccRow, supabase) {
   }
 
   // Lapsed BIPD — insurance_cancellations table (refreshed daily from FMCSA BMC-35)
-  t = Date.now();
-  const { data: lapsedRow } = await supabase
-    .from('insurance_cancellations')
-    .select('effective_date')
-    .eq('dot_number', dot)
-    .eq('status', 'lapsed')
-    .maybeSingle();
-  console.log(`[TIMING][CHAM]   Supabase insurance_cancellations (linked DOT ${dot}): ${ms(t)}`);
   if (lapsedRow) {
     reasons.push({ type: 'lapsed_bipd', description: 'Lapsed BIPD insurance, no replacement on file', date: lapsedRow.effective_date ?? null, rescindDate: null, stillActive: true, eventDate: lapsedRow.effective_date ?? null });
   }
 
-  console.log(`[TIMING][CHAM]   getBadReasons total (linked DOT ${dot}): ${ms(tTotal)} — 6 sequential Supabase queries`);
+  console.log(`[TIMING][CHAM]   getBadReasons total (linked DOT ${dot}): ${ms(tTotal)} — 6 parallel Supabase queries`);
   return reasons;
 }
 
@@ -375,21 +350,25 @@ router.get('/:dot', async (req, res) => {
       }
     }
 
-    // 2. Run each search; deduplicate results by linked DOT
-    const matchMap = new Map();  // key: dot number or __shared_${field}_${val}
-
-    for (const s of searches) {
-      const excludeSelf = ` AND dot_number!='${esc(dot)}'`;
-      // Fetch up to THRESHOLD+1 rows; if we hit THRESHOLD+1 it's a shared service
-      const rows = await sq(CC_DS,
+    // 2. Run all field searches in parallel, then deduplicate results by linked DOT.
+    // Results are processed in original search order so first-match-wins attribution
+    // is deterministic (same as the old sequential loop).
+    const excludeSelf = ` AND dot_number!='${esc(dot)}'`;
+    const searchResults = await Promise.all(searches.map(s =>
+      sq(CC_DS,
         s.where + excludeSelf,
         'dot_number,legal_name,status_code,safety_rating,phy_city,phy_state',
         SHARED_SERVICE_THRESHOLD + 1,
         `search field=${s.field}`
-      );
+      ).then(rows => ({ s, rows }))
+    ));
 
+    // Build deduped list of unique linked carriers to check (in original search order)
+    const matchMap   = new Map();  // key: dot number or __shared_${field}_${val}
+    const toCheck    = [];         // { linkedDot, row, s } — unique DOTs only
+
+    for (const { s, rows } of searchResults) {
       if (rows.length > SHARED_SERVICE_THRESHOLD) {
-        // Shared service — one summary informational entry per field value
         const key = `__shared_${s.field}_${s.displayVal}`;
         if (!matchMap.has(key)) {
           matchMap.set(key, {
@@ -406,23 +385,31 @@ router.get('/:dot', async (req, res) => {
         continue;
       }
 
-      // ≤ threshold: check each individually
       for (const row of rows) {
         const linkedDot = row.dot_number;
         if (matchMap.has(linkedDot)) continue;  // already captured via another field
-
-        const badReasons = await getBadReasons(linkedDot, row, supabase);
-        matchMap.set(linkedDot, {
-          dot:          linkedDot,
-          name:         row.legal_name ?? '',
-          status:       statusLabel(row.status_code),
-          matchField:   s.field,
-          matchValue:   s.displayVal,
-          sharedService: false,
-          isHold:        isHoldWorthy(row, badReasons, lookbackDays),
-          badReasons,
-        });
+        matchMap.set(linkedDot, null);           // reserve slot; filled below
+        toCheck.push({ linkedDot, row, s });
       }
+    }
+
+    // Check all unique linked carriers in parallel
+    const badReasonsAll = await Promise.all(
+      toCheck.map(({ linkedDot, row }) => getBadReasons(linkedDot, row, supabase))
+    );
+    for (let i = 0; i < toCheck.length; i++) {
+      const { linkedDot, row, s } = toCheck[i];
+      const badReasons = badReasonsAll[i];
+      matchMap.set(linkedDot, {
+        dot:          linkedDot,
+        name:         row.legal_name ?? '',
+        status:       statusLabel(row.status_code),
+        matchField:   s.field,
+        matchValue:   s.displayVal,
+        sharedService: false,
+        isHold:        isHoldWorthy(row, badReasons, lookbackDays),
+        badReasons,
+      });
     }
 
     const matches  = [...matchMap.values()];
