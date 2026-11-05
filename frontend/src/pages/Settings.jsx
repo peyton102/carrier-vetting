@@ -393,6 +393,53 @@ export default function Settings({ settings, onSave }) {
           </div>
         </div>
 
+        {/* ── Fleet Consistency ── */}
+        <div style={s.card}>
+          <div style={s.cardHead}>Fleet Consistency Thresholds</div>
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 0, marginBottom: 16 }}>
+            Carriers whose MCS-150 annual mileage per power unit falls outside the range below are flagged for review.
+            Skipped automatically for carriers whose MCS-150 mileage year is the same as or before their authority grant year (new entrants).
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px' }}>
+            <div>
+              <label style={s.label}>Min mileage per unit (annual)</label>
+              <input
+                type="number" min={0}
+                value={form.mileagePerUnitMin ?? ''}
+                onChange={e => set('mileagePerUnitMin', parseInt(e.target.value, 10))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Below this → Hold for review. Default: 1,000 mi.
+              </p>
+            </div>
+            <div>
+              <label style={s.label}>Max mileage per unit (annual)</label>
+              <input
+                type="number" min={0}
+                value={form.mileagePerUnitMax ?? ''}
+                onChange={e => set('mileagePerUnitMax', parseInt(e.target.value, 10))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Above this → Hold for review. Default: 250,000 mi.
+              </p>
+            </div>
+            <div>
+              <label style={s.label}>Max drivers per power unit</label>
+              <input
+                type="number" min={1} step={0.5}
+                value={form.driversPerTruckMax ?? ''}
+                onChange={e => set('driversPerTruckMax', parseFloat(e.target.value))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Above this ratio → informational note only (no Hold). Default: 3×.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* ── Alert Recipients ── */}
         <div style={s.card}>
           <div style={s.cardHead}>Monitoring Alert Recipients</div>

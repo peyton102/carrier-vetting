@@ -49,6 +49,9 @@ router.put('/', async (req, res, next) => {
       oos_hard_block_driver:                     floatMin(b.oosHardBlockDriver,  D.oosHardBlockDriver,  1),
       inspection_volume_min:                     posInt(b.inspectionVolumeMin,   D.inspectionVolumeMin),
       alert_recipients:                          (b.alertRecipients ?? '').trim().slice(0, 2000),
+      mileage_per_unit_min:                      posInt(b.mileagePerUnitMin,    D.mileagePerUnitMin),
+      mileage_per_unit_max:                      posInt(b.mileagePerUnitMax,    D.mileagePerUnitMax),
+      drivers_per_truck_max:                     floatMin(b.driversPerTruckMax, D.driversPerTruckMax, 1),
       updated_at:                                new Date().toISOString(),
     };
 

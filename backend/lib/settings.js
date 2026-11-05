@@ -39,6 +39,9 @@ export function rowToCfg(row) {
     bipdCancelDays:                         row.bipd_cancel_days,
     chameleonLookbackDays:                  row.chameleon_lookback_days,
     alertRecipients:                        row.alert_recipients ?? '',
+    mileagePerUnitMin:                      row.mileage_per_unit_min,
+    mileagePerUnitMax:                      row.mileage_per_unit_max,
+    driversPerTruckMax:                     row.drivers_per_truck_max,
   };
 }
 
