@@ -52,6 +52,10 @@ export const DEFAULT_SETTINGS = {
   // A bad event (OOS, revocation) older than this AND no longer active → informational only.
   // Default 1095 = 3 years.
   chameleonLookbackDays: 1095,
+  // ── Fleet consistency (MCS-150 mileage vs power units) ───────────────────
+  mileagePerUnitMin:  1_000,    // mi/year below this → HOLD
+  mileagePerUnitMax:  250_000,  // mi/year above this → HOLD
+  driversPerTruckMax: 3,        // drivers/unit above this → informational note
   // ── Alert email recipients ────────────────────────────────────────────────
   alertRecipients: '',
 };
@@ -482,6 +486,50 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       yellow.push(
         `Identity linkage: DOT ${m.dot} (${m.name}) shares ${m.matchField} — ${reasons}`
       );
+    }
+  }
+
+  // Fleet consistency (MCS-150 mileage vs power units)
+  {
+    const units    = parseInt(d.powerUnits, 10);
+    const drivers  = d.totalDrivers     != null && d.totalDrivers     !== '' ? parseInt(d.totalDrivers, 10)     : NaN;
+    const mileage  = d.mcs150Mileage    != null && d.mcs150Mileage    !== '' ? parseInt(d.mcs150Mileage, 10)    : NaN;
+    const milYear  = d.mcs150MileageYear != null && d.mcs150MileageYear !== '' ? parseInt(d.mcs150MileageYear, 10) : NaN;
+    const authYear = d.authorityGrantDate ? parseInt(d.authorityGrantDate.slice(0, 4), 10) : NaN;
+    const milMin   = parseInt(cfg.mileagePerUnitMin,  10) || 1_000;
+    const milMax   = parseInt(cfg.mileagePerUnitMax,  10) || 250_000;
+    const drvMax   = parseInt(cfg.driversPerTruckMax, 10) || 3;
+
+    if (units > 0) {
+      if (isNaN(mileage)) {
+        notes.push('Mileage not evaluated: not reported on MCS-150');
+      } else if (isNaN(milYear)) {
+        notes.push('Mileage not evaluated: mileage year not reported');
+      } else if (!isNaN(authYear) && milYear <= authYear) {
+        notes.push(`Mileage not evaluated: mileage year (${milYear}) is same as or before authority grant year (${authYear})`);
+      } else {
+        const mpu = mileage / units;
+        if (mpu < milMin || mpu > milMax) {
+          yellow.push(
+            `Reported mileage doesn't match fleet size: ` +
+            `${mileage.toLocaleString()} mi / ${units} unit${units === 1 ? '' : 's'} = ` +
+            `${Math.round(mpu).toLocaleString()} mi/unit ` +
+            `(expected ${milMin.toLocaleString()}–${milMax.toLocaleString()}) — route to supervisor for review`
+          );
+        }
+      }
+    }
+
+    if (units > 0 && !isNaN(drivers)) {
+      if (drivers === 0) {
+        notes.push(`Fleet: ${units} power unit${units === 1 ? '' : 's'}, 0 drivers reported — verify fleet data`);
+      } else if (drivers > units * drvMax) {
+        notes.push(`Fleet: ${drivers} driver${drivers === 1 ? '' : 's'} for ${units} power unit${units === 1 ? '' : 's'} (${(drivers / units).toFixed(1)}× ratio) — informational`);
+      }
+    }
+
+    if (!isNaN(milYear) && new Date().getFullYear() - milYear > 2) {
+      notes.push(`Fleet data last updated ${milYear} — MCS-150 mileage may be stale`);
     }
   }
 

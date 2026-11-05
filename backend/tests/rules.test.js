@@ -103,6 +103,9 @@ const CLEAN = {
   activeFederalOOS:          false,
   bipdCancelLapsed:          false,
   bipdCancelPending:         null,
+  totalDrivers:              '5',
+  mcs150Mileage:             '150000',
+  mcs150MileageYear:         '2025',
   fmcsaRegisteredEmail:      null,
   fmcsaEmailNotReviewed:     false,
   fmcsaEnforcementLoadedAt:  null,
@@ -433,6 +436,65 @@ export async function runAll() {
     const d = { ...CLEAN, fmcsaContactChange: { firstSeen: '2026-11-01T12:00:00Z' } };
     const r = runVettingRules(d, CFG);
     assert(r.verdict === 'APPROVE', `want APPROVE for firstSeen, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 33. Mileage too low (< 1,000/unit) → HOLD
+  results.push(await t('fleet: mileage too low (500/unit) → HOLD', async () => {
+    const d = { ...CLEAN, mcs150Mileage: '5000', powerUnits: '10' };  // 500/unit
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes("doesn't match fleet size")),
+      `mileage reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 34. Mileage too high (> 250,000/unit) → HOLD
+  results.push(await t('fleet: mileage too high (300,000/unit) → HOLD', async () => {
+    const d = { ...CLEAN, mcs150Mileage: '3000000', powerUnits: '10' };  // 300,000/unit
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes("doesn't match fleet size")),
+      `mileage reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 35. Mileage year same as authority year → no HOLD, note pushed
+  results.push(await t('fleet: mileage year same as authority year → APPROVE (skipped)', async () => {
+    const d = { ...CLEAN, mcs150Mileage: '5000', mcs150MileageYear: '2020', authorityGrantDate: '2020-03-15' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.notes.some(s => s.includes('Mileage not evaluated')),
+      `expected mileage-not-evaluated note: ${r.notes.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 36. Drivers far over units (informational, no HOLD)
+  results.push(await t('fleet: drivers 4× units → APPROVE (informational note)', async () => {
+    const d = { ...CLEAN, totalDrivers: '40', powerUnits: '10' };  // 4× > driversPerTruckMax 3
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.notes.some(s => s.includes('ratio')),
+      `expected driver ratio note: ${r.notes.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 37. Karelia-like new carrier: authority 2025, mileage year 2025, low mileage → APPROVE (skipped)
+  results.push(await t('fleet: new carrier (Karelia-like) — mileage year ≤ authority year → APPROVE', async () => {
+    const d = { ...CLEAN,
+      powerUnits: '3', totalDrivers: '2',
+      mcs150Mileage: '18000', mcs150MileageYear: '2025',
+      authorityGrantDate: '2025-02-10',
+    };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.notes.some(s => s.includes('Mileage not evaluated')),
+      `expected mileage-not-evaluated note: ${r.notes.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));

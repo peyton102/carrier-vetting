@@ -437,6 +437,54 @@ export function generateVettingPDF(opts) {
     dataRow(doc, L, W, 'Power Units',
       d.powerUnits != null && d.powerUnits !== '' ? String(d.powerUnits) : null,
       src('powerUnits'));
+    dataRow(doc, L, W, 'Drivers (reported)',
+      d.totalDrivers != null && d.totalDrivers !== '' ? String(d.totalDrivers) : null,
+      d.totalDrivers != null && d.totalDrivers !== '' ? 'FMCSA' : null);
+
+    // Annual mileage row + inline fleet notes
+    {
+      const milRaw  = d.mcs150Mileage    != null && d.mcs150Mileage    !== '' ? parseInt(d.mcs150Mileage, 10)    : NaN;
+      const milYear = d.mcs150MileageYear != null && d.mcs150MileageYear !== '' ? parseInt(d.mcs150MileageYear, 10) : NaN;
+      const units   = parseInt(d.powerUnits, 10);
+      const authYear = d.authorityGrantDate ? parseInt(d.authorityGrantDate.slice(0, 4), 10) : NaN;
+      const curYear  = new Date().getFullYear();
+
+      const milDisplay = !isNaN(milRaw)
+        ? `${milRaw.toLocaleString()} mi${!isNaN(milYear) ? ` (${milYear})` : ''}`
+        : null;
+      dataRow(doc, L, W, 'Annual Mileage (MCS-150)', milDisplay,
+        milDisplay ? 'FMCSA' : null);
+
+      // Fleet notes shown in gray italic below the mileage row
+      const fleetNotes = [];
+      if (units > 0) {
+        if (isNaN(milRaw)) {
+          fleetNotes.push('Mileage not evaluated: not reported on MCS-150');
+        } else if (isNaN(milYear)) {
+          fleetNotes.push('Mileage not evaluated: mileage year not reported');
+        } else if (!isNaN(authYear) && milYear <= authYear) {
+          fleetNotes.push(`Mileage not evaluated: mileage year (${milYear}) is same as or before authority grant year (${authYear})`);
+        } else if (!isNaN(milRaw) && !isNaN(milYear)) {
+          const mpu = milRaw / units;
+          if (mpu < (cfg.mileagePerUnitMin || 1000) || mpu > (cfg.mileagePerUnitMax || 250000)) {
+            // Already flagged via HOLD reasons — no duplicate note here
+          }
+        }
+      }
+      if (!isNaN(milYear) && curYear - milYear > 2) {
+        fleetNotes.push(`Fleet data last updated ${milYear} — MCS-150 mileage may be stale`);
+      }
+      const drivers = d.totalDrivers != null && d.totalDrivers !== '' ? parseInt(d.totalDrivers, 10) : NaN;
+      if (units > 0 && !isNaN(drivers) && drivers === 0) {
+        fleetNotes.push(`${units} power unit${units === 1 ? '' : 's'}, 0 drivers reported — verify fleet data`);
+      } else if (units > 0 && !isNaN(drivers) && drivers > units * (cfg.driversPerTruckMax || 3)) {
+        fleetNotes.push(`${drivers} driver${drivers === 1 ? '' : 's'} for ${units} unit${units === 1 ? '' : 's'} (${(drivers / units).toFixed(1)}× ratio) — informational`);
+      }
+      for (const fn of fleetNotes) {
+        _twoColRow(doc, L, W, 'Helvetica-Bold', C.darkgray, 'Fleet note:', 'Helvetica-Oblique', C.gray, fn);
+      }
+    }
+
     {
       const inspSrcLabel = d.saferSnapshotDate ? `SAFER (as of ${d.saferSnapshotDate})` : src('inspections24mo');
       const veh = d.inspections24mo       != null && d.inspections24mo       !== '' ? String(d.inspections24mo)       : null;
