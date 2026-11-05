@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { DEFAULT_SETTINGS, classifyOos } from './rules_engine.js';
+import { DEFAULT_SETTINGS, classifyOos, classifyEmailMatch } from './rules_engine.js';
 
 // Colors
 const C = {
@@ -336,51 +336,14 @@ export function generateVettingPDF(opts) {
         ? (d.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed (couldn\'t reach FMCSA)')
         : (d.contactEmail ? 'No email on FMCSA record' : null)));
 
-    // Email match check + identity summary
+    // Email match check + identity summary.
+    // Uses classifyEmailMatch() from rules_engine.js — single source of truth so the
+    // PDF label and the vetting verdict always agree on whether an email is a match.
     {
-      const FREE_EMAILS = new Set([
-        'gmail.com','yahoo.com','hotmail.com','outlook.com','live.com',
-        'aol.com','icloud.com','protonmail.com','proton.me','me.com',
-        'ymail.com','msn.com','mail.com','inbox.com','gmx.com','gmx.net',
-        'zoho.com','fastmail.com',
-      ]);
-      const rawContact    = (d.contactEmail   || '').replace(/\s/g, '').toLowerCase();
-      const contactDomain = rawContact.split('@').pop() || '';
-      const rawFmcsa      = d.fmcsaRegisteredEmail
-        ? String(d.fmcsaRegisteredEmail).replace(/\s/g, '').toLowerCase()
-        : null;
-      const fmcsaDomain = rawFmcsa ? rawFmcsa.split('@').pop() : null;
+      const emailClass = classifyEmailMatch(d);
 
-      if (rawContact) {
-        let emailMatchText, emailMatchColor;
-        if (rawFmcsa) {
-          if (rawContact === rawFmcsa) {
-            emailMatchText  = 'MATCH — exact match with FMCSA registered email';
-            emailMatchColor = C.green;
-          } else if (contactDomain === fmcsaDomain) {
-            emailMatchText  = `MATCH — same registered domain (${contactDomain})`;
-            emailMatchColor = C.green;
-          } else if (FREE_EMAILS.has(contactDomain)) {
-            emailMatchText  = `FREE PROVIDER (${contactDomain}) — does not match FMCSA registered email`;
-            emailMatchColor = C.yellow;
-          } else {
-            emailMatchText  = `DOMAIN MISMATCH — contact: ${contactDomain} ≠ FMCSA: ${fmcsaDomain}`;
-            emailMatchColor = C.yellow;
-          }
-        } else if (d.fmcsaEmailNotReviewed) {
-          const isFree = FREE_EMAILS.has(contactDomain);
-          emailMatchText  = isFree
-            ? `FREE PROVIDER (${contactDomain}) — census unreachable, identity unverifiable`
-            : `NOT REVIEWED — census unreachable, domain (${contactDomain}) unverified`;
-          emailMatchColor = C.yellow;
-        } else {
-          const isFree = FREE_EMAILS.has(contactDomain);
-          emailMatchText  = isFree
-            ? `FREE PROVIDER (${contactDomain}) — identity unverifiable by domain`
-            : `Company domain (${contactDomain}) — no FMCSA email to compare`;
-          emailMatchColor = isFree ? C.yellow : C.green;
-        }
-        twoColLabelValue(doc, L, W, 'Email Match:', emailMatchText, emailMatchColor, true);
+      if (emailClass) {
+        twoColLabelValue(doc, L, W, 'Email Match:', emailClass.pdfLabel, emailClass.match ? C.green : C.yellow, true);
       } else {
         dataRow(doc, L, W, 'Email Match', null);
       }
@@ -389,23 +352,7 @@ export function generateVettingPDF(opts) {
       const contactPhone  = (d.contactPhone || '').replace(/\D/g, '');
       const fmcsaPhone    = (d.fmcsaPhone   || '').replace(/\D/g, '');
       const phoneMismatch = contactPhone && fmcsaPhone && contactPhone !== fmcsaPhone;
-
-      let emailIssue = null;
-      if (rawContact && contactDomain) {
-        if (rawFmcsa) {
-          if (rawContact !== rawFmcsa && contactDomain !== fmcsaDomain) {
-            emailIssue = FREE_EMAILS.has(contactDomain)
-              ? `Email: Free provider, no match (${contactDomain})`
-              : `Email: Domain mismatch (${contactDomain} ≠ ${fmcsaDomain})`;
-          }
-        } else if (d.fmcsaEmailNotReviewed) {
-          emailIssue = FREE_EMAILS.has(contactDomain)
-            ? `Email: Free provider, census unreachable (${contactDomain})`
-            : `Email: Unverified domain, census unreachable (${contactDomain})`;
-        } else if (FREE_EMAILS.has(contactDomain)) {
-          emailIssue = `Email: Free consumer domain (${contactDomain})`;
-        }
-      }
+      const emailIssue    = emailClass?.summaryIssue ?? null;
 
       let summaryText, summaryColor;
       if (!phoneMismatch && !emailIssue) {

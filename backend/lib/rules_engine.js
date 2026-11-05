@@ -99,6 +99,94 @@ export function classifyOos(val, natAvg, multiplier, hardBlock, absFloor = null)
 }
 
 /**
+ * Classify a dispatcher's contact email against the FMCSA registered email.
+ * Single source of truth used by both runVettingRules (hold decisions) and
+ * pdf_generator (Email Match label), so they can never disagree.
+ *
+ * Returns null when d.contactEmail is absent/empty.
+ * Otherwise returns:
+ *   {
+ *     match:        boolean    — true = no hold from this check
+ *     pdfLabel:     string     — display text for the "Email Match:" row on the cert
+ *     rulesMessage: string|null — verbose reason for the yellow/hold log (no URL suffix); null when match
+ *     summaryIssue: string|null — one-phrase text for the identity summary; null when match
+ *   }
+ */
+export function classifyEmailMatch(d) {
+  if (!d.contactEmail) return null;
+  const rawContact    = String(d.contactEmail).replace(/\s/g, '').toLowerCase();
+  if (!rawContact) return null;
+  const contactDomain = rawContact.split('@').pop() || '';
+  const rawFmcsa      = d.fmcsaRegisteredEmail
+    ? String(d.fmcsaRegisteredEmail).replace(/\s/g, '').toLowerCase()
+    : null;
+  const fmcsaDomain   = rawFmcsa ? rawFmcsa.split('@').pop() : null;
+  const isFree        = FREE_EMAIL_DOMAINS.has(contactDomain);
+
+  if (rawFmcsa) {
+    // Rule 1: exact address match (works even on free providers)
+    if (rawContact === rawFmcsa) {
+      return { match: true, pdfLabel: 'MATCH \u2014 exact match with FMCSA registered email', rulesMessage: null, summaryIssue: null };
+    }
+    // Rule 2: same domain — only for company domains; free providers are shared infrastructure
+    if (contactDomain === fmcsaDomain && !FREE_EMAIL_DOMAINS.has(fmcsaDomain)) {
+      return { match: true, pdfLabel: `MATCH \u2014 same registered domain (${contactDomain})`, rulesMessage: null, summaryIssue: null };
+    }
+    // Rule 3: free provider, doesn't match registered email
+    if (isFree) {
+      return {
+        match: false,
+        pdfLabel:     `FREE PROVIDER (${contactDomain}) \u2014 does not match FMCSA registered email`,
+        rulesMessage: `Contact email uses a free provider (${contactDomain}) and does not match the FMCSA registered email \u2014 ` +
+                      `carrier identity cannot be verified by email domain. ` +
+                      `Confirm identity through FMCSA records or phone.`,
+        summaryIssue: `Email: Free provider, no match (${contactDomain})`,
+      };
+    }
+    // Rule 4: different company domain — possible lookalike
+    return {
+      match: false,
+      pdfLabel:     `DOMAIN MISMATCH \u2014 contact: ${contactDomain} \u2260 FMCSA: ${fmcsaDomain}`,
+      rulesMessage: `Email domain (${contactDomain}) doesn't match FMCSA record (registered domain: ${fmcsaDomain}) \u2014 ` +
+                    `possible lookalike domain; confirm carrier identity before booking.`,
+      summaryIssue: `Email: Domain mismatch (${contactDomain} \u2260 ${fmcsaDomain})`,
+    };
+  }
+
+  if (d.fmcsaEmailNotReviewed) {
+    if (isFree) return {
+      match: false,
+      pdfLabel:     `FREE PROVIDER (${contactDomain}) \u2014 census unreachable, identity unverifiable`,
+      rulesMessage: `Contact email uses a free provider (${contactDomain}) \u2014 carrier identity cannot be verified by email domain. ` +
+                    `Confirm identity through FMCSA records or phone.`,
+      summaryIssue: `Email: Free provider, census unreachable (${contactDomain})`,
+    };
+    return {
+      match: false,
+      pdfLabel:     `NOT REVIEWED \u2014 census unreachable, domain (${contactDomain}) unverified`,
+      rulesMessage: `Email domain (${contactDomain}) could not be verified against FMCSA records \u2014 census was unreachable. ` +
+                    `Confirm carrier identity before booking.`,
+      summaryIssue: `Email: Unverified domain, census unreachable (${contactDomain})`,
+    };
+  }
+
+  // Rule 5: confirmed no FMCSA email on file
+  if (isFree) return {
+    match: false,
+    pdfLabel:     `FREE PROVIDER (${contactDomain}) \u2014 identity unverifiable by domain`,
+    rulesMessage: `Contact email uses a free provider (${contactDomain}) \u2014 carrier identity cannot be verified by email domain. ` +
+                  `Confirm identity through FMCSA records or phone.`,
+    summaryIssue: `Email: Free consumer domain (${contactDomain})`,
+  };
+  return {
+    match: true,
+    pdfLabel:     `Company domain (${contactDomain}) \u2014 no FMCSA email to compare`,
+    rulesMessage: null,
+    summaryIssue: null,
+  };
+}
+
+/**
  * Run the tri-tier (RED / YELLOW / GREEN) vetting rules.
  *
  * RED    → REJECT, canOverride: false — no one can override
@@ -339,65 +427,11 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     }
   }
 
-  // Contact email — verified against FMCSA registered email (from Company Census File).
-  // Rules (in priority order):
-  //   1. Exact match with FMCSA email (case/space insensitive) → verified, no HOLD
-  //   2. Same domain as FMCSA email → verified, no HOLD
-  //   3. Free provider that doesn't match FMCSA email → HOLD
-  //   4. Different company domain than FMCSA email → HOLD (catches lookalikes)
-  //   5. No FMCSA email on file → fall back to free-provider-only check (today's behavior)
-  if (d.contactEmail) {
-    const rawContact    = String(d.contactEmail).replace(/\s/g, '').toLowerCase();
-    const contactDomain = rawContact.split('@').pop();
-    const rawFmcsa      = d.fmcsaRegisteredEmail
-      ? String(d.fmcsaRegisteredEmail).replace(/\s/g, '').toLowerCase()
-      : null;
-    const fmcsaDomain = rawFmcsa ? rawFmcsa.split('@').pop() : null;
-
-    if (rawFmcsa) {
-      if (rawContact === rawFmcsa || (contactDomain === fmcsaDomain && !FREE_EMAIL_DOMAINS.has(fmcsaDomain))) {
-        // Rules 1 & 2: exact match, or same company domain (never applies to free providers —
-        // gmail.com / yahoo.com / etc. are shared infrastructure, not identity evidence)
-      } else if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
-        // Rule 3: free provider that doesn't match the registered email
-        yellow.push(
-          `Contact email uses a free provider (${contactDomain}) and does not match the FMCSA registered email — ` +
-          `carrier identity cannot be verified by email domain. ` +
-          `Confirm identity through FMCSA records or phone. ` +
-          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-        );
-      } else {
-        // Rule 4: different company domain — possible lookalike
-        yellow.push(
-          `Email domain (${contactDomain}) doesn't match FMCSA record (registered domain: ${fmcsaDomain}) — ` +
-          `possible lookalike domain; confirm carrier identity before booking. ` +
-          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-        );
-      }
-    } else if (d.fmcsaEmailNotReviewed) {
-      // Census lookup failed or timed out — cannot confirm whether email matches FMCSA records
-      if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
-        yellow.push(
-          `Contact email uses a free provider (${contactDomain}) — carrier identity cannot be verified by email domain. ` +
-          `Confirm identity through FMCSA records or phone. ` +
-          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-        );
-      } else {
-        yellow.push(
-          `Email domain (${contactDomain}) could not be verified against FMCSA records — census was unreachable. ` +
-          `Confirm carrier identity before booking. ` +
-          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-        );
-      }
-    } else {
-      // Rule 5: confirmed no FMCSA email on file — free-provider check only (unchanged behavior)
-      if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
-        yellow.push(
-          `Contact email uses a free provider (${contactDomain}) — carrier identity cannot be verified by email domain. ` +
-          `Confirm identity through FMCSA records or phone. ` +
-          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-        );
-      }
+  // Contact email — uses classifyEmailMatch() so rules engine and PDF can never disagree.
+  {
+    const em = classifyEmailMatch(d);
+    if (em && !em.match) {
+      yellow.push(em.rulesMessage + ` Report suspicious activity: ${FMCSA_COMPLAINT_URL}`);
     }
   }
 

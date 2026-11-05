@@ -1,7 +1,7 @@
 // Rule engine + PDF offline tests — no network, no DB.
 // Every test case also generates a PDF to confirm the generator doesn't crash.
 
-import { runVettingRules, DEFAULT_SETTINGS } from '../lib/rules_engine.js';
+import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 
 const CFG = DEFAULT_SETTINGS;
@@ -502,12 +502,28 @@ export async function runAll() {
   // 38. Free-provider same-domain false-positive: FMCSA has atlas.freight777@gmail.com,
   //     dispatcher enters test@gmail.com — both gmail.com but NOT the same person.
   //     Domain-match rule must not fire for free providers; must fall through to free-provider HOLD.
-  results.push(await t('email: free provider domain match (gmail) ≠ verified identity → HOLD', async () => {
+  //     PDF must say "FREE PROVIDER", not "MATCH — same registered domain".
+  results.push(await t('email: free-provider domain match (gmail) → HOLD; PDF says FREE PROVIDER not MATCH', async () => {
     const d = { ...CLEAN, contactEmail: 'test@gmail.com', fmcsaRegisteredEmail: 'atlas.freight777@gmail.com' };
+
+    // Rules engine must HOLD
     const r = runVettingRules(d, CFG);
-    assert(r.verdict === 'HOLD', `want HOLD (gmail domain match must not clear identity), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
     assert(r.reasons.some(s => s.includes('free provider')),
       `free-provider reason not found: ${r.reasons.join('; ')}`);
+
+    // classifyEmailMatch must flag as not a match
+    const em = classifyEmailMatch(d);
+    assert(em !== null, 'classifyEmailMatch must return a result when contactEmail is set');
+    assert(!em.match, `expected match:false but got pdfLabel: "${em.pdfLabel}"`);
+    assert(em.pdfLabel.includes('FREE PROVIDER'),
+      `pdfLabel must include "FREE PROVIDER", got: "${em.pdfLabel}"`);
+    assert(!em.pdfLabel.toLowerCase().includes('same registered domain'),
+      `pdfLabel must NOT say "same registered domain", got: "${em.pdfLabel}"`);
+
+    // PDF must generate without crash.
+    // Text content is verified via classifyEmailMatch.pdfLabel above — that is exactly
+    // what the PDF renders (pdf_generator imports and calls classifyEmailMatch directly).
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
