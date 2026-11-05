@@ -60,6 +60,7 @@ const INITIAL_FORM = {
   fmcsaChameleonNotReviewed: false,
   fmcsaChameleonTimedOut:    false,
   fmcsaRegisteredEmail:      null,
+  fmcsaEmailNotReviewed:     false,
   // Carrier Assure
   carrierAssureGrade: '',
   fraudFlag:         false,
@@ -668,11 +669,11 @@ export default function CarrierVetting({ settings }) {
 
       const chamJson = await chamPromise;
       if (chamJson.timedOut) {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: true, fmcsaRegisteredEmail: null }));
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: true, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true }));
       } else if (chamJson.notReviewed) {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null }));
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true }));
       } else {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: chamJson.fmcsaRegisteredEmail ?? null }));
+        setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: chamJson.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false }));
       }
     } catch (e) {
       setLookupErr(e.message);

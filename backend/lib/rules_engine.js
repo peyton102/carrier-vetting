@@ -369,8 +369,23 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
           `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
         );
       }
+    } else if (d.fmcsaEmailNotReviewed) {
+      // Census lookup failed or timed out — cannot confirm whether email matches FMCSA records
+      if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
+        yellow.push(
+          `Contact email uses a free provider (${contactDomain}) — carrier identity cannot be verified by email domain. ` +
+          `Confirm identity through FMCSA records or phone. ` +
+          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
+        );
+      } else {
+        yellow.push(
+          `Email domain (${contactDomain}) could not be verified against FMCSA records — census was unreachable. ` +
+          `Confirm carrier identity before booking. ` +
+          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
+        );
+      }
     } else {
-      // Rule 5: no FMCSA email on file — free-provider check only (unchanged behavior)
+      // Rule 5: confirmed no FMCSA email on file — free-provider check only (unchanged behavior)
       if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
         yellow.push(
           `Contact email uses a free provider (${contactDomain}) — carrier identity cannot be verified by email domain. ` +

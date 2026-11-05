@@ -104,6 +104,7 @@ const CLEAN = {
   bipdCancelLapsed:          false,
   bipdCancelPending:         null,
   fmcsaRegisteredEmail:      null,
+  fmcsaEmailNotReviewed:     false,
   fmcsaChameleonMatches:     [],
 };
 
@@ -390,6 +391,17 @@ export async function runAll() {
     assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
     assert(r.reasons.some(s => s.includes('free provider')),
       `free-provider reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 27. Census unreachable + company email domain → HOLD (can't verify against FMCSA)
+  results.push(await t('email: census unreachable + company domain → HOLD', async () => {
+    const d = { ...CLEAN, contactEmail: 'dispatch@testcarrier.com', fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('unreachable')),
+      `unreachable reason not found: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));

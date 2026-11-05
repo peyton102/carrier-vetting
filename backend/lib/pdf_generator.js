@@ -331,7 +331,9 @@ export function generateVettingPDF(opts) {
 
     dataRow(doc, L, W, 'Contact Email (dispatcher)', d.contactEmail);
     dataRow(doc, L, W, 'Registered Email (FMCSA)',
-      d.fmcsaRegisteredEmail || (d.contactEmail ? 'No email on FMCSA record' : null));
+      d.fmcsaRegisteredEmail ||
+      (d.fmcsaEmailNotReviewed ? 'Not reviewed (couldn\'t reach FMCSA)' :
+        (d.contactEmail ? 'No email on FMCSA record' : null)));
 
     // Email match check + identity summary
     {
@@ -364,6 +366,12 @@ export function generateVettingPDF(opts) {
             emailMatchText  = `DOMAIN MISMATCH — contact: ${contactDomain} ≠ FMCSA: ${fmcsaDomain}`;
             emailMatchColor = C.yellow;
           }
+        } else if (d.fmcsaEmailNotReviewed) {
+          const isFree = FREE_EMAILS.has(contactDomain);
+          emailMatchText  = isFree
+            ? `FREE PROVIDER (${contactDomain}) — census unreachable, identity unverifiable`
+            : `NOT REVIEWED — census unreachable, domain (${contactDomain}) unverified`;
+          emailMatchColor = C.yellow;
         } else {
           const isFree = FREE_EMAILS.has(contactDomain);
           emailMatchText  = isFree
@@ -389,6 +397,10 @@ export function generateVettingPDF(opts) {
               ? `Email: Free provider, no match (${contactDomain})`
               : `Email: Domain mismatch (${contactDomain} ≠ ${fmcsaDomain})`;
           }
+        } else if (d.fmcsaEmailNotReviewed) {
+          emailIssue = FREE_EMAILS.has(contactDomain)
+            ? `Email: Free provider, census unreachable (${contactDomain})`
+            : `Email: Unverified domain, census unreachable (${contactDomain})`;
         } else if (FREE_EMAILS.has(contactDomain)) {
           emailIssue = `Email: Free consumer domain (${contactDomain})`;
         }
