@@ -703,6 +703,13 @@ function chameleonSection(doc, L, W, d) {
 
   sectionHeader(doc, L, W, 'FMCSA IDENTITY LINKAGE');
 
+  if (d.fmcsaEnforcementLoadedAt) {
+    const asOf = new Date(d.fmcsaEnforcementLoadedAt);
+    const asOfStr = isNaN(asOf.getTime()) ? d.fmcsaEnforcementLoadedAt
+      : asOf.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    dataRow(doc, L, W, 'Enforcement data as of', asOfStr);
+  }
+
   if (notReviewed) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'Carrier identity check (FMCSA):',

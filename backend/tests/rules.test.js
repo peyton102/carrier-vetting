@@ -105,6 +105,7 @@ const CLEAN = {
   bipdCancelPending:         null,
   fmcsaRegisteredEmail:      null,
   fmcsaEmailNotReviewed:     false,
+  fmcsaEnforcementLoadedAt:  null,
   fmcsaChameleonMatches:     [],
 };
 
@@ -395,7 +396,17 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // 27. Census unreachable + company email domain → HOLD (can't verify against FMCSA)
+  // 27. Skipped night: enforcementLoadedAt 30h ago (within 48h window) → APPROVE + PDF shows timestamp
+  results.push(await t('skipped night: enforcement data 30h old → APPROVE, PDF renders timestamp', async () => {
+    const thirtyHoursAgo = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    const d = { ...CLEAN, fmcsaEnforcementLoadedAt: thirtyHoursAgo };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 28. Census unreachable + company email domain → HOLD (can't verify against FMCSA)
   results.push(await t('email: census unreachable + company domain → HOLD', async () => {
     const d = { ...CLEAN, contactEmail: 'dispatch@testcarrier.com', fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true };
     const r = runVettingRules(d, CFG);

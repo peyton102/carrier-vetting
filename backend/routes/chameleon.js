@@ -195,30 +195,35 @@ async function getBadReasons(dot, ccRow, supabase) {
   return reasons;
 }
 
-// Checks that all three enforcement mirror tables were loaded successfully within the
-// last 25 hours. Returns { ok, loadedAt }.
+// Checks that all enforcement mirror tables were loaded successfully within the
+// last 48 hours. Returns { ok, loadedAt }.
 //
+// 48 h limit: tolerates one missed nightly run without failing every vetting the next day.
 // Empty or stale tables must never be treated as "no bad history" — that would make
 // every linked carrier appear informational. Any failure → notReviewed response.
-// The oldest of the three timestamps is returned as loadedAt (weakest-link freshness).
+// The oldest of the timestamps is returned as loadedAt (weakest-link freshness).
+//
+// safer_revocations and safer_revocation_notices read daily_load_status (not the rows)
+// so a dataset-unchanged skip night still counts as fresh — the nightly job writes to
+// daily_load_status even when no new rows are upserted.
 async function getEnforcementTableStatus(supabase) {
-  const MAX_AGE_MS = 25 * 60 * 60 * 1000;  // 25 h covers daily job + scheduling drift
+  const MAX_AGE_MS = 48 * 60 * 60 * 1000;  // 48 h: tolerates one missed nightly run
   const now        = Date.now();
 
   const tStatus = Date.now();
-  const [oos, motus, rev] = await Promise.all([
+  const [oos, motus, rev, revNotice] = await Promise.all([
     supabase.from('oos_orders')       .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('motus_suspensions').select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
-    // REVOKE reads daily_load_status so a dataset-unchanged skip still counts as fresh.
-    // Checking the data table directly would go stale on consecutive skip days.
     supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocations').maybeSingle(),
+    supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocation_notices').maybeSingle(),
   ]);
-  console.log(`[TIMING][CHAM] Supabase enforcement table status (3 parallel): ${ms(tStatus)}`);
+  console.log(`[TIMING][CHAM] Supabase enforcement table status (4 parallel): ${ms(tStatus)}`);
 
   const timestamps = [
     oos.data?.last_verified_at,
     motus.data?.last_verified_at,
     rev.data?.last_verified_at,
+    revNotice.data?.last_verified_at,
   ];
 
   for (const ts of timestamps) {
