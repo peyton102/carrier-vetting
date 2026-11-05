@@ -499,6 +499,19 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // 38. Free-provider same-domain false-positive: FMCSA has atlas.freight777@gmail.com,
+  //     dispatcher enters test@gmail.com — both gmail.com but NOT the same person.
+  //     Domain-match rule must not fire for free providers; must fall through to free-provider HOLD.
+  results.push(await t('email: free provider domain match (gmail) ≠ verified identity → HOLD', async () => {
+    const d = { ...CLEAN, contactEmail: 'test@gmail.com', fmcsaRegisteredEmail: 'atlas.freight777@gmail.com' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD (gmail domain match must not clear identity), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('free provider')),
+      `free-provider reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // 32. Chameleon timed out → PDF renders "FMCSA slow to respond" (no crash)
   // contactEmail cleared so the census-unreachable email HOLD doesn't fire (tested separately in test 28)
   results.push(await t('chameleon timeout → PDF renders "slow to respond", no crash', async () => {

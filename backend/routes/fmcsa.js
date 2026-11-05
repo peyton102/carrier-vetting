@@ -116,6 +116,7 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     oos:          saferOos          = null,
     inspections:  saferInsp         = null,
     snapshotDate: saferSnapshotDate = null,
+    mileage:      saferMileage      = null,
   } = saferData;
 
   // National OOS averages: SAFER HTML only — QCMobile values are stale and must not be used.
@@ -143,8 +144,9 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     safetyRating:         normalizeSafetyRating(c.safetyRating),
     powerUnits:           c.totalPowerUnits  != null ? String(c.totalPowerUnits)  : '',
     totalDrivers:         c.totalDrivers     != null ? String(c.totalDrivers)     : '',
-    mcs150Mileage:        c.mcs150Mileage    != null ? String(c.mcs150Mileage)    : '',
-    mcs150MileageYear:    c.mcs150MileageYear != null ? String(c.mcs150MileageYear) : '',
+    // SAFER HTML is the authoritative mileage source — QCMobile rarely has these fields.
+    mcs150Mileage:        saferMileage?.mileage     != null ? String(saferMileage.mileage)     : (c.mcs150Mileage     != null ? String(c.mcs150Mileage)     : ''),
+    mcs150MileageYear:    saferMileage?.mileageYear != null ? String(saferMileage.mileageYear) : (c.mcs150MileageYear != null ? String(c.mcs150MileageYear) : ''),
     inspections24mo:      String(vehicleInspCount),
     truckOosPct:          truckOosPctStr,
     driverOosPct:         driverOosPctStr,
@@ -341,6 +343,33 @@ export function parseSaferSnapshotDate(html) {
   return m ? m[1] : null;
 }
 
+// Parse MCS-150 Mileage (Year) from the SAFER HTML company snapshot page.
+// Exported for use in tests.
+// SAFER structure (immediately after the MCS-150 Mileage (Year): label cell):
+//   <TD valign=top><FONT ...><B>5,500,000 (2026)&nbsp;</TD>
+// Returns { mileage: number, mileageYear: number } or null when not found.
+export function parseSaferMileage(html) {
+  try {
+    const idx = html.search(/MCS-150\s+Mileage\s*\(Year\)\s*:/i);
+    if (idx < 0) return null;
+    const tdStart = html.indexOf('<TD', idx);
+    if (tdStart < 0) return null;
+    const tdEnd = html.indexOf('</TD>', tdStart);
+    if (tdEnd < 0) return null;
+    const text = html.slice(tdStart, tdEnd)
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const m = text.match(/^([\d,]+)\s*\((\d{4})\)/);
+    if (!m) return null;
+    const mileage     = parseInt(m[1].replace(/,/g, ''), 10);
+    const mileageYear = parseInt(m[2], 10);
+    if (isNaN(mileage) || isNaN(mileageYear)) return null;
+    return { mileage, mileageYear };
+  } catch (_) { return null; }
+}
+
 // Parse the first <TABLE summary="Inspections"> from SAFER HTML (24-month carrier data).
 // Exported for use in tests.
 // Columns: Inspection Type | Vehicle | Driver | Hazmat | IEP
@@ -452,6 +481,7 @@ async function fetchSaferData(dot) {
     oos:          parseSaferOosAverages(html),
     inspections:  parseSaferInspections(html),
     snapshotDate: parseSaferSnapshotDate(html),
+    mileage:      parseSaferMileage(html),
   };
 }
 

@@ -355,8 +355,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     const fmcsaDomain = rawFmcsa ? rawFmcsa.split('@').pop() : null;
 
     if (rawFmcsa) {
-      if (rawContact === rawFmcsa || contactDomain === fmcsaDomain) {
-        // Rules 1 & 2: exact match or same registered domain — verified, no HOLD
+      if (rawContact === rawFmcsa || (contactDomain === fmcsaDomain && !FREE_EMAIL_DOMAINS.has(fmcsaDomain))) {
+        // Rules 1 & 2: exact match, or same company domain (never applies to free providers —
+        // gmail.com / yahoo.com / etc. are shared infrastructure, not identity evidence)
       } else if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
         // Rule 3: free provider that doesn't match the registered email
         yellow.push(

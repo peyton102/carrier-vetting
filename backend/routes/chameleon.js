@@ -39,6 +39,10 @@ const CC_DS = 'az4n-8mr2';  // Company Census File (live Socrata)
 
 const SHARED_SERVICE_THRESHOLD = 5;  // >5 sharing same value → shared service
 
+// Increment when the cache result shape changes (new fields added/removed) so stale
+// cache entries are automatically invalidated rather than served with missing fields.
+const CACHE_VERSION = '2';
+
 function ms(start) { return `${Date.now() - start}ms`; }
 
 function socrataUrl(ds, where, select, limit) {
@@ -396,7 +400,9 @@ router.get('/:dot', async (req, res) => {
     .eq('dot_number', dot)
     .maybeSingle();
   console.log(`[TIMING][CHAM] DOT ${dot}: Supabase chameleon_cache read: ${ms(t)}`);
-  if (cached && (Date.now() - new Date(cached.pulled_at).getTime()) < CACHE_TTL_MS) {
+  if (cached &&
+      (Date.now() - new Date(cached.pulled_at).getTime()) < CACHE_TTL_MS &&
+      cached.result?.cacheVersion === CACHE_VERSION) {
     console.log(`[TIMING][CHAM] DOT ${dot}: cache HIT — returning cached result, /chameleon total: ${ms(tTotal)}`);
     return res.json({ ...cached.result, pulledAt: cached.pulled_at, fromCache: true });
   }
@@ -550,7 +556,7 @@ router.get('/:dot', async (req, res) => {
     const fmcsaRegisteredEmail = self.email_address || null;
     supabase.from('chameleon_cache')
       .upsert({ dot_number: dot, pulled_at: pulledAt,
-                result: { notReviewed: false, matches, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange } },
+                result: { cacheVersion: CACHE_VERSION, notReviewed: false, matches, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange } },
                { onConflict: 'dot_number' })
       .then(({ error }) => { if (error) console.warn('[CHAMELEON] Cache write failed:', error.message); })
       .catch(e => console.warn('[CHAMELEON] Cache write exception:', e.message));
