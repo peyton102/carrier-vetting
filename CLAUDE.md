@@ -17,6 +17,7 @@
 
 - One logical change at a time. Generate a test PDF locally (using the local test script pattern) before pushing when pdf_generator.js is modified.
 - Never start the production server locally and fire requests at it for testing.
+- **Run rule tests before every push**: `npm run test:rules` from `backend/`, or `node backend/tests/run_tests.js --rules-only` from the project root. All 21 tests must pass. Full suite (rules + live SAFER checks): `npm test` from `backend/`.
 
 ## freeuptime repo
 

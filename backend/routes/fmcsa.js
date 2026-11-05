@@ -214,7 +214,7 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
 // These fields are not available from QCMobile JSON; parse directly from the
 // publicly accessible SAFER HTML company snapshot page (no API key required).
 
-function parseSaferPhone(html) {
+export function parseSaferPhone(html) {
   const m = html.match(
     /<TH[^>]*SCOPE="ROW"[^>]*>[\s\S]*?Phone:?[\s\S]*?<\/TH>\s*<TD[^>]*class="queryfield"[^>]*>([\s\S]*?)<\/TD>/i
   );
@@ -226,7 +226,7 @@ function parseSaferPhone(html) {
 // Returns { count, fatal, injury, tow } or null when section not found.
 // SAFER uses <TABLE summary="Crashes"> with column headers Fatal|Injury|Tow|Total
 // and a data row: <TH SCOPE="ROW">Crashes</TH><TD>...</TD>...
-function parseSaferCrashes(html) {
+export function parseSaferCrashes(html) {
   try {
     // Find the crash table by its summary attribute
     const tableMatch = html.match(/<TABLE[^>]*summary="Crashes"[^>]*>([\s\S]*?)<\/TABLE>/i);
@@ -287,7 +287,7 @@ function parseSaferCrashes(html) {
 // span large sections. Instead, find the "Nat'l Average" text by character position,
 // walk backward to its containing <TH opening tag, forward to its </TH> close, then
 // extract the TDs that follow before the next </TR>.
-function parseSaferOosAverages(html) {
+export function parseSaferOosAverages(html) {
   try {
     // Find the exact position of "Nat'l Average" text
     const natIdx = html.search(/Nat.{0,5}l\s+Average/i);
@@ -333,17 +333,18 @@ function parseSaferOosAverages(html) {
 // Parse the FMCSA data snapshot date from the SAFER HTML page header.
 // Returns "MM/DD/YYYY" string or null.
 // Page header: "...FMCSA management information systems as of <FONT ...>10/31/2026</FONT>."
-function parseSaferSnapshotDate(html) {
+export function parseSaferSnapshotDate(html) {
   const m = html.match(/information\s+systems\s+as\s+of\s*(?:<[^>]+>)?\s*([\d]{1,2}\/[\d]{1,2}\/[\d]{4})/i);
   return m ? m[1] : null;
 }
 
 // Parse the first <TABLE summary="Inspections"> from SAFER HTML (24-month carrier data).
+// Exported for use in tests.
 // Columns: Inspection Type | Vehicle | Driver | Hazmat | IEP
 // Rows: Inspections | Out of Service | Out of Service % | Nat'l Average %
 // Returns { vehicleInsp, driverInsp, vehicleOosInsp, driverOosInsp, vehicleOosPct, driverOosPct }
 // or null when the table cannot be found or parsed.
-function parseSaferInspections(html) {
+export function parseSaferInspections(html) {
   try {
     const tableMatch = html.match(/<TABLE[^>]*summary="Inspections"[^>]*>([\s\S]*?)<\/TABLE>/i);
     if (!tableMatch) return null;
