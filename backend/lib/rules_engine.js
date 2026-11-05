@@ -396,13 +396,15 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     }
   }
 
-  // FMCSA contact info change (snapshot-based)
-  if (d.fmcsaContactChange) {
-    const { changedAt, diffs, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
-    const since = changedAt
-      ? new Date(changedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      : 'an unknown date';
-    let msg = `FMCSA contact info changed since ${since}: ${diffs.join('; ')} — confirm carrier identity before booking`;
+  // FMCSA contact info change (60-day append-only log)
+  // firstSeen is informational only — cert note, no HOLD
+  if (d.fmcsaContactChange?.recentChanges?.length > 0) {
+    const { recentChanges, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
+    const changeLines = recentChanges.map(c => {
+      const when = new Date(c.detected_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `${c.field_label} changed ${when}: "${c.old_value ?? ''}" → "${c.new_value ?? ''}"`;
+    });
+    let msg = `FMCSA contact info changed in the last 60 days: ${changeLines.join('; ')} — confirm carrier identity before booking`;
     if (mcs150Recent && mcs150Date) msg += `; MCS-150 also updated ${mcs150Date}`;
     msg += `. Report suspicious activity: ${FMCSA_COMPLAINT_URL}`;
     yellow.push(msg);

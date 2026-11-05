@@ -710,14 +710,21 @@ function chameleonSection(doc, L, W, d) {
     dataRow(doc, L, W, 'Enforcement data as of', asOfStr);
   }
 
-  if (d.fmcsaContactChange) {
-    const { changedAt, diffs, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
-    const since = changedAt
-      ? new Date(changedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })
-      : 'unknown date';
-    let text = `Changed since ${since}: ${diffs.join('; ')}`;
-    if (mcs150Recent && mcs150Date) text += ` — MCS-150 updated ${mcs150Date}`;
-    _twoColRow(doc, L, W, 'Helvetica-Bold', C.yellow, 'Contact info change (FMCSA):', 'Helvetica', C.yellow, text);
+  if (d.fmcsaContactChange?.firstSeen) {
+    const since = new Date(d.fmcsaContactChange.firstSeen).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+    dataRow(doc, L, W, 'Contact history (FMCSA)', `First seen ${since} — no prior record to compare`);
+  } else if (d.fmcsaContactChange?.recentChanges?.length > 0) {
+    const { recentChanges, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
+    for (const c of recentChanges) {
+      const when = new Date(c.detected_at).toLocaleDateString('en-US',
+        { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+      const text = `${c.field_label} changed ${when}: "${c.old_value ?? ''}" → "${c.new_value ?? ''}"`;
+      _twoColRow(doc, L, W, 'Helvetica-Bold', C.yellow, 'Contact info change (FMCSA):', 'Helvetica', C.yellow, text);
+    }
+    if (mcs150Recent && mcs150Date) {
+      dataRow(doc, L, W, 'MCS-150 updated', mcs150Date);
+    }
   }
 
   if (notReviewed) {

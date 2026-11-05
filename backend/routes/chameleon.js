@@ -233,63 +233,62 @@ async function getEnforcementTableStatus(supabase) {
   return { ok: true, loadedAt: [...timestamps].sort()[0] };  // oldest = weakest link
 }
 
-// Compare carrier's current CC contact fields against the stored snapshot for this DOT.
-// Returns null if no previous snapshot (first lookup — no flag, just records it) or if nothing changed.
-// Returns { changedAt, diffs, mcs150Recent, mcs150Date } if any field differs.
-// DB write is fire-and-forget — never blocks the vetting response.
+// ── Contact snapshot normalization ────────────────────────────────────────────
+// Formatting differences (phone formatting, street abbreviations, extra spaces)
+// must NOT trigger a HOLD — only genuine data changes should.
+const STREET_ABBREV = new Map([
+  ['STREET','ST'],  ['AVENUE','AVE'],    ['BOULEVARD','BLVD'], ['DRIVE','DR'],
+  ['ROAD','RD'],    ['LANE','LN'],       ['COURT','CT'],       ['CIRCLE','CIR'],
+  ['HIGHWAY','HWY'],['PLACE','PL'],      ['SUITE','STE'],      ['TERRACE','TER'],
+  ['TRAIL','TRL'],  ['PARKWAY','PKWY'],  ['EXPRESSWAY','EXPY'],
+]);
+function normPhone(s)  { return (s ?? '').replace(/\D/g, ''); }
+function normText(s)   { return (s ?? '').trim().toUpperCase().replace(/\s+/g, ' '); }
+function normStreet(s) { return normText(s).split(' ').map(w => STREET_ABBREV.get(w) ?? w).join(' '); }
+
+const CONTACT_FIELDS = [
+  { key: 'phone',             label: 'Phone',     norm: normPhone  },
+  { key: 'email_address',     label: 'Email',     norm: normText   },
+  { key: 'phy_street',        label: 'Street',    norm: normStreet },
+  { key: 'phy_city',          label: 'City',      norm: normText   },
+  { key: 'phy_state',         label: 'State',     norm: normText   },
+  { key: 'company_officer_1', label: 'Officer 1', norm: normText   },
+  { key: 'company_officer_2', label: 'Officer 2', norm: normText   },
+];
+
+// Compare carrier's current CC contact fields against stored snapshot + 60-day change log.
+//
+// Returns:
+//   { firstSeen }              — first time this DOT has been seen; no HOLD
+//   { recentChanges, ... }     — one or more changes detected in the last 60 days; HOLD
+//   null                       — snapshot exists, no changes in last 60 days
+//
+// All DB writes are fire-and-forget — never block the vetting response.
+// The snapshot stores the latest known values; carrier_contact_changes is append-only.
 async function checkContactSnapshot(dot, self, supabase) {
-  const FIELDS = [
-    { key: 'phone',             label: 'Phone'     },
-    { key: 'email_address',     label: 'Email'     },
-    { key: 'phy_street',        label: 'Street'    },
-    { key: 'phy_city',          label: 'City'      },
-    { key: 'phy_state',         label: 'State'     },
-    { key: 'company_officer_1', label: 'Officer 1' },
-    { key: 'company_officer_2', label: 'Officer 2' },
-  ];
+  const CHANGE_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+  const now              = new Date().toISOString();
+  const lookbackCutoff   = new Date(Date.now() - CHANGE_WINDOW_MS).toISOString();
 
+  // Read snapshot + recent changes log in parallel
   const t = Date.now();
-  const { data: snap } = await supabase
-    .from('carrier_contact_snapshots')
-    .select('phone,email_address,phy_street,phy_city,phy_state,company_officer_1,company_officer_2,last_seen_at')
-    .eq('dot_number', dot)
-    .maybeSingle();
-  console.log(`[TIMING][CHAM] Supabase snapshot read (DOT ${dot}): ${ms(t)}`);
-
-  const nrm = s => (s ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
-  const now = new Date().toISOString();
-
-  if (!snap) {
-    // First time — record snapshot, no flag
+  const [snapRes, changesRes] = await Promise.all([
     supabase.from('carrier_contact_snapshots')
-      .insert({
-        dot_number:        dot,
-        phone:             self.phone             ?? null,
-        email_address:     self.email_address     ?? null,
-        phy_street:        self.phy_street        ?? null,
-        phy_city:          self.phy_city          ?? null,
-        phy_state:         self.phy_state         ?? null,
-        company_officer_1: self.company_officer_1 ?? null,
-        company_officer_2: self.company_officer_2 ?? null,
-        mcs150_date:       self.mcs150_date       ?? null,
-        first_seen_at:     now,
-        last_seen_at:      now,
-      })
-      .then(({ error }) => { if (error) console.warn('[CHAM] Snapshot insert failed:', error.message); })
-      .catch(e => console.warn('[CHAM] Snapshot insert exception:', e.message));
-    return null;
-  }
+      .select('phone,email_address,phy_street,phy_city,phy_state,company_officer_1,company_officer_2,first_seen_at')
+      .eq('dot_number', dot)
+      .maybeSingle(),
+    supabase.from('carrier_contact_changes')
+      .select('field_label,old_value,new_value,detected_at')
+      .eq('dot_number', dot)
+      .gte('detected_at', lookbackCutoff)
+      .order('detected_at', { ascending: true }),
+  ]);
+  console.log(`[TIMING][CHAM] Supabase snapshot + changes read (DOT ${dot}): ${ms(t)}`);
 
-  // Detect changed fields
-  const diffs = [];
-  for (const { key, label } of FIELDS) {
-    if (nrm(snap[key]) !== nrm(self[key])) {
-      diffs.push(`${label}: "${snap[key] ?? ''}" → "${self[key] ?? ''}"`);
-    }
-  }
+  const snap         = snapRes.data;
+  const priorChanges = changesRes.data ?? [];
 
-  // Update snapshot — always refresh last_seen_at; update fields + last_changed_at if changed
-  const updatePayload = {
+  const snapPayload = {
     phone:             self.phone             ?? null,
     email_address:     self.email_address     ?? null,
     phy_street:        self.phy_street        ?? null,
@@ -299,26 +298,58 @@ async function checkContactSnapshot(dot, self, supabase) {
     company_officer_2: self.company_officer_2 ?? null,
     mcs150_date:       self.mcs150_date       ?? null,
     last_seen_at:      now,
-    ...(diffs.length > 0 ? { last_changed_at: now } : {}),
   };
+
+  if (!snap) {
+    // First time — insert snapshot with first_seen_at; no HOLD
+    supabase.from('carrier_contact_snapshots')
+      .insert({ dot_number: dot, ...snapPayload, first_seen_at: now })
+      .then(({ error }) => { if (error) console.warn('[CHAM] Snapshot insert failed:', error.message); })
+      .catch(e => console.warn('[CHAM] Snapshot insert exception:', e.message));
+    return { firstSeen: now };
+  }
+
+  // Detect normalized field changes
+  const newDiffs = [];
+  for (const { key, label, norm } of CONTACT_FIELDS) {
+    if (norm(snap[key]) !== norm(self[key])) {
+      newDiffs.push({ field_name: key, field_label: label, old_value: snap[key] ?? null, new_value: self[key] ?? null, detected_at: now });
+    }
+  }
+
+  // Update snapshot — always refresh last_seen_at; set last_changed_at if fields changed
   supabase.from('carrier_contact_snapshots')
-    .update(updatePayload)
+    .update({ ...snapPayload, ...(newDiffs.length > 0 ? { last_changed_at: now } : {}) })
     .eq('dot_number', dot)
     .then(({ error }) => { if (error) console.warn('[CHAM] Snapshot update failed:', error.message); })
     .catch(e => console.warn('[CHAM] Snapshot update exception:', e.message));
 
-  if (diffs.length === 0) return null;
+  // Append new change log rows (insert-only)
+  if (newDiffs.length > 0) {
+    supabase.from('carrier_contact_changes')
+      .insert(newDiffs.map(d => ({ dot_number: dot, field_name: d.field_name, field_label: d.field_label, old_value: d.old_value, new_value: d.new_value, detected_at: d.detected_at })))
+      .then(({ error }) => { if (error) console.warn('[CHAM] Change log insert failed:', error.message); })
+      .catch(e => console.warn('[CHAM] Change log insert exception:', e.message));
+  }
 
-  // Check if MCS-150 was updated within 60 days (alongside a contact change)
-  const mcs150Date = self.mcs150_date ?? null;
+  // Combine historical log entries + newly detected (which weren't in the DB query yet)
+  const recentChanges = [
+    ...priorChanges,
+    ...newDiffs.map(d => ({ field_label: d.field_label, old_value: d.old_value, new_value: d.new_value, detected_at: d.detected_at })),
+  ];
+
+  if (recentChanges.length === 0) return null;
+
+  // Include MCS-150 date if recently updated alongside a contact change
+  const mcs150Date   = self.mcs150_date ?? null;
   const mcs150Recent = (() => {
     if (!mcs150Date) return false;
     const dt = new Date(mcs150Date);
     if (isNaN(dt.getTime())) return false;
-    return (Date.now() - dt.getTime()) < 60 * 24 * 60 * 60 * 1000;
+    return dt.getTime() > Date.now() - CHANGE_WINDOW_MS;
   })();
 
-  return { changedAt: snap.last_seen_at, diffs, mcs150Recent, mcs150Date };
+  return { recentChanges, mcs150Recent, mcs150Date };
 }
 
 // A match is HOLD-worthy when, for at least one bad reason:
