@@ -449,13 +449,13 @@ router.get('/:dot', async (req, res) => {
         where:      `phone='${esc(selfPhone)}'`,
       });
     }
-    if (self.email_address) {
-      // Exact match on the stored value — no upper() wrapper, which forces a full scan.
-      // Case is consistent: we're querying back the same value the CC dataset returned.
+    if (selfEmail) {
+      // upper() on a text column is fast in Socrata (~200ms) and needed for correctness:
+      // different carriers can store the same email in different cases.
       searches.push({
         field:      'email',
         displayVal: self.email_address,
-        where:      `email_address='${esc(self.email_address)}'`,
+        where:      `upper(email_address)='${esc(selfEmail)}'`,
       });
     }
     if (selfStreet && selfCity && selfState) {
