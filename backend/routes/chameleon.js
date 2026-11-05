@@ -296,7 +296,7 @@ router.get('/:dot', async (req, res) => {
       1,
       `self CC row`
     );
-    if (!selfRows.length) return res.json({ notReviewed: false, matches: [] });
+    if (!selfRows.length) return res.json({ notReviewed: false, matches: [], fmcsaRegisteredEmail: null });
     const self = selfRows[0];
 
     const selfPhone   = self.phone ?? '';
@@ -416,13 +416,14 @@ router.get('/:dot', async (req, res) => {
     const pulledAt = new Date().toISOString();
     console.log(`[TIMING][CHAM] DOT ${dot}: /chameleon total: ${ms(tTotal)} — ${searches.length} searches, ${matches.length} matches`);
     // Cache only complete successful results — never cache notReviewed or errors
+    const fmcsaRegisteredEmail = self.email_address || null;
     supabase.from('chameleon_cache')
       .upsert({ dot_number: dot, pulled_at: pulledAt,
-                result: { notReviewed: false, matches, enforcementTablesLoadedAt } },
+                result: { notReviewed: false, matches, enforcementTablesLoadedAt, fmcsaRegisteredEmail } },
                { onConflict: 'dot_number' })
       .then(({ error }) => { if (error) console.warn('[CHAMELEON] Cache write failed:', error.message); })
       .catch(e => console.warn('[CHAMELEON] Cache write exception:', e.message));
-    return res.json({ notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt });
+    return res.json({ notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt, fmcsaRegisteredEmail });
 
   } catch (e) {
     console.error('[CHAMELEON] error for DOT', dot, ':', e.message);

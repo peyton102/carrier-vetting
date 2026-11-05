@@ -335,15 +335,49 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     }
   }
 
-  // Contact email on free provider
+  // Contact email — verified against FMCSA registered email (from Company Census File).
+  // Rules (in priority order):
+  //   1. Exact match with FMCSA email (case/space insensitive) → verified, no HOLD
+  //   2. Same domain as FMCSA email → verified, no HOLD
+  //   3. Free provider that doesn't match FMCSA email → HOLD
+  //   4. Different company domain than FMCSA email → HOLD (catches lookalikes)
+  //   5. No FMCSA email on file → fall back to free-provider-only check (today's behavior)
   if (d.contactEmail) {
-    const domain = String(d.contactEmail).split('@').pop().toLowerCase().trim();
-    if (FREE_EMAIL_DOMAINS.has(domain)) {
-      yellow.push(
-        `Contact email uses a free provider (${domain}) — carrier identity cannot be verified by email domain. ` +
-        `Confirm identity through FMCSA records or phone. ` +
-        `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
-      );
+    const rawContact    = String(d.contactEmail).replace(/\s/g, '').toLowerCase();
+    const contactDomain = rawContact.split('@').pop();
+    const rawFmcsa      = d.fmcsaRegisteredEmail
+      ? String(d.fmcsaRegisteredEmail).replace(/\s/g, '').toLowerCase()
+      : null;
+    const fmcsaDomain = rawFmcsa ? rawFmcsa.split('@').pop() : null;
+
+    if (rawFmcsa) {
+      if (rawContact === rawFmcsa || contactDomain === fmcsaDomain) {
+        // Rules 1 & 2: exact match or same registered domain — verified, no HOLD
+      } else if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
+        // Rule 3: free provider that doesn't match the registered email
+        yellow.push(
+          `Contact email uses a free provider (${contactDomain}) and does not match the FMCSA registered email — ` +
+          `carrier identity cannot be verified by email domain. ` +
+          `Confirm identity through FMCSA records or phone. ` +
+          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
+        );
+      } else {
+        // Rule 4: different company domain — possible lookalike
+        yellow.push(
+          `Email domain (${contactDomain}) doesn't match FMCSA record (registered domain: ${fmcsaDomain}) — ` +
+          `possible lookalike domain; confirm carrier identity before booking. ` +
+          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
+        );
+      }
+    } else {
+      // Rule 5: no FMCSA email on file — free-provider check only (unchanged behavior)
+      if (FREE_EMAIL_DOMAINS.has(contactDomain)) {
+        yellow.push(
+          `Contact email uses a free provider (${contactDomain}) — carrier identity cannot be verified by email domain. ` +
+          `Confirm identity through FMCSA records or phone. ` +
+          `Report suspicious activity: ${FMCSA_COMPLAINT_URL}`
+        );
+      }
     }
   }
 

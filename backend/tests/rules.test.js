@@ -103,6 +103,7 @@ const CLEAN = {
   activeFederalOOS:          false,
   bipdCancelLapsed:          false,
   bipdCancelPending:         null,
+  fmcsaRegisteredEmail:      null,
   fmcsaChameleonMatches:     [],
 };
 
@@ -338,6 +339,59 @@ export async function runAll() {
     const reasons = [{ type: 'revocation', description: 'Revocation', stillActive: false, eventDate: recent.toISOString().slice(0, 10) }];
     assert(isHoldWorthy({ status_code: 'I' }, reasons, 1095) === true,
       'recent event on inactive carrier must be hold-worthy');
+  }));
+
+  // ── Email matching tests (rules 1–5) ─────────────────────────────────────────
+
+  // 22. Email rule 1: exact match with FMCSA registered email → no HOLD, even if Gmail
+  results.push(await t('email: exact match with FMCSA registered (Gmail) → APPROVE', async () => {
+    const d = { ...CLEAN, contactEmail: 'dispatch@gmail.com', fmcsaRegisteredEmail: 'dispatch@gmail.com' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE (exact match clears Gmail), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 23. Email rule 2: same company domain as FMCSA registered email → no HOLD
+  results.push(await t('email: same domain as FMCSA registered → APPROVE', async () => {
+    const d = { ...CLEAN, contactEmail: 'driver@testcarrier.com', fmcsaRegisteredEmail: 'dispatch@testcarrier.com' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE (same domain), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 24. Email rule 3: free provider that doesn't match FMCSA registered email → HOLD
+  results.push(await t('email: free provider, mismatches FMCSA registered → HOLD', async () => {
+    const d = { ...CLEAN, contactEmail: 'driver@gmail.com', fmcsaRegisteredEmail: 'dispatch@testcarrier.com' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('free provider')),
+      `free-provider reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 25. Email rule 4: different company domain (lookalike) → HOLD "doesn't match FMCSA record"
+  results.push(await t('email: company domain mismatch (lookalike) → HOLD', async () => {
+    const d = { ...CLEAN, contactEmail: 'dispatch@testcarr1er.com', fmcsaRegisteredEmail: 'dispatch@testcarrier.com' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes("doesn't match FMCSA record")),
+      `domain-mismatch reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 26. Email rule 5: no FMCSA email on file, free provider → HOLD (today's behavior unchanged)
+  results.push(await t('email: no FMCSA email on file + free provider → HOLD', async () => {
+    const d = { ...CLEAN, contactEmail: 'driver@gmail.com', fmcsaRegisteredEmail: null };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `want HOLD, got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('free provider')),
+      `free-provider reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first

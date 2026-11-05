@@ -330,44 +330,79 @@ export function generateVettingPDF(opts) {
     }
 
     dataRow(doc, L, W, 'Contact Email (dispatcher)', d.contactEmail);
-    if (d.contactEmail) {
-      const domain = String(d.contactEmail).split('@').pop().toLowerCase().trim();
-      const freeProviders = new Set([
+    dataRow(doc, L, W, 'Registered Email (FMCSA)',
+      d.fmcsaRegisteredEmail || (d.contactEmail ? 'No email on FMCSA record' : null));
+
+    // Email match check + identity summary
+    {
+      const FREE_EMAILS = new Set([
         'gmail.com','yahoo.com','hotmail.com','outlook.com','live.com',
         'aol.com','icloud.com','protonmail.com','proton.me','me.com',
         'ymail.com','msn.com','mail.com','inbox.com','gmx.com','gmx.net',
         'zoho.com','fastmail.com',
       ]);
-      const isFree = freeProviders.has(domain);
-      twoColLabelValue(doc, L, W,
-        'Email Domain Check:',
-        isFree ? `FREE PROVIDER (${domain}) — identity unverifiable by domain` : `Company domain (${domain})`,
-        isFree ? C.yellow : C.green,
-        true);
-    } else {
-      dataRow(doc, L, W, 'Email Domain Check', null);
-    }
+      const rawContact    = (d.contactEmail   || '').replace(/\s/g, '').toLowerCase();
+      const contactDomain = rawContact.split('@').pop() || '';
+      const rawFmcsa      = d.fmcsaRegisteredEmail
+        ? String(d.fmcsaRegisteredEmail).replace(/\s/g, '').toLowerCase()
+        : null;
+      const fmcsaDomain = rawFmcsa ? rawFmcsa.split('@').pop() : null;
 
-    // Honest identity summary
-    {
-      const contactPhone = (d.contactPhone || '').replace(/\D/g, '');
-      const fmcsaPhone   = (d.fmcsaPhone   || '').replace(/\D/g, '');
-      const emailDomain  = (d.contactEmail || '').toLowerCase().split('@')[1] || '';
-      const freeEmail    = !!emailDomain && ['gmail.com','yahoo.com','hotmail.com','outlook.com','live.com',
-        'aol.com','icloud.com','protonmail.com','proton.me','me.com',
-        'ymail.com','msn.com','mail.com','inbox.com','gmx.com','gmx.net',
-        'zoho.com','fastmail.com'].includes(emailDomain);
+      if (rawContact) {
+        let emailMatchText, emailMatchColor;
+        if (rawFmcsa) {
+          if (rawContact === rawFmcsa) {
+            emailMatchText  = 'MATCH — exact match with FMCSA registered email';
+            emailMatchColor = C.green;
+          } else if (contactDomain === fmcsaDomain) {
+            emailMatchText  = `MATCH — same registered domain (${contactDomain})`;
+            emailMatchColor = C.green;
+          } else if (FREE_EMAILS.has(contactDomain)) {
+            emailMatchText  = `FREE PROVIDER (${contactDomain}) — does not match FMCSA registered email`;
+            emailMatchColor = C.yellow;
+          } else {
+            emailMatchText  = `DOMAIN MISMATCH — contact: ${contactDomain} ≠ FMCSA: ${fmcsaDomain}`;
+            emailMatchColor = C.yellow;
+          }
+        } else {
+          const isFree = FREE_EMAILS.has(contactDomain);
+          emailMatchText  = isFree
+            ? `FREE PROVIDER (${contactDomain}) — identity unverifiable by domain`
+            : `Company domain (${contactDomain}) — no FMCSA email to compare`;
+          emailMatchColor = isFree ? C.yellow : C.green;
+        }
+        twoColLabelValue(doc, L, W, 'Email Match:', emailMatchText, emailMatchColor, true);
+      } else {
+        dataRow(doc, L, W, 'Email Match', null);
+      }
+
+      // Identity summary
+      const contactPhone  = (d.contactPhone || '').replace(/\D/g, '');
+      const fmcsaPhone    = (d.fmcsaPhone   || '').replace(/\D/g, '');
       const phoneMismatch = contactPhone && fmcsaPhone && contactPhone !== fmcsaPhone;
 
+      let emailIssue = null;
+      if (rawContact && contactDomain) {
+        if (rawFmcsa) {
+          if (rawContact !== rawFmcsa && contactDomain !== fmcsaDomain) {
+            emailIssue = FREE_EMAILS.has(contactDomain)
+              ? `Email: Free provider, no match (${contactDomain})`
+              : `Email: Domain mismatch (${contactDomain} ≠ ${fmcsaDomain})`;
+          }
+        } else if (FREE_EMAILS.has(contactDomain)) {
+          emailIssue = `Email: Free consumer domain (${contactDomain})`;
+        }
+      }
+
       let summaryText, summaryColor;
-      if (!phoneMismatch && !freeEmail) {
-        summaryText  = contactPhone && fmcsaPhone ? 'Phones match. No free email.' : 'Insufficient data for full identity check.';
+      if (!phoneMismatch && !emailIssue) {
+        summaryText  = contactPhone && fmcsaPhone ? 'Phones match. Email OK.' : 'Insufficient data for full identity check.';
         summaryColor = contactPhone && fmcsaPhone ? C.green : C.gray;
       } else {
         const parts = [];
         if (phoneMismatch) parts.push('Phone: MISMATCH');
         else if (contactPhone && fmcsaPhone) parts.push('Phone: Match');
-        if (freeEmail) parts.push(`Email: Free consumer domain (${emailDomain})`);
+        if (emailIssue) parts.push(emailIssue);
         summaryText  = parts.join('. ');
         summaryColor = C.yellow;
       }
