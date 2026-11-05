@@ -58,6 +58,7 @@ const INITIAL_FORM = {
   // FMCSA identity linkage (chameleon check)
   fmcsaChameleonMatches:     null,   // null = not reviewed; [] = clean; array of match objects
   fmcsaChameleonNotReviewed: false,
+  fmcsaChameleonTimedOut:    false,
   // Carrier Assure
   carrierAssureGrade: '',
   fraudFlag:         false,
@@ -614,12 +615,17 @@ export default function CarrierVetting({ settings }) {
     setBlockInfo(null);
     setLookingUp(true);
     try {
-      const [fmcsaRes, swRes, blockRes, insRes, chamRes] = await Promise.all([
+      // Chameleon runs in parallel but is capped at 6 s independently of the other calls.
+      const chamPromise = Promise.race([
+        fetch(`/api/chameleon/${dot}`).then(r => r.ok ? r.json() : { notReviewed: true }).catch(() => ({ notReviewed: true })),
+        new Promise(resolve => setTimeout(() => resolve({ notReviewed: true, timedOut: true }), 6000)),
+      ]);
+
+      const [fmcsaRes, swRes, blockRes, insRes] = await Promise.all([
         fetch(`/api/fmcsa/dot/${dot}`),
         fetch(`/api/saferwatch/${dot}`),
         fetch(`/api/monitoring/blocks/${dot}`),
         fetch(`/api/insurance/cancellation/${dot}`),
-        fetch(`/api/chameleon/${dot}`),
       ]);
       const fmcsaJson = await fmcsaRes.json();
       const swJson    = await swRes.json();
@@ -659,13 +665,13 @@ export default function CarrierVetting({ settings }) {
         }
       }
 
-      if (chamRes.ok) {
-        const chamJson = await chamRes.json();
-        if (chamJson.notReviewed) {
-          setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true }));
-        } else {
-          setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false }));
-        }
+      const chamJson = await chamPromise;
+      if (chamJson.timedOut) {
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: true }));
+      } else if (chamJson.notReviewed) {
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false }));
+      } else {
+        setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false }));
       }
     } catch (e) {
       setLookupErr(e.message);
@@ -1250,7 +1256,7 @@ export default function CarrierVetting({ settings }) {
       <div style={s.card}>
         <div style={s.cardHead}>FMCSA Identity Linkage</div>
         {form.fmcsaChameleonMatches === null
-          ? <span style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Not reviewed (no data)</span>
+          ? <span style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>{form.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed (no data)'}</span>
           : form.fmcsaChameleonMatches.length === 0
             ? <span style={{ fontSize: 12, color: '#111827' }}>No linked carriers found</span>
             : <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
