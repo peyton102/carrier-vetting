@@ -559,6 +559,27 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // 39. BASIC at-or-above: score exactly at threshold → REJECT (≥ semantics)
+  //     DEFAULT_SETTINGS: basicUnsafeDrivingThreshold = 65, action = 'reject'
+  results.push(await t('BASIC at threshold (65 = 65) → REJECT (≥ semantics)', async () => {
+    const d = { ...CLEAN, unsafeDrivingBasic: '65' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'REJECT', `want REJECT (at-threshold ≥), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Unsafe Driving') && s.includes('≥')),
+      `expected ≥ in BASIC reason, got: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 40. BASIC one below threshold: score 64 < 65 → APPROVE (not triggered)
+  results.push(await t('BASIC one below threshold (64 < 65) → APPROVE', async () => {
+    const d = { ...CLEAN, unsafeDrivingBasic: '64' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `want APPROVE (below threshold), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // 21. Data isolation: second run on a clean carrier has zero contamination from first
   results.push(await t('data isolation — REJECT then APPROVE yields clean second result', async () => {
     const reject = { ...CLEAN, safetyRating: 'Unsatisfactory', drugAlcoholViolation: true, activeFederalOOS: true };
