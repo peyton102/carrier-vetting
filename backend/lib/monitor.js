@@ -564,18 +564,24 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
+      const sharedSwTenants = (process.env.SAFERWATCH_SHARED_TENANTS || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+
       const [tenantRow, credRow] = await Promise.all([
         supabase.from('tenants').select('email').eq('slug', tid).single(),
         supabase.from('tenant_credentials')
-          .select('fmcsa_webkey, sw_service_key, sw_customer_key')
-          .eq('tenant_slug', tid).single(),
+          .select('sw_service_key, sw_customer_key')
+          .eq('tenant_slug', tid).maybeSingle(),
       ]);
 
       tenantEmail = tenantRow.data?.email ?? null;
-      webKey      = credRow.data?.fmcsa_webkey  ? decrypt(credRow.data.fmcsa_webkey)  : null;
+      webKey      = process.env.FMCSA_WEBKEY || null;
+      const isShared = sharedSwTenants.includes(tid);
       swKeys = {
-        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)  : process.env.SAFERWATCH_SERVICE_KEY,
-        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key) : process.env.SAFERWATCH_CUSTOMER_KEY,
+        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)
+                     : (isShared ? process.env.SAFERWATCH_SERVICE_KEY  : null),
+        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key)
+                     : (isShared ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
       };
     } catch (e) {
       console.warn(`[MONITOR] Could not fetch data for tenant ${tid}: ${e.message}`);
@@ -583,7 +589,7 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
     }
 
     if (!webKey) {
-      console.warn(`[MONITOR] Tenant ${tid} has no FMCSA web key — skipping ${tenantLoads.length} load(s)`);
+      console.warn(`[MONITOR] FMCSA_WEBKEY not set in environment — skipping ${tenantLoads.length} load(s)`);
       continue;
     }
 
@@ -837,18 +843,24 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
+      const sharedSwTenants = (process.env.SAFERWATCH_SHARED_TENANTS || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+
       const [tenantRow, credRow] = await Promise.all([
         supabase.from('tenants').select('email').eq('slug', tid).single(),
         supabase.from('tenant_credentials')
-          .select('fmcsa_webkey, sw_service_key, sw_customer_key')
-          .eq('tenant_slug', tid).single(),
+          .select('sw_service_key, sw_customer_key')
+          .eq('tenant_slug', tid).maybeSingle(),
       ]);
 
       tenantEmail = tenantRow.data?.email ?? null;
-      webKey      = credRow.data?.fmcsa_webkey  ? decrypt(credRow.data.fmcsa_webkey)  : null;
+      webKey      = process.env.FMCSA_WEBKEY || null;
+      const isShared = sharedSwTenants.includes(tid);
       swKeys = {
-        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)  : process.env.SAFERWATCH_SERVICE_KEY,
-        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key) : process.env.SAFERWATCH_CUSTOMER_KEY,
+        serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)
+                     : (isShared ? process.env.SAFERWATCH_SERVICE_KEY  : null),
+        customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key)
+                     : (isShared ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
       };
     } catch (e) {
       console.warn(`[MONITOR:WATCH] Could not fetch data for tenant ${tid}: ${e.message}`);
@@ -856,7 +868,7 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
     }
 
     if (!webKey) {
-      console.warn(`[MONITOR:WATCH] Tenant ${tid} has no FMCSA web key — skipping ${tenantCarriers.length} carrier(s)`);
+      console.warn(`[MONITOR:WATCH] FMCSA_WEBKEY not set in environment — skipping ${tenantCarriers.length} carrier(s)`);
       continue;
     }
 

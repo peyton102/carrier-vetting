@@ -2,11 +2,9 @@
 // GET /api/fmcsa/dot/:dot  — look up by DOT number
 // GET /api/fmcsa/mc/:mc   — look up by MC number
 //
-// Each tenant uses their own FMCSA web key stored in tenant_credentials.
+// Uses the shared FMCSA_WEBKEY from .env — one key for the whole platform.
 
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { decrypt } from '../lib/encryption.js';
 
 const router           = express.Router();
 const BASE             = 'https://mobile.fmcsa.dot.gov/qc/services';
@@ -29,20 +27,8 @@ async function fetchFmcsa(url) {
   return fetch(url, { signal: AbortSignal.timeout(FMCSA_TIMEOUT_MS) });
 }
 
-function getSupabase() {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
-
-async function getTenantWebKey(tenantSlug) {
-  const t = Date.now();
-  const { data } = await getSupabase()
-    .from('tenant_credentials')
-    .select('fmcsa_webkey')
-    .eq('tenant_slug', tenantSlug)
-    .single();
-  console.log(`[TIMING][FMCSA] Supabase tenant_credentials read: ${ms(t)}`);
-  if (!data?.fmcsa_webkey) return null;
-  return decrypt(data.fmcsa_webkey);
+function getWebKey() {
+  return process.env.FMCSA_WEBKEY || null;
 }
 
 function fmcsaUrl(path, webKey) {
@@ -502,8 +488,8 @@ async function fetchGrantDate(dot, webKey) {
 router.get('/dot/:dot', async (req, res, next) => {
   const tTotal = Date.now();
   try {
-    const webKey = await getTenantWebKey(req.auth.tenant);
-    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — add your key in Settings' });
+    const webKey = getWebKey();
+    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — set FMCSA_WEBKEY in .env' });
 
     const dot = req.params.dot.replace(/\D/g, '');
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
@@ -545,8 +531,8 @@ router.get('/dot/:dot', async (req, res, next) => {
 // ── MC number lookup ──────────────────────────────────────────────────────────
 router.get('/mc/:mc', async (req, res, next) => {
   try {
-    const webKey = await getTenantWebKey(req.auth.tenant);
-    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — add your key in Settings' });
+    const webKey = getWebKey();
+    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — set FMCSA_WEBKEY in .env' });
 
     const mc = req.params.mc.replace(/^(MC|FF)/i, '').replace(/\D/g, '');
     if (!mc) return res.status(400).json({ error: 'Invalid MC number' });
@@ -577,8 +563,8 @@ router.get('/mc/:mc', async (req, res, next) => {
 // ── Legacy: keep /:dot working so existing bookmarks don't break ──────────────
 router.get('/:dot', async (req, res, next) => {
   try {
-    const webKey = await getTenantWebKey(req.auth.tenant);
-    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — add your key in Settings' });
+    const webKey = getWebKey();
+    if (!webKey) return res.status(503).json({ error: 'FMCSA web key not configured — set FMCSA_WEBKEY in .env' });
 
     const dot = req.params.dot.replace(/\D/g, '');
     if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });

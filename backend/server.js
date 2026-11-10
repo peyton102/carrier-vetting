@@ -133,7 +133,7 @@ app.listen(PORT, () => {
   console.log(`  SUPABASE_SERVICE_ROLE_KEY = ${mask(key)}`);
   console.log(`  JWT_SECRET                = ${jwt}\n`);
 
-  // Start carrier monitoring background job (per-tenant FMCSA keys, always starts)
+  // Start carrier monitoring background job (shared FMCSA_WEBKEY, per-tenant SW keys)
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     startMonitoringJob(getSupabase());
   }

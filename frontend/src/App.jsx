@@ -171,10 +171,126 @@ function LoginOrForgot({ onLogin }) {
   return <LoginScreen onLogin={onLogin} onForgot={() => setScreen('forgot')} />;
 }
 
+function SaferwatchOnboarding({ onDone }) {
+  const [serviceKey,  setServiceKey]  = useState('');
+  const [customerKey, setCustomerKey] = useState('');
+  const [testing,     setTesting]     = useState(false);
+  const [saving,      setSaving]      = useState(false);
+  const [testResult,  setTestResult]  = useState(null); // null | { status, message }
+
+  const inputStyle = {
+    width: '100%', padding: '10px 14px', border: '1.5px solid #cbd5e1', borderRadius: 8,
+    fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box',
+    background: '#f8fafc', color: '#0f172a', marginBottom: 14,
+  };
+  const btnStyle = (disabled, primary) => ({
+    padding: '10px 20px', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14,
+    cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+    background: disabled ? '#e2e8f0' : primary ? '#f97316' : '#f1f5f9',
+    color: disabled ? '#94a3b8' : primary ? '#fff' : '#475569',
+    opacity: disabled ? 0.7 : 1,
+    boxShadow: disabled ? 'none' : primary ? '0 2px 8px rgba(249,115,22,.25)' : 'none',
+    border: primary ? 'none' : '1px solid #e2e8f0',
+  });
+
+  async function handleTest() {
+    setTesting(true); setTestResult(null);
+    try {
+      const r = await fetch('/api/credentials/saferwatch/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceKey, customerKey }),
+      });
+      setTestResult(await r.json());
+    } catch { setTestResult({ status: 'error', message: 'Could not connect — try again.' }); }
+    finally { setTesting(false); }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const r = await fetch('/api/credentials/saferwatch', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceKey, customerKey }),
+      });
+      if (r.ok) onDone();
+      else { const d = await r.json(); setTestResult({ status: 'error', message: d.error ?? 'Save failed' }); }
+    } catch { setTestResult({ status: 'error', message: 'Could not connect — try again.' }); }
+    finally { setSaving(false); }
+  }
+
+  const verified = testResult?.status === 'verified';
+  const statusColor = testResult?.status === 'verified' ? '#16a34a'
+                    : testResult?.status === 'invalid'  ? '#dc2626'
+                    : '#b45309';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
+      <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 24px rgba(0,0,0,.08)', padding: '40px 36px', width: 420 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block' }} />
+          <span style={{ fontWeight: 800, fontSize: 20, color: '#0f172a' }}>Carrier Vetting</span>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', marginBottom: 6 }}>Set up your data source</div>
+        <p style={{ fontSize: 13, color: '#475569', marginBottom: 20, lineHeight: 1.6 }}>
+          Carrier BASIC scores, OOS rates, and insurance amounts come from SaferWatch.
+          You need an API key before you can run vettings.
+        </p>
+
+        <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#1e40af', marginBottom: 20 }}>
+          <strong>How to get your keys:</strong> Contact your SaferWatch representative and ask for your
+          <strong> Service Key</strong> and <strong>Customer Key</strong>.
+          If you don't have a SaferWatch account yet, ask your rep to sign you up.
+          The <strong>Assure plan</strong> is required for cargo insurance data.
+        </div>
+
+        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Service Key</label>
+        <input
+          type="password" autoComplete="off" placeholder="Paste your Service Key…"
+          value={serviceKey} onChange={e => { setServiceKey(e.target.value); setTestResult(null); }}
+          style={inputStyle}
+        />
+        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Customer Key</label>
+        <input
+          type="password" autoComplete="off" placeholder="Paste your Customer Key…"
+          value={customerKey} onChange={e => { setCustomerKey(e.target.value); setTestResult(null); }}
+          style={{ ...inputStyle, marginBottom: 16 }}
+        />
+
+        {testResult && (
+          <div style={{ fontSize: 13, fontWeight: 600, color: statusColor, marginBottom: 14, lineHeight: 1.5 }}>
+            {testResult.message}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={handleTest}
+            disabled={testing || !serviceKey.trim() || !customerKey.trim()}
+            style={btnStyle(testing || !serviceKey.trim() || !customerKey.trim(), false)}
+          >
+            {testing ? 'Testing…' : 'Test Connection'}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !verified}
+            style={btnStyle(saving || !verified, true)}
+          >
+            {saving ? 'Saving…' : 'Save & Continue'}
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 14, marginBottom: 0 }}>
+          Test the connection first, then save to continue.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user,     setUser]     = useState(null);
   const [ready,    setReady]    = useState(false);
   const [settings, setSettings] = useState(null);
+  const [swReady,  setSwReady]  = useState(null); // null=loading, true=ok, false=setup needed
 
   useEffect(() => {
     fetch('/api/me')
@@ -183,19 +299,24 @@ export default function App() {
       .catch(() => { setUser(false); setReady(true); });
   }, []);
 
-  // Load settings whenever a user session is established
+  // Load settings + check SaferWatch key whenever a session is established
   useEffect(() => {
-    if (!user) return;
+    if (!user) { setSwReady(null); return; }
     fetch('/api/settings')
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setSettings(data); })
       .catch(() => {});
+    fetch('/api/credentials/saferwatch')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setSwReady(d?.configured === true))
+      .catch(() => setSwReady(false));
   }, [user]);
 
   async function handleLogout() {
     await fetch('/api/logout', { method: 'POST' });
     setUser(false);
     setSettings(null);
+    setSwReady(null);
   }
 
   if (!ready) return (
@@ -217,6 +338,23 @@ export default function App() {
         <Route path="*"               element={<LoginOrForgot onLogin={setUser} />} />
       </Routes>
     );
+  }
+
+  // SaferWatch key check: show spinner while loading, onboarding if not configured
+  if (swReady === null) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block', marginBottom: 12 }} />
+          <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Carrier Vetting</div>
+          <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (swReady === false) {
+    return <SaferwatchOnboarding onDone={() => setSwReady(true)} />;
   }
 
   const navLink = (to, label) => (
