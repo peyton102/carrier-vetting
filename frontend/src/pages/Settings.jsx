@@ -334,7 +334,7 @@ export default function Settings({ settings, onSave }) {
             The multiplier check triggers a <strong>Hold</strong> for manager review.
           </p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px', marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '14px 20px', marginBottom: 16 }}>
             <div>
               <label style={s.label}>Vehicle OOS Hard Block (%)</label>
               <input
@@ -345,6 +345,18 @@ export default function Settings({ settings, onSave }) {
               />
               <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
                 Carrier above this → auto-REJECT, no override. Default: 35%.
+              </p>
+            </div>
+            <div>
+              <label style={s.label}>Vehicle OOS Absolute Floor (%)</label>
+              <input
+                type="number" min={10} max={35}
+                value={form.oosAbsFloorTruck ?? ''}
+                onChange={e => set('oosAbsFloorTruck', parseFloat(e.target.value))}
+                style={s.input}
+              />
+              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
+                Carrier above this → auto-REJECT even below 2× national avg. Range: 10–35%. Default: 20%.
               </p>
             </div>
             <div>

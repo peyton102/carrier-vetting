@@ -47,6 +47,7 @@ router.put('/', async (req, res, next) => {
       oos_rate_multiplier:                       floatMin(b.oosRateMultiplier,   D.oosRateMultiplier,   1),
       oos_hard_block_truck:                      floatMin(b.oosHardBlockTruck,   D.oosHardBlockTruck,   1),
       oos_hard_block_driver:                     floatMin(b.oosHardBlockDriver,  D.oosHardBlockDriver,  1),
+      oos_abs_floor_truck:                       floatClamp(b.oosAbsFloorTruck,  D.oosAbsFloorTruck,    10, 35),
       inspection_volume_min:                     posInt(b.inspectionVolumeMin,   D.inspectionVolumeMin),
       alert_recipients:                          (b.alertRecipients ?? '').trim().slice(0, 2000),
       mileage_per_unit_min:                      posInt(b.mileagePerUnitMin,    D.mileagePerUnitMin),
@@ -77,6 +78,10 @@ function posInt(v, def) {
 function floatMin(v, def, min) {
   const n = parseFloat(v);
   return isNaN(n) ? def : Math.max(min, n);
+}
+function floatClamp(v, def, min, max) {
+  const n = parseFloat(v);
+  return isNaN(n) ? def : Math.min(max, Math.max(min, n));
 }
 function oneOf(v, def, allowed) {
   return allowed.includes(v) ? v : def;

@@ -41,8 +41,12 @@ export const DEFAULT_SETTINGS = {
   // ── OOS yellow flag: carrier rate >= national_avg * multiplier → HOLD ─────
   oosRateMultiplier: 2,
   // ── OOS hard blocks (RED, no override) ────────────────────────────────────
-  oosHardBlockTruck:  35,
-  oosHardBlockDriver:  7,
+  oosHardBlockTruck:   35,
+  oosHardBlockDriver:   7,
+  // ── OOS absolute floor — truck-specific REJECT even below hard block ────────
+  // Carriers above this % are rejected regardless of national average.
+  // Configurable 10–35%; default 20% matches historical FMCSA floor.
+  oosAbsFloorTruck:    20,
   // ── Inspection volume minimum ─────────────────────────────────────────────
   inspectionVolumeMin: 3,
   // ── BIPD cancellation notice threshold (days) ────────────────────────────
@@ -65,9 +69,6 @@ const FEDERAL_AUTO_LIABILITY_MIN = 750_000;
 
 // FMCSA complaint portal — referenced in identity-check warnings.
 const FMCSA_COMPLAINT_URL = 'https://nccdb.fmcsa.dot.gov';
-
-// Absolute truck OOS floor — always RED regardless of tenant settings.
-const ABSOLUTE_TRUCK_OOS_FLOOR = 20;
 
 // Free email provider domains. Contact email on one of these triggers HOLD
 // because the dispatcher cannot verify carrier identity by email domain alone.
@@ -343,11 +344,12 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const truckOos  = parseFloat(d.truckOosPct);
   const driverOos = parseFloat(d.driverOosPct);
 
-  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, hardBlockTruck,  ABSOLUTE_TRUCK_OOS_FLOOR);
+  const absFloorTruck  = parseFloat(cfg.oosAbsFloorTruck) || DEFAULT_SETTINGS.oosAbsFloorTruck;
+  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, hardBlockTruck,  absFloorTruck);
   const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver, null);
 
   if (truckOosClass === 'abs_floor') {
-    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${ABSOLUTE_TRUCK_OOS_FLOOR}% absolute floor — automatic disqualification, no override (this threshold cannot be changed in Settings)`);
+    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${absFloorTruck}% absolute floor — automatic disqualification, no override`);
   }
   if (truckOosClass === 'hard_block') {
     red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);

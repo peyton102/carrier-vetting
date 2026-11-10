@@ -454,14 +454,14 @@ export function generateVettingPDF(opts) {
     const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
     const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
     const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
-    const ABS_FLOOR    = 20;
+    const ABS_FLOOR    = parseFloat(cfg.oosAbsFloorTruck) || DEFAULT_SETTINGS.oosAbsFloorTruck;
 
     const truckParts = [];
     if (natAvgTruck != null) {
       const truckYellowAt = natAvgTruck * mult;
       if (truckYellowAt < ABS_FLOOR) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
     }
-    truckParts.push(`REJECT >20% floor`, `REJECT >${hardTruck}% hard`);
+    truckParts.push(`REJECT >${ABS_FLOOR}% floor`, `REJECT >${hardTruck}% hard`);
     const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
 
     const driverParts = [];

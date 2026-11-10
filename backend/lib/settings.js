@@ -35,6 +35,7 @@ export function rowToCfg(row) {
     oosRateMultiplier:                      row.oos_rate_multiplier,
     oosHardBlockTruck:                      row.oos_hard_block_truck,
     oosHardBlockDriver:                     row.oos_hard_block_driver,
+    oosAbsFloorTruck:                       row.oos_abs_floor_truck,
     inspectionVolumeMin:                    row.inspection_volume_min,
     bipdCancelDays:                         row.bipd_cancel_days,
     chameleonLookbackDays:                  row.chameleon_lookback_days,

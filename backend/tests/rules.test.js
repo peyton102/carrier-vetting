@@ -559,6 +559,32 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // 41. oosAbsFloorTruck tenant setting: custom floor of 25 means 22% → HOLD not REJECT
+  //     With DEFAULT floor (20): classifyOos(22, 10, 2, 35, 20) → 22>20 → abs_floor → REJECT
+  //     With floor=25:           classifyOos(22, 10, 2, 35, 25) → 22≤25 → not abs_floor;
+  //                              22>=2×10=20 → yellow → HOLD
+  results.push(await t('oosAbsFloorTruck=25: truck OOS 22% → HOLD (not REJECT)', async () => {
+    const d = { ...CLEAN, truckOosPct: '22', nationalAvgTruckOos: '10' };
+    const cfgFloor25 = { ...CFG, oosAbsFloorTruck: 25 };
+    const r = runVettingRules(d, cfgFloor25);
+    assert(r.verdict === 'HOLD', `want HOLD (above yellow, below custom floor), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(!r.reasons.some(s => s.includes('absolute floor')),
+      `abs_floor must not fire at 22% when floor=25: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // 42. oosAbsFloorTruck default (20) still REJECTs at 22% — existing behaviour unchanged
+  results.push(await t('oosAbsFloorTruck=20 (default): truck OOS 22% → REJECT (abs_floor)', async () => {
+    const d = { ...CLEAN, truckOosPct: '22', nationalAvgTruckOos: '10' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'REJECT', `want REJECT (22>20 abs_floor), got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('absolute floor') && s.includes('20%')),
+      `abs_floor reason with 20% not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // 39. BASIC at-or-above: score exactly at threshold → REJECT (≥ semantics)
   //     DEFAULT_SETTINGS: basicUnsafeDrivingThreshold = 65, action = 'reject'
   results.push(await t('BASIC at threshold (65 = 65) → REJECT (≥ semantics)', async () => {
