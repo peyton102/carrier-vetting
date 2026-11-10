@@ -334,33 +334,21 @@ export default function Settings({ settings, onSave }) {
             The multiplier check triggers a <strong>Hold</strong> for manager review.
           </p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '14px 20px', marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px 20px', marginBottom: 16 }}>
             <div>
-              <label style={s.label}>Vehicle OOS Hard Block (%)</label>
-              <input
-                type="number" min={1} max={100}
-                value={form.oosHardBlockTruck ?? ''}
-                onChange={e => set('oosHardBlockTruck', parseFloat(e.target.value))}
-                style={s.input}
-              />
-              <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
-                Carrier above this → auto-REJECT, no override. Default: 35%.
-              </p>
-            </div>
-            <div>
-              <label style={s.label}>Vehicle OOS Absolute Floor (%)</label>
+              <label style={s.label}>Vehicle OOS maximum (%)</label>
               <input
                 type="number" min={10} max={35}
-                value={form.oosAbsFloorTruck ?? ''}
-                onChange={e => set('oosAbsFloorTruck', parseFloat(e.target.value))}
+                value={form.oosMaxTruck ?? ''}
+                onChange={e => set('oosMaxTruck', parseFloat(e.target.value))}
                 style={s.input}
               />
               <p style={{ fontSize: 11, color: '#475569', margin: '4px 0 0' }}>
-                Carrier above this → auto-REJECT even below 2× national avg. Range: 10–35%. Default: 20%.
+                Carrier above this → auto-REJECT, no override. Range: 10–35%. Default: 20%.
               </p>
             </div>
             <div>
-              <label style={s.label}>Driver OOS Hard Block (%)</label>
+              <label style={s.label}>Driver OOS hard block (%)</label>
               <input
                 type="number" min={1} max={100}
                 value={form.oosHardBlockDriver ?? ''}

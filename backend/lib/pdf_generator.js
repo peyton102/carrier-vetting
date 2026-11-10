@@ -452,16 +452,15 @@ export function generateVettingPDF(opts) {
     const natAvgTruck  = isNaN(natAvgTruckRaw)  ? null : natAvgTruckRaw;
     const natAvgDriver = isNaN(natAvgDriverRaw) ? null : natAvgDriverRaw;
     const mult         = parseFloat(cfg.oosRateMultiplier)  || 2;
-    const hardTruck    = parseFloat(cfg.oosHardBlockTruck)  || 35;
+    const MAX_TRUCK    = parseFloat(cfg.oosMaxTruck)        || DEFAULT_SETTINGS.oosMaxTruck;
     const hardDriver   = parseFloat(cfg.oosHardBlockDriver) || 7;
-    const ABS_FLOOR    = parseFloat(cfg.oosAbsFloorTruck) || DEFAULT_SETTINGS.oosAbsFloorTruck;
 
     const truckParts = [];
     if (natAvgTruck != null) {
       const truckYellowAt = natAvgTruck * mult;
-      if (truckYellowAt < ABS_FLOOR) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
+      if (truckYellowAt < MAX_TRUCK) truckParts.push(`HOLD >=${truckYellowAt.toFixed(1)}%`);
     }
-    truckParts.push(`REJECT >${ABS_FLOOR}% floor`, `REJECT >${hardTruck}% hard`);
+    truckParts.push(`REJECT >${MAX_TRUCK}%`);
     const truckLabel = `Truck OOS % (${truckParts.join('; ')})`;
 
     const driverParts = [];
@@ -469,14 +468,14 @@ export function generateVettingPDF(opts) {
       const driverYellowAt = natAvgDriver * mult;
       if (driverYellowAt < hardDriver) driverParts.push(`HOLD >=${driverYellowAt.toFixed(1)}%`);
     }
-    driverParts.push(`REJECT >${hardDriver}% hard`);
+    driverParts.push(`REJECT >${hardDriver}%`);
     const driverLabel = `Driver OOS % (${driverParts.join('; ')})`;
 
     // Build source label for OOS rows — prefer the stored oosWinLabel from dual-source selection
     const oosWinLabel = d.oosWinLabel || src('truckOosPct') || null;
     const noVehInsp = Number(d.inspections24mo) === 0;
     const noDrvInsp = Number(d.driverInspections24mo) === 0;
-    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, hardTruck, ABS_FLOOR, oosWinLabel, noVehInsp);
+    oosRowFull(doc, L, W, truckLabel,  d.truckOosPct,  natAvgTruck,  mult, MAX_TRUCK, oosWinLabel, noVehInsp);
     autoFilledNote(doc, L, W, d, 'truckOosPct');
     if (!noVehInsp && d.truckOosPctAlt && d.truckOosPctAltSrc) {
       doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
@@ -484,7 +483,7 @@ export function generateVettingPDF(opts) {
                L + 8, doc.y, { width: W - 8 });
       doc.moveDown(0.15);
     }
-    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, null, oosWinLabel, noDrvInsp);
+    oosRowFull(doc, L, W, driverLabel, d.driverOosPct, natAvgDriver, mult, hardDriver, oosWinLabel, noDrvInsp);
     autoFilledNote(doc, L, W, d, 'driverOosPct');
     if (d.driverOosPctAlt && d.driverOosPctAltSrc) {
       doc.fontSize(8).font('Helvetica-Oblique').fillColor(C.gray)
@@ -898,7 +897,7 @@ function basicRow(doc, L, W, label, rawVal, threshold, source, zeroNote = null) 
     display);
 }
 
-function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock, absFloor, source, noInspections = false) {
+function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, rejectThreshold, source, noInspections = false) {
   if (noInspections) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, `${label}:`,
@@ -910,14 +909,12 @@ function oosRowFull(doc, L, W, label, rawVal, nationalAvg, multiplier, hardBlock
     val,
     parseFloat(nationalAvg),
     parseFloat(multiplier),
-    parseFloat(hardBlock),
-    absFloor != null ? parseFloat(absFloor) : null
+    parseFloat(rejectThreshold)
   );
   const isNA     = cls === 'unknown';
-  const isHard   = cls === 'hard_block' || cls === 'abs_floor';
+  const isHard   = cls === 'hard_block';
   const isYellow = cls === 'yellow';
-  const flagText = cls === 'abs_floor'  ? '  !! EXCEEDS ABSOLUTE FLOOR'
-                 : cls === 'hard_block' ? '  !! EXCEEDS HARD BLOCK'
+  const flagText = cls === 'hard_block' ? '  !! EXCEEDS MAXIMUM'
                  : cls === 'yellow'     ? '  ^ ABOVE FLAG THRESHOLD'
                  : '';
   const base    = isNA ? 'Not reviewed (no data)' : `${val.toFixed(2)}%${flagText}`;

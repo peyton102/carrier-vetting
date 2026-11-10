@@ -40,8 +40,9 @@ export const DEFAULT_SETTINGS = {
   authorityAgeAction: 'hold',  // 'hold' | 'block'
   // ── OOS yellow flag: carrier rate >= national_avg * multiplier → HOLD ─────
   oosRateMultiplier: 2,
-  // ── OOS hard blocks (RED, no override) ────────────────────────────────────
-  oosHardBlockTruck:   35,
+  // ── OOS reject thresholds (RED, no override) ──────────────────────────────
+  // oosMaxTruck: single vehicle OOS ceiling — above this = REJECT (10–35%)
+  oosMaxTruck:         20,
   oosHardBlockDriver:   7,
   // ── OOS absolute floor — truck-specific REJECT even below hard block ────────
   // Carriers above this % are rejected regardless of national average.
@@ -81,20 +82,18 @@ const FREE_EMAIL_DOMAINS = new Set([
 
 /**
  * Classify an OOS rate into a severity level.
- * RED checks use > (strictly above threshold); YELLOW uses >= (at or above).
- * Exported and used by pdf_generator so the cert label and the rule always agree.
+ * RED uses > (strictly above threshold); YELLOW uses >= (at or above).
+ * Exported and used by pdf_generator so the cert label and rule always agree.
  *
- * @param {number}      val        — OOS rate (e.g. 19.5 for 19.5%)
- * @param {number}      natAvg     — live national average OOS rate
- * @param {number}      multiplier — yellow threshold = natAvg × multiplier
- * @param {number}      hardBlock  — hard-block threshold (RED, no override)
- * @param {number|null} absFloor   — absolute floor (truck only; null = not applicable)
- * @returns {'hard_block'|'abs_floor'|'yellow'|'clear'|'unknown'}
+ * @param {number} val              — OOS rate (e.g. 19.5 for 19.5%)
+ * @param {number} natAvg           — live national average OOS rate
+ * @param {number} multiplier       — yellow threshold = natAvg × multiplier
+ * @param {number} rejectThreshold  — above this → RED, no override
+ * @returns {'hard_block'|'yellow'|'clear'|'unknown'}
  */
-export function classifyOos(val, natAvg, multiplier, hardBlock, absFloor = null) {
+export function classifyOos(val, natAvg, multiplier, rejectThreshold) {
   if (val == null || isNaN(val)) return 'unknown';
-  if (val > hardBlock)                          return 'hard_block';
-  if (absFloor != null && val > absFloor)       return 'abs_floor';
+  if (val > rejectThreshold)                    return 'hard_block';
   if (natAvg > 0 && val >= natAvg * multiplier) return 'yellow';
   return 'clear';
 }
@@ -336,7 +335,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   }
 
   // OOS rate classification — uses classifyOos() so rule and cert label always use the same >= comparison
-  const hardBlockTruck  = parseFloat(cfg.oosHardBlockTruck)  || 35;
+  const maxTruck        = parseFloat(cfg.oosMaxTruck)        || DEFAULT_SETTINGS.oosMaxTruck;
   const hardBlockDriver = parseFloat(cfg.oosHardBlockDriver) || 7;
   const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 0;
   const avgDriver = parseFloat(d.nationalAvgDriverOos) || 0;
@@ -344,15 +343,11 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const truckOos  = parseFloat(d.truckOosPct);
   const driverOos = parseFloat(d.driverOosPct);
 
-  const absFloorTruck  = parseFloat(cfg.oosAbsFloorTruck) || DEFAULT_SETTINGS.oosAbsFloorTruck;
-  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, hardBlockTruck,  absFloorTruck);
-  const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver, null);
+  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, maxTruck);
+  const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver);
 
-  if (truckOosClass === 'abs_floor') {
-    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${absFloorTruck}% absolute floor — automatic disqualification, no override`);
-  }
   if (truckOosClass === 'hard_block') {
-    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${hardBlockTruck}% hard limit — automatic disqualification, no override`);
+    red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${maxTruck}% maximum — automatic disqualification, no override`);
   }
   if (driverOosClass === 'hard_block') {
     red.push(`Driver OOS rate ${driverOos}% exceeds the ${hardBlockDriver}% hard limit — automatic disqualification, no override`);

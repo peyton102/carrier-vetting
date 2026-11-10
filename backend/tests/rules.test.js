@@ -126,26 +126,26 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // 2. Truck OOS exactly 20.0% — does NOT trigger abs_floor REJECT
+  // 2. Truck OOS exactly 20.0% — does NOT trigger REJECT (boundary: not > 20)
   //    natAvg 11% → 2× = 22% > 20%, so no yellow OOS flag either → clean APPROVE
   results.push(await t('truck OOS 20.0% → APPROVE (boundary: not > 20)', async () => {
     const d = { ...CLEAN, truckOosPct: '20.0', nationalAvgTruckOos: '11.0' };
     const r = runVettingRules(d, CFG);
     assert(r.verdict === 'APPROVE', `want APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
-    assert(!r.reasons.some(s => s.includes('absolute floor')),
-      `unexpected abs_floor reason: ${r.reasons.join('; ')}`);
+    assert(!r.reasons.some(s => s.includes('maximum')),
+      `unexpected OOS reject reason: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // 3. Truck OOS 20.1% — triggers abs_floor REJECT (> 20, not ≥ 20)
-  results.push(await t('truck OOS 20.1% → REJECT (abs_floor)', async () => {
+  // 3. Truck OOS 20.1% — triggers REJECT (> 20, not ≥ 20)
+  results.push(await t('truck OOS 20.1% → REJECT (exceeds maximum)', async () => {
     const d = { ...CLEAN, truckOosPct: '20.1', nationalAvgTruckOos: '11.0' };
     const r = runVettingRules(d, CFG);
     assert(r.verdict === 'REJECT', `want REJECT, got ${r.verdict}`);
-    assert(r.reasons.some(s => s.includes('absolute floor')),
-      `abs_floor reason not found in: ${r.reasons.join('; ')}`);
-    assert(r.canOverride === false, 'abs_floor must set canOverride:false');
+    assert(r.reasons.some(s => s.includes('maximum')),
+      `OOS max reason not found in: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'OOS max must set canOverride:false');
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
@@ -559,28 +559,28 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // 41. oosAbsFloorTruck tenant setting: custom floor of 25 means 22% → HOLD not REJECT
-  //     With DEFAULT floor (20): classifyOos(22, 10, 2, 35, 20) → 22>20 → abs_floor → REJECT
-  //     With floor=25:           classifyOos(22, 10, 2, 35, 25) → 22≤25 → not abs_floor;
-  //                              22>=2×10=20 → yellow → HOLD
-  results.push(await t('oosAbsFloorTruck=25: truck OOS 22% → HOLD (not REJECT)', async () => {
+  // 41. oosMaxTruck tenant setting: custom max of 25 means 22% → HOLD not REJECT
+  //     With DEFAULT max (20): classifyOos(22, 10, 2, 20) → 22>20 → hard_block → REJECT
+  //     With max=25:           classifyOos(22, 10, 2, 25) → 22≤25 → not hard_block;
+  //                            22>=2×10=20 → yellow → HOLD
+  results.push(await t('oosMaxTruck=25: truck OOS 22% → HOLD (not REJECT)', async () => {
     const d = { ...CLEAN, truckOosPct: '22', nationalAvgTruckOos: '10' };
-    const cfgFloor25 = { ...CFG, oosAbsFloorTruck: 25 };
-    const r = runVettingRules(d, cfgFloor25);
-    assert(r.verdict === 'HOLD', `want HOLD (above yellow, below custom floor), got ${r.verdict}: ${r.reasons.join('; ')}`);
-    assert(!r.reasons.some(s => s.includes('absolute floor')),
-      `abs_floor must not fire at 22% when floor=25: ${r.reasons.join('; ')}`);
+    const cfgMax25 = { ...CFG, oosMaxTruck: 25 };
+    const r = runVettingRules(d, cfgMax25);
+    assert(r.verdict === 'HOLD', `want HOLD (above yellow, below custom max), got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(!r.reasons.some(s => s.includes('maximum')),
+      `OOS max must not fire at 22% when max=25: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // 42. oosAbsFloorTruck default (20) still REJECTs at 22% — existing behaviour unchanged
-  results.push(await t('oosAbsFloorTruck=20 (default): truck OOS 22% → REJECT (abs_floor)', async () => {
+  // 42. oosMaxTruck default (20) still REJECTs at 22% — existing behaviour unchanged
+  results.push(await t('oosMaxTruck=20 (default): truck OOS 22% → REJECT', async () => {
     const d = { ...CLEAN, truckOosPct: '22', nationalAvgTruckOos: '10' };
     const r = runVettingRules(d, CFG);
-    assert(r.verdict === 'REJECT', `want REJECT (22>20 abs_floor), got ${r.verdict}`);
-    assert(r.reasons.some(s => s.includes('absolute floor') && s.includes('20%')),
-      `abs_floor reason with 20% not found: ${r.reasons.join('; ')}`);
+    assert(r.verdict === 'REJECT', `want REJECT (22>20 max), got ${r.verdict}`);
+    assert(r.reasons.some(s => s.includes('maximum') && s.includes('20%')),
+      `OOS max reason with 20% not found: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
