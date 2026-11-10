@@ -47,7 +47,7 @@ function LoginScreen({ onLogin, onForgot }) {
       <div style={{ background: '#ffffff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 24px rgba(0,0,0,.08)', padding: '40px 36px', width: 340 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block' }} />
-          <span style={{ fontWeight: 800, fontSize: 20, color: '#0f172a' }}>Carrier Vetting</span>
+          <span style={{ fontWeight: 800, fontSize: 20, color: '#0f172a' }}>Torevez</span>
         </div>
         <div style={{ color: '#64748b', fontSize: 13, marginBottom: 28 }}>Sign in to your account</div>
         <form onSubmit={handleSubmit}>
@@ -116,7 +116,7 @@ function ForgotPasswordScreen({ onBack }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
       <div style={{ background: '#ffffff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 24px rgba(0,0,0,.08)', padding: '40px 36px', width: 340 }}>
-        <div style={{ fontWeight: 800, fontSize: 20, color: '#0f172a', marginBottom: 4 }}>Carrier Vetting</div>
+        <div style={{ fontWeight: 800, fontSize: 20, color: '#0f172a', marginBottom: 4 }}>Torevez</div>
 
         {status === 'sent' ? (
           <>
@@ -228,12 +228,12 @@ function SaferwatchOnboarding({ onDone }) {
       <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 24px rgba(0,0,0,.08)', padding: '40px 36px', width: 420 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block' }} />
-          <span style={{ fontWeight: 800, fontSize: 20, color: '#0f172a' }}>Carrier Vetting</span>
+          <span style={{ fontWeight: 800, fontSize: 20, color: '#0f172a' }}>Torevez</span>
         </div>
         <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a', marginBottom: 6 }}>Set up your data source</div>
         <p style={{ fontSize: 13, color: '#475569', marginBottom: 20, lineHeight: 1.6 }}>
-          Carrier BASIC scores, OOS rates, and insurance amounts come from SaferWatch.
-          You need an API key before you can run vettings.
+          BASIC scores and insurance data come from your own SaferWatch account.
+          Everything else comes from FMCSA automatically.
         </p>
 
         <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#1e40af', marginBottom: 20 }}>
@@ -253,8 +253,11 @@ function SaferwatchOnboarding({ onDone }) {
         <input
           type="password" autoComplete="off" placeholder="Paste your Customer Key…"
           value={customerKey} onChange={e => { setCustomerKey(e.target.value); setTestResult(null); }}
-          style={{ ...inputStyle, marginBottom: 16 }}
+          style={{ ...inputStyle, marginBottom: 8 }}
         />
+        <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 16px' }}>
+          Your keys are encrypted and only used for your account's lookups.
+        </p>
 
         {testResult && (
           <div style={{ fontSize: 13, fontWeight: 600, color: statusColor, marginBottom: 14, lineHeight: 1.5 }}>
@@ -323,7 +326,7 @@ export default function App() {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block', marginBottom: 12 }} />
-        <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Carrier Vetting</div>
+        <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Torevez</div>
         <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading…</div>
       </div>
     </div>
@@ -346,7 +349,7 @@ export default function App() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#f1f5f9' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px rgba(34,197,94,.5)', display: 'inline-block', marginBottom: 12 }} />
-          <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Carrier Vetting</div>
+          <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 16, marginBottom: 6 }}>Torevez</div>
           <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading…</div>
         </div>
       </div>
@@ -366,7 +369,7 @@ export default function App() {
   return (
     <div className="app">
       <nav>
-        <span className="brand">{user.name || 'Carrier Vetting'}</span>
+        <span className="brand">{user.name || 'Torevez'}</span>
         <span className="nav-links">
           {navLink('/vetting',      'Vetting')}
           {navLink('/monitoring',   'Monitoring')}
