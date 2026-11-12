@@ -599,7 +599,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
 function checkBasic(red, yellow, rawVal, threshold, action, label) {
   const val = parseFloat(rawVal);
   if (isNaN(val) || val < threshold) return;
-  const msg = `${label} BASIC ${val}% ≥ this broker's ${threshold}% threshold`;
+  const msg = `${label} BASIC ${val}% at or above this broker's ${threshold}% threshold`;
   if (action === 'reject') red.push(msg + ' — automatic disqualification, no override');
   else yellow.push(msg);
 }

@@ -592,8 +592,8 @@ export async function runAll() {
     const d = { ...CLEAN, unsafeDrivingBasic: '65' };
     const r = runVettingRules(d, CFG);
     assert(r.verdict === 'REJECT', `want REJECT (at-threshold ≥), got ${r.verdict}: ${r.reasons.join('; ')}`);
-    assert(r.reasons.some(s => s.includes('Unsafe Driving') && s.includes('≥')),
-      `expected ≥ in BASIC reason, got: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Unsafe Driving') && s.includes('at or above')),
+      `expected "at or above" in BASIC reason, got: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));

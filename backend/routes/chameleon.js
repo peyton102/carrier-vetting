@@ -561,7 +561,10 @@ async function _chameleonCore(dot, tenantSlug, supabase, cfg) {
 
   } catch (e) {
     console.error('[CHAMELEON] error for DOT', dot, ':', e.message);
-    return { notReviewed: true };
+    const timedOut = e.name === 'TimeoutError' || e.name === 'AbortError' ||
+                     e?.code === 'ECONNRESET'  || e?.code === 'ENOTFOUND' ||
+                     e?.code === 'ECONNREFUSED';
+    return { notReviewed: true, timedOut };
   }
 }
 

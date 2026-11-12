@@ -730,7 +730,7 @@ export default function CarrierVetting({ settings }) {
 
       const cham = data.chameleon;
       if (!cham || cham.notReviewed) {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: !!(cham?.timedOut), fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
       } else {
         setForm(f => ({ ...f, fmcsaChameleonMatches: cham.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: cham.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false, fmcsaEnforcementLoadedAt: cham.enforcementTablesLoadedAt ?? null, fmcsaContactChange: cham.contactChange ?? null }));
       }
