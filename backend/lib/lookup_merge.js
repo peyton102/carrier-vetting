@@ -313,6 +313,55 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// applyStricterEdits
+//
+// Apply dispatcher edits only when they make the verdict stricter.
+// An edit can tighten a verdict but never loosen it.
+//
+// Returns a shallow copy of carrierData with stricter values applied.
+// _dispatcherEdits is preserved on the result (always contains original server values).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Higher value = stricter (triggers HOLD/REJECT sooner)
+const _STRICT_HIGHER = new Set([
+  'truckOosPct', 'driverOosPct',
+  'unsafeDrivingBasic', 'hosBasic', 'vehicleMaintenanceBasic',
+  'driverFitnessBasic', 'crashIndicatorBasic', 'vehicleDriverObservedBasic', 'hazmatBasic',
+]);
+// Lower value = stricter (less coverage is riskier)
+const _STRICT_LOWER = new Set([
+  'autoLiability', 'cargoInsurance', 'inspections24mo',
+]);
+const _STRICT_WORSE_RATING = new Set(['safetyRating']);
+// true is stricter than false
+const _STRICT_TRUE = new Set([
+  'activeFederalOOS', 'hasBrokerAuthority', 'bipdCancelPending', 'pendingInsuranceCancellation',
+]);
+const _RATING_RANK = { 'Unsatisfactory': 3, 'Conditional': 2, 'Satisfactory': 1 };
+
+export function applyStricterEdits(carrierData, dispatcherEdits) {
+  const result = { ...carrierData };
+  for (const [field, { submitted }] of Object.entries(dispatcherEdits)) {
+    if (_STRICT_HIGHER.has(field)) {
+      const sv = parseFloat(result[field]), dv = parseFloat(submitted);
+      if (!isNaN(sv) && !isNaN(dv) && dv > sv) result[field] = submitted;
+    } else if (_STRICT_LOWER.has(field)) {
+      const sv = parseFloat(result[field]), dv = parseFloat(submitted);
+      if (!isNaN(sv) && !isNaN(dv) && dv < sv) result[field] = submitted;
+    } else if (_STRICT_WORSE_RATING.has(field)) {
+      const sr = _RATING_RANK[result[field]] ?? 0;
+      const dr = _RATING_RANK[submitted]      ?? 0;
+      if (dr > sr) result[field] = submitted;
+    } else if (_STRICT_TRUE.has(field)) {
+      const sv = result[field] === true  || result[field] === 'true';
+      const dv = submitted    === 'true' || submitted    === true;
+      if (dv && !sv) result[field] = true;
+    }
+  }
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // validateLookupRow
 //
 // Pure check run after the DB row is fetched (tenant already enforced by the

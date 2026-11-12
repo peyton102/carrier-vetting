@@ -3,7 +3,7 @@
 
 import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
-import { mergeResults, applyToSubmission, detectEdits, validateLookupRow } from '../lib/lookup_merge.js';
+import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 
 const CFG = DEFAULT_SETTINGS;
 
@@ -816,6 +816,50 @@ export async function runAll() {
     assert(data.dispatcher     === 'Bob',            'dispatcher must be preserved');
     assert(data.contactPhone   === '5559998888',     'contactPhone must be preserved');
     assert(data.contactEmail   === 'bob@company.com','contactEmail must be preserved');
+  }));
+
+  // ── lookup_merge.js: applyStricterEdits ──────────────────────────────────────
+
+  // S1. Dispatcher tries to lower OOS below the REJECT threshold — server value kept, still REJECT
+  results.push(await t('applyStricterEdits: OOS lowered (20.2 → 19.8) → server value used, still REJECT', async () => {
+    const savedLookup = {
+      auto_filled:   { truckOosPct: { value: '20.2', sourceLabel: 'FMCSA' } },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { ...CLEAN, truckOosPct: '19.8' };
+    const applied = applyToSubmission(savedLookup, browser);
+    const edits   = detectEdits(savedLookup.auto_filled, browser);
+    applied._dispatcherEdits = edits;
+    const strict  = applyStricterEdits(applied, edits);
+    assert(parseFloat(strict.truckOosPct) === 20.2,
+      `server OOS (20.2) must be kept — got ${strict.truckOosPct}`);
+    const r = runVettingRules(strict, CFG);
+    assert(r.verdict === 'REJECT',
+      `lowering OOS must still REJECT with server value — got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(strict, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // S2. Dispatcher raises OOS above the REJECT threshold — dispatcher value used, now REJECT
+  results.push(await t('applyStricterEdits: OOS raised (15.0 → 25.0) → dispatcher value used, REJECT', async () => {
+    const savedLookup = {
+      auto_filled:   { truckOosPct: { value: '15.0', sourceLabel: 'FMCSA' } },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { ...CLEAN, truckOosPct: '25.0' };
+    const applied = applyToSubmission(savedLookup, browser);
+    const edits   = detectEdits(savedLookup.auto_filled, browser);
+    applied._dispatcherEdits = edits;
+    const strict  = applyStricterEdits(applied, edits);
+    assert(parseFloat(strict.truckOosPct) === 25.0,
+      `dispatcher OOS (25.0) must be applied as stricter — got ${strict.truckOosPct}`);
+    const r = runVettingRules(strict, CFG);
+    assert(r.verdict === 'REJECT',
+      `raising OOS above threshold must REJECT — got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(strict, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first

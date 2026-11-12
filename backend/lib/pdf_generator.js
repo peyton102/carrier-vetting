@@ -946,7 +946,7 @@ function autoFilledNote(doc, L, W, d, field) {
   const edit = (d._dispatcherEdits || {})[field];
   if (!edit) return;
   doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
-     .text(`  \u26A0 EDITED by dispatcher \u2014 original value: ${edit.original} (${edit.sourceLabel})`,
+     .text(`  \u26A0 EDITED by dispatcher \u2014 submitted: ${edit.submitted} (original: ${edit.original} from ${edit.sourceLabel})`,
            L + 8, doc.y, { width: W - 8 });
   doc.moveDown(0.15);
 }

@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { runVettingRules, RULES_VERSION } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { fetchSettings } from '../lib/settings.js';
-import { applyToSubmission, detectEdits, validateLookupRow } from '../lib/lookup_merge.js';
+import { applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { LOOKUP_MAX_AGE_MS } from './lookup.js';
 
 const router = express.Router();
@@ -93,12 +93,20 @@ router.post('/run', async (req, res, next) => {
       carrierData._dispatcherEdits = dispatcherEdits;
     }
 
+    // ── Apply stricter dispatcher edits ───────────────────────────────────────
+    // An edit can tighten the verdict but never loosen it.
+    // ruleData is used for both runVettingRules and the DB record;
+    // _dispatcherEdits on it always holds the original server values for the cert.
+    const ruleData = savedLookup
+      ? applyStricterEdits(carrierData, dispatcherEdits)
+      : carrierData;
+
     // ── Validate and run rules ────────────────────────────────────────────────
-    const err = validateCarrierData(carrierData);
+    const err = validateCarrierData(ruleData);
     if (err) return res.status(400).json({ error: err });
 
     const cfg    = await fetchSettings(orgId);
-    const result = runVettingRules(carrierData, cfg);
+    const result = runVettingRules(ruleData, cfg);
 
     // ── Insert authoritative record ───────────────────────────────────────────
     const recordId = randomUUID();
@@ -108,16 +116,16 @@ router.post('/run', async (req, res, next) => {
       .insert({
         id:               recordId,
         tenant_id:        orgId,
-        load_ref:         carrierData.loadRef,
-        dispatcher:       carrierData.dispatcher,
-        carrier_name:     carrierData.carrierName  || null,
-        dot_number:       carrierData.dotNumber    || null,
-        mc_number:        carrierData.mcNumber     || null,
+        load_ref:         ruleData.loadRef,
+        dispatcher:       ruleData.dispatcher,
+        carrier_name:     ruleData.carrierName  || null,
+        dot_number:       ruleData.dotNumber    || null,
+        mc_number:        ruleData.mcNumber     || null,
         verdict:          result.verdict,
         tier:             result.tier,
         reasons:          result.reasons,
         warnings:         result.warnings ?? [],
-        carrier_data:     carrierData,
+        carrier_data:     ruleData,
         rules_version:    RULES_VERSION,
         lookup_id:        lookupId ?? null,
         dispatcher_edits: Object.keys(dispatcherEdits).length > 0 ? dispatcherEdits : null,
