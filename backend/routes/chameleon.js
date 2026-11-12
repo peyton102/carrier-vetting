@@ -54,27 +54,41 @@ function socrataUrl(ds, where, select, limit) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Fetch Socrata with up to 3 attempts; backs off 2s then 4s on 429 or transient errors.
-// Any persistent failure is re-thrown — callers wrap in try/catch → notReviewed fallback.
+const SLOW_ABORT_MS = 4_000;
+
+// Fetch Socrata with up to 3 error-retries (2s/4s backoff on 429 or transient errors).
+// First attempt uses a 4s probe timeout; on slow-abort it retries immediately with 15s
+// (doesn't consume an error-retry slot). Any persistent failure is re-thrown.
 async function sq(ds, where, select, limit = 10, label = '') {
   const url = socrataUrl(ds, where, select, limit);
   const tag = label ? ` [${label}]` : '';
-  let delay   = 2_000;
+  let delay      = 2_000;
   let lastErr;
+  let slowRetried = false;  // set after a 4s slow-abort triggers an immediate retry
+
   for (let attempt = 0; attempt < 3; attempt++) {
     const t = Date.now();
+    // Probe with 4s on the first real attempt; all retries (including slow) use 15s.
+    const timeoutMs = (!slowRetried && attempt === 0) ? SLOW_ABORT_MS : 15_000;
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
       if (r.status === 429) throw new Error(`Socrata ${ds} rate limited`);
       if (!r.ok)            throw new Error(`Socrata ${ds} HTTP ${r.status}`);
       const j = await r.json();
       if (!Array.isArray(j)) throw new Error(`Socrata ${ds}: ${JSON.stringify(j).slice(0, 80)}`);
-      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)}${attempt > 0 ? ` (attempt ${attempt + 1})` : ''}`);
+      const note = (slowRetried && attempt === 0) ? ' (slow retry)' : attempt > 0 ? ` (attempt ${attempt + 1})` : '';
+      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)}${note}`);
       return j;
     } catch (e) {
       lastErr = e;
-      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)} (attempt ${attempt + 1} failed: ${e.message})`);
-      if (attempt < 2) { await sleep(delay); delay *= 2; }
+      const isSlow = !slowRetried && attempt === 0 && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      console.log(`[TIMING][CHAM] Socrata ${ds}${tag}: ${ms(t)} (attempt ${attempt + 1} ${isSlow ? 'slow, retrying' : `failed: ${e.message}`})`);
+      if (isSlow) {
+        slowRetried = true;
+        attempt--;  // counteract loop increment → next iteration at attempt=0 with 15s timeout
+      } else if (attempt < 2) {
+        await sleep(delay); delay *= 2;
+      }
     }
   }
   throw lastErr;

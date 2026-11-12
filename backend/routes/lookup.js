@@ -16,7 +16,8 @@ import { chameleonLookup }        from './chameleon.js';
 import { mergeResults }           from '../lib/lookup_merge.js';
 
 const router = express.Router();
-const LOOKUP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const LOOKUP_MAX_AGE_MS  = 24 * 60 * 60 * 1000;
+const CHAMELEON_CAP_MS   = 12_000;
 
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -67,10 +68,17 @@ router.post('/', async (req, res, next) => {
     }
 
     // ── 2. SaferWatch + insurance + chameleon in parallel ─────────────────────
+    // Chameleon is capped at 12s so a runaway Socrata call never blocks /run.
+    const chameleonCapped = Promise.race([
+      chameleonLookup(resolvedDot, tenantSlug),
+      new Promise(resolve =>
+        setTimeout(() => resolve({ notReviewed: true, timedOut: true }), CHAMELEON_CAP_MS)
+      ),
+    ]);
     const [sw, insurance, chameleon] = await Promise.allSettled([
       swLookup(resolvedDot, 'dot', tenantSlug),
       insuranceLookup(resolvedDot, getSupabase()),
-      chameleonLookup(resolvedDot, tenantSlug),
+      chameleonCapped,
     ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
     // ── 3. Merge results (server-side applyLookupResults equivalent) ──────────
