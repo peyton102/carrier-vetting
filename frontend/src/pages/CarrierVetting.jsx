@@ -685,7 +685,7 @@ export default function CarrierVetting({ settings }) {
   // ── MC lookup: single call to /api/lookup (server orchestrates all sources) ───────
   async function lookupByMc() {
     const mc = form.mcNumber.replace(/^(MC|FF)/i, '').replace(/\D/g, '');
-    if (\!mc) return setLookupErr('Enter an MC number first.');
+    if (!mc) return setLookupErr('Enter an MC number first.');
     setLookupErr('');
     setSwErr('');
     setFmcsaCannotVerify(false);
@@ -699,7 +699,7 @@ export default function CarrierVetting({ settings }) {
         body: JSON.stringify({ mc }),
       });
       const data = await lookupRes.json();
-      if (\!lookupRes.ok) throw new Error(data.error ?? 'MC lookup failed');
+      if (!lookupRes.ok) throw new Error(data.error ?? 'MC lookup failed');
 
       setLookupId(data.lookupId);
 
@@ -729,7 +729,7 @@ export default function CarrierVetting({ settings }) {
       }
 
       const cham = data.chameleon;
-      if (\!cham || cham.notReviewed) {
+      if (!cham || cham.notReviewed) {
         setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
       } else {
         setForm(f => ({ ...f, fmcsaChameleonMatches: cham.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: cham.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false, fmcsaEnforcementLoadedAt: cham.enforcementTablesLoadedAt ?? null, fmcsaContactChange: cham.contactChange ?? null }));

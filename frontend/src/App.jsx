@@ -184,7 +184,7 @@ function SaferwatchOnboarding({ onDone }) {
     background: '#f8fafc', color: '#0f172a', marginBottom: 14,
   };
   const btnStyle = (disabled, primary) => ({
-    padding: '10px 20px', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14,
+    padding: '10px 20px', borderRadius: 8, fontWeight: 700, fontSize: 14,
     cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
     background: disabled ? '#e2e8f0' : primary ? '#f97316' : '#f1f5f9',
     color: disabled ? '#94a3b8' : primary ? '#fff' : '#475569',
