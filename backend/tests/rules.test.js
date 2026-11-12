@@ -862,6 +862,69 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // S3. Authority status: inactive wins over active
+  results.push(await t('applyStricterEdits: authority status inactive → applied; active → not applied', () => {
+    // inactive wins when server says active
+    const edits1 = { authorityStatus: { original: 'active', sourceLabel: 'FMCSA', submitted: 'inactive' } };
+    const c1 = { ...CLEAN, authorityStatus: 'active', _dispatcherEdits: edits1 };
+    const s1 = applyStricterEdits(c1, edits1);
+    assert(s1.authorityStatus === 'inactive', `inactive must win over active, got ${s1.authorityStatus}`);
+
+    // looser edit rejected: server says inactive, dispatcher says active
+    const edits2 = { authorityStatus: { original: 'inactive', sourceLabel: 'FMCSA', submitted: 'active' } };
+    const c2 = { ...CLEAN, authorityStatus: 'inactive', _dispatcherEdits: edits2 };
+    const s2 = applyStricterEdits(c2, edits2);
+    assert(s2.authorityStatus === 'inactive', `active must NOT override inactive, got ${s2.authorityStatus}`);
+  }));
+
+  // S4. Drug/alcohol: true wins over false → REJECT
+  results.push(await t('applyStricterEdits: drugAlcohol true → applied, REJECT', async () => {
+    const edits = { drugAlcoholViolation: { original: 'false', sourceLabel: 'SaferWatch', submitted: 'true' } };
+    const carrier = { ...CLEAN, drugAlcoholViolation: false, _dispatcherEdits: edits };
+    const strict = applyStricterEdits(carrier, edits);
+    assert(strict.drugAlcoholViolation === true, `drug/alcohol true must be applied, got ${strict.drugAlcoholViolation}`);
+    const r = runVettingRules(strict, CFG);
+    assert(r.verdict === 'REJECT', `drug/alcohol true must REJECT, got ${r.verdict}`);
+    const pdfErr = await checkPdf(strict, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // S5. Insurance expiration: earlier date wins (expires sooner = stricter)
+  results.push(await t('applyStricterEdits: earlier insurance expiration → applied; later → not applied', () => {
+    const earlier = futureDate(10);   // expires in 10 days
+    const later   = futureDate(90);   // expires in 90 days
+
+    // earlier submitted wins
+    const edits1 = { autoLiabilityExpiration: { original: later, sourceLabel: 'SaferWatch', submitted: earlier } };
+    const c1 = { ...CLEAN, autoLiabilityExpiration: later, _dispatcherEdits: edits1 };
+    const s1 = applyStricterEdits(c1, edits1);
+    assert(s1.autoLiabilityExpiration === earlier, `earlier expiration must win, got ${s1.autoLiabilityExpiration}`);
+
+    // later submitted rejected
+    const edits2 = { autoLiabilityExpiration: { original: earlier, sourceLabel: 'SaferWatch', submitted: later } };
+    const c2 = { ...CLEAN, autoLiabilityExpiration: earlier, _dispatcherEdits: edits2 };
+    const s2 = applyStricterEdits(c2, edits2);
+    assert(s2.autoLiabilityExpiration === earlier, `later expiration must NOT override earlier, got ${s2.autoLiabilityExpiration}`);
+  }));
+
+  // S6. Authority grant date: later date wins (younger authority = fewer days = stricter)
+  results.push(await t('applyStricterEdits: later authority grant date (younger) → applied; earlier → not applied', () => {
+    const older  = '2020-01-01';       // 5+ years ago (many authority days → passes)
+    const newer  = futureDate(-100);   // 100 days ago (few authority days → stricter)
+
+    // newer submitted wins
+    const edits1 = { authorityGrantDate: { original: older, sourceLabel: 'FMCSA', submitted: newer } };
+    const c1 = { ...CLEAN, authorityGrantDate: older, _dispatcherEdits: edits1 };
+    const s1 = applyStricterEdits(c1, edits1);
+    assert(s1.authorityGrantDate === newer, `later grant date must win, got ${s1.authorityGrantDate}`);
+
+    // older submitted rejected
+    const edits2 = { authorityGrantDate: { original: newer, sourceLabel: 'FMCSA', submitted: older } };
+    const c2 = { ...CLEAN, authorityGrantDate: newer, _dispatcherEdits: edits2 };
+    const s2 = applyStricterEdits(c2, edits2);
+    assert(s2.authorityGrantDate === newer, `older grant date must NOT override newer, got ${s2.authorityGrantDate}`);
+  }));
+
   // 21. Data isolation: second run on a clean carrier has zero contamination from first
   results.push(await t('data isolation — REJECT then APPROVE yields clean second result', async () => {
     const reject = { ...CLEAN, safetyRating: 'Unsatisfactory', drugAlcoholViolation: true, activeFederalOOS: true };

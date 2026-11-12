@@ -328,15 +328,21 @@ const _STRICT_HIGHER = new Set([
   'unsafeDrivingBasic', 'hosBasic', 'vehicleMaintenanceBasic',
   'driverFitnessBasic', 'crashIndicatorBasic', 'vehicleDriverObservedBasic', 'hazmatBasic',
 ]);
-// Lower value = stricter (less coverage is riskier)
+// Lower value = stricter (less coverage / fewer inspections is riskier)
 const _STRICT_LOWER = new Set([
   'autoLiability', 'cargoInsurance', 'inspections24mo',
 ]);
 const _STRICT_WORSE_RATING = new Set(['safetyRating']);
-// true is stricter than false
+// true is stricter than false/null (violation or risk flag present)
 const _STRICT_TRUE = new Set([
   'activeFederalOOS', 'hasBrokerAuthority', 'bipdCancelPending', 'pendingInsuranceCancellation',
+  'drugAlcoholViolation',
 ]);
+// Earlier date = stricter (expires / lapses sooner)
+const _STRICT_EARLIER_DATE = new Set(['autoLiabilityExpiration', 'cargoExpiration']);
+// Later date = stricter (more recent grant = younger authority = fewer days elapsed)
+const _STRICT_LATER_DATE = new Set(['authorityGrantDate']);
+
 const _RATING_RANK = { 'Unsatisfactory': 3, 'Conditional': 2, 'Satisfactory': 1 };
 
 export function applyStricterEdits(carrierData, dispatcherEdits) {
@@ -356,7 +362,18 @@ export function applyStricterEdits(carrierData, dispatcherEdits) {
       const sv = result[field] === true  || result[field] === 'true';
       const dv = submitted    === 'true' || submitted    === true;
       if (dv && !sv) result[field] = true;
+    } else if (field === 'authorityStatus') {
+      // 'active' is the only passing value; any change away from it is stricter
+      if (result[field] === 'active' && submitted !== 'active') result[field] = submitted;
+    } else if (_STRICT_EARLIER_DATE.has(field)) {
+      const sv = new Date(result[field]), dv = new Date(submitted);
+      if (!isNaN(sv) && !isNaN(dv) && dv < sv) result[field] = submitted;
+    } else if (_STRICT_LATER_DATE.has(field)) {
+      const sv = new Date(result[field]), dv = new Date(submitted);
+      if (!isNaN(sv) && !isNaN(dv) && dv > sv) result[field] = submitted;
     }
+    // Fields with no clear stricter direction (e.g. powerUnits) are silently kept
+    // as the server original — the edit is logged in _dispatcherEdits for the cert.
   }
   return result;
 }

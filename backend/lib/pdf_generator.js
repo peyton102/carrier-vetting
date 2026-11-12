@@ -940,13 +940,23 @@ function basicZeroNote(doc, L, W, sufficiency, rawVal) {
 }
 
 // Show an amber edit-audit note when a dispatcher changed an auto-filled value.
-// d._dispatcherEdits is stamped onto carrier_data by /run when edits are detected;
-// each entry is { original, sourceLabel, submitted }.
+// d._dispatcherEdits is stamped onto carrier_data by /run; each entry is
+// { original, sourceLabel, submitted }. The displayed field value (d[field])
+// is whichever was used for the verdict (server original or stricter dispatcher edit).
 function autoFilledNote(doc, L, W, d, field) {
   const edit = (d._dispatcherEdits || {})[field];
   if (!edit) return;
+  // Determine whether the dispatcher's edit was actually applied.
+  const current   = String(d[field] ?? '').trim();
+  const submitted = String(edit.submitted).trim();
+  const cn = parseFloat(current), sn = parseFloat(submitted);
+  const editApplied = current === submitted ||
+    (!isNaN(cn) && !isNaN(sn) && cn === sn);
+  const verdict = editApplied
+    ? 'Applied, stricter than original.'
+    : 'Not applied, original is stricter.';
   doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
-     .text(`  \u26A0 EDITED by dispatcher \u2014 submitted: ${edit.submitted} (original: ${edit.original} from ${edit.sourceLabel})`,
+     .text(`  \u26A0 EDITED by dispatcher: ${edit.submitted} (original ${edit.original} from ${edit.sourceLabel}). ${verdict}`,
            L + 8, doc.y, { width: W - 8 });
   doc.moveDown(0.15);
 }
