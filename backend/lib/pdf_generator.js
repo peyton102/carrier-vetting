@@ -384,6 +384,7 @@ export function generateVettingPDF(opts) {
     dataRow(doc, L, W, 'Power Units',
       d.powerUnits != null && d.powerUnits !== '' ? String(d.powerUnits) : null,
       src('powerUnits'));
+    autoFilledNote(doc, L, W, d, 'powerUnits');
     dataRow(doc, L, W, 'Drivers (reported)',
       d.totalDrivers != null && d.totalDrivers !== '' ? String(d.totalDrivers) : null,
       d.totalDrivers != null && d.totalDrivers !== '' ? 'FMCSA' : null);
@@ -726,7 +727,7 @@ function chameleonSection(doc, L, W, d) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'Carrier identity check (FMCSA):',
       'Helvetica-Oblique', C.gray,
-      d.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed');
+      d.fmcsaChameleonTimedOut ? 'Not reviewed (FMCSA slow to respond)' : 'Not reviewed (FMCSA data unavailable)');
     return;
   }
 
@@ -939,19 +940,13 @@ function basicZeroNote(doc, L, W, sufficiency, rawVal) {
 }
 
 // Show an amber edit-audit note when a dispatcher changed an auto-filled value.
-// d._autoFilled is stored in carrier_data at /run time; each entry is { value, sourceLabel }.
-// Numeric values are normalized before comparison to avoid "20" !== "20.00" false positives.
+// d._dispatcherEdits is stamped onto carrier_data by /run when edits are detected;
+// each entry is { original, sourceLabel, submitted }.
 function autoFilledNote(doc, L, W, d, field) {
-  const af = (d._autoFilled || {})[field];
-  if (!af) return;
-  const current  = String(d[field] ?? '').trim();
-  const original = String(af.value).trim();
-  if (current === original) return;
-  // Numeric comparison: "20" vs "20.00" → equal
-  const cn = parseFloat(current), on = parseFloat(original);
-  if (!isNaN(cn) && !isNaN(on) && cn === on) return;
+  const edit = (d._dispatcherEdits || {})[field];
+  if (!edit) return;
   doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
-     .text(`  \u26A0 EDITED by dispatcher \u2014 auto-filled value was: ${original} (${af.sourceLabel})`,
+     .text(`  \u26A0 EDITED by dispatcher \u2014 original value: ${edit.original} (${edit.sourceLabel})`,
            L + 8, doc.y, { width: W - 8 });
   doc.moveDown(0.15);
 }

@@ -40,6 +40,7 @@ export const SCALAR_AUTO_FIELDS = new Set([
   'bipdCancelInsuranceCompany', 'bipdCancelDaysUntil',
   // Chameleon — scalar
   'fmcsaChameleonNotReviewed', 'fmcsaEmailNotReviewed',
+  'fmcsaChameleonTimedOut',
   'fmcsaRegisteredEmail', 'fmcsaEnforcementLoadedAt',
 ]);
 
@@ -290,8 +291,9 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
   // ── Chameleon ──────────────────────────────────────────────────────────────
   if (chameleon) {
     const notReviewed = !!(chameleon.notReviewed);
-    setScalar('fmcsaChameleonNotReviewed', notReviewed, 'chameleon', 'FMCSA');
-    setScalar('fmcsaEmailNotReviewed',     notReviewed, 'chameleon', 'FMCSA');
+    setScalar('fmcsaChameleonNotReviewed', notReviewed,                 'chameleon', 'FMCSA');
+    setScalar('fmcsaEmailNotReviewed',     notReviewed,                 'chameleon', 'FMCSA');
+    setScalar('fmcsaChameleonTimedOut',    !!(chameleon.timedOut),      'chameleon', 'FMCSA');
     if (!notReviewed) {
       setComplex('fmcsaChameleonMatches', chameleon.matches ?? []);
       setComplex('fmcsaContactChange',    chameleon.contactChange ?? null);
@@ -354,7 +356,7 @@ export function applyToSubmission(savedLookup, browserBody) {
     // Convert string back to native type for boolean fields
     if (['activeFederalOOS', 'hasBrokerAuthority', 'bipdCancelPending', 'bipdCancelLapsed',
          'pendingInsuranceCancellation', 'fmcsaChameleonNotReviewed',
-         'fmcsaEmailNotReviewed'].includes(field)) {
+         'fmcsaEmailNotReviewed', 'fmcsaChameleonTimedOut'].includes(field)) {
       data[field] = value === 'true' ? true : value === 'false' ? false : null;
     } else {
       data[field] = value;

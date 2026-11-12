@@ -88,6 +88,11 @@ router.post('/run', async (req, res, next) => {
       ? detectEdits(savedLookup.auto_filled ?? {}, browserBody)
       : {};
 
+    // Stamp edits onto carrierData so the PDF generator can display them.
+    if (Object.keys(dispatcherEdits).length > 0) {
+      carrierData._dispatcherEdits = dispatcherEdits;
+    }
+
     // ── Validate and run rules ────────────────────────────────────────────────
     const err = validateCarrierData(carrierData);
     if (err) return res.status(400).json({ error: err });
