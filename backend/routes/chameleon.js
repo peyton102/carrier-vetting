@@ -404,7 +404,7 @@ async function _chameleonCore(dot, tenantSlug, supabase, cfg) {
   // 24-hour cache: FMCSA contact data updates at most daily.
   // Same DOT vetted by many brokers = one set of Socrata queries per 24 h.
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-  t = Date.now();
+  const t = Date.now();
   const { data: cached } = await supabase
     .from('chameleon_cache')
     .select('pulled_at,result')
