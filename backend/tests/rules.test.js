@@ -3,6 +3,7 @@
 
 import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
+import { mergeResults, applyToSubmission, detectEdits, validateLookupRow } from '../lib/lookup_merge.js';
 
 const CFG = DEFAULT_SETTINGS;
 
@@ -604,6 +605,217 @@ export async function runAll() {
     assert(r.verdict === 'APPROVE', `want APPROVE (below threshold), got ${r.verdict}: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // ── lookup_merge.js: mergeResults ───────────────────────────────────────────
+
+  // M1. FMCSA fields land in auto_filled
+  results.push(await t('mergeResults: FMCSA fields populate auto_filled', () => {
+    const fmcsa = { filledFields: ['carrierName', 'dotNumber', 'truckOosPct'],
+      carrierName: 'ACME Trucking', dotNumber: '1234567', truckOosPct: '5.00',
+      saferData: null, saferSnapshotDate: null };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null });
+    assert(autoFilled.carrierName?.value === 'ACME Trucking', 'carrierName must be in auto_filled');
+    assert(autoFilled.dotNumber?.value  === '1234567',       'dotNumber must be in auto_filled');
+    assert(autoFilled.truckOosPct?.value === '5.00',         'truckOosPct must be in auto_filled');
+    assert(autoFilled.carrierName?.sourceLabel === 'FMCSA',  'source must be FMCSA');
+  }));
+
+  // M2. SAFER wins OOS when SAFER snapshot date >= SW inspection date
+  results.push(await t('mergeResults: SAFER wins OOS when newer than SaferWatch', () => {
+    const fmcsa = { filledFields: [], saferSnapshotDate: '2024-10-01',
+      saferData: { vehicleOosPct: '15.00', driverOosPct: '5.00' } };
+    const sw = { ok: true, filledFields: [], swInspectionsDate: '2024-09-01',
+      truckOosPct: '12.00', driverOosPct: '3.00' };
+    const { autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    assert(autoFilled.truckOosPct?.value === '15.00', `SAFER truck OOS 15 must win, got ${autoFilled.truckOosPct?.value}`);
+    assert(autoFilled.driverOosPct?.value === '5.00', `SAFER driver OOS 5 must win, got ${autoFilled.driverOosPct?.value}`);
+    assert(autoFilled.truckOosPct?.sourceLabel.includes('SAFER'), 'source label must mention SAFER');
+  }));
+
+  // M3. SaferWatch wins OOS when SW inspection date > SAFER snapshot date
+  results.push(await t('mergeResults: SaferWatch wins OOS when newer than SAFER', () => {
+    const fmcsa = { filledFields: [], saferSnapshotDate: '2024-08-01',
+      saferData: { vehicleOosPct: '15.00', driverOosPct: '5.00' } };
+    const sw = { ok: true, filledFields: [], swInspectionsDate: '2024-10-01',
+      truckOosPct: '12.00', driverOosPct: '3.00' };
+    const { autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    assert(autoFilled.truckOosPct?.value === '12.00', `SW truck OOS 12 must win, got ${autoFilled.truckOosPct?.value}`);
+    assert(autoFilled.driverOosPct?.value === '3.00', `SW driver OOS 3 must win, got ${autoFilled.driverOosPct?.value}`);
+    assert(autoFilled.truckOosPct?.sourceLabel.includes('SaferWatch'), 'source label must mention SaferWatch');
+  }));
+
+  // M4. Insurance bipdCancelPending lands in auto_filled
+  results.push(await t('mergeResults: insurance bipdCancelPending in auto_filled', () => {
+    const insurance = { bipdCancelPending: true, bipdCancelLapsed: false,
+      effectiveDate: '2026-12-01', insuranceCompany: 'Big Insurance Co' };
+    const { autoFilled } = mergeResults({ fmcsa: null, sw: null, insurance, chameleon: null });
+    assert(autoFilled.bipdCancelPending?.value === 'true', 'bipdCancelPending must be true');
+    assert(autoFilled.bipdCancelInsuranceCompany?.value === 'Big Insurance Co', 'insurance company must be set');
+    assert(autoFilled.bipdCancelPending?.sourceLabel === 'FMCSA BMC-35', 'source must be FMCSA BMC-35');
+  }));
+
+  // M5. Chameleon fmcsaRegisteredEmail lands in auto_filled
+  results.push(await t('mergeResults: chameleon fmcsaRegisteredEmail in auto_filled', () => {
+    const chameleon = { notReviewed: false, matches: [], fmcsaRegisteredEmail: 'dispatch@testcarrier.com', contactChange: null };
+    const { autoFilled } = mergeResults({ fmcsa: null, sw: null, insurance: null, chameleon });
+    assert(autoFilled.fmcsaRegisteredEmail?.value === 'dispatch@testcarrier.com',
+      'fmcsaRegisteredEmail must be in auto_filled');
+  }));
+
+  // ── lookup_merge.js: detectEdits ─────────────────────────────────────────────
+
+  // E1. Browser matching server → no edits detected
+  results.push(await t('detectEdits: browser matches server → empty edits', () => {
+    const autoFilled = {
+      truckOosPct:  { value: '5.00', sourceLabel: 'FMCSA' },
+      autoLiability: { value: '1000000', sourceLabel: 'SaferWatch' },
+    };
+    const browser = { truckOosPct: '5.00', autoLiability: '1000000' };
+    const edits = detectEdits(autoFilled, browser);
+    assert(Object.keys(edits).length === 0, `expected 0 edits, got: ${JSON.stringify(edits)}`);
+  }));
+
+  // E2. Browser fakes OOS rate → edit detected
+  results.push(await t('detectEdits: faked truck OOS detected', () => {
+    const autoFilled = { truckOosPct: { value: '25.00', sourceLabel: 'FMCSA' } };
+    const browser = { truckOosPct: '5.00' };
+    const edits = detectEdits(autoFilled, browser);
+    assert(edits.truckOosPct, 'truckOosPct edit must be detected');
+    assert(edits.truckOosPct.original === '25.00', 'original must be server value');
+    assert(edits.truckOosPct.submitted === '5.00', 'submitted must be browser value');
+  }));
+
+  // E3. Browser fakes insurance amount → edit detected
+  results.push(await t('detectEdits: faked auto liability detected', () => {
+    const autoFilled = { autoLiability: { value: '750000', sourceLabel: 'SaferWatch' } };
+    const browser = { autoLiability: '2000000' };
+    const edits = detectEdits(autoFilled, browser);
+    assert(edits.autoLiability, 'autoLiability edit must be detected');
+    assert(edits.autoLiability.original === '750000');
+  }));
+
+  // E4. Browser fakes safety rating → edit detected
+  results.push(await t('detectEdits: faked safety rating detected', () => {
+    const autoFilled = { safetyRating: { value: 'Unsatisfactory', sourceLabel: 'FMCSA' } };
+    const browser = { safetyRating: 'Satisfactory' };
+    const edits = detectEdits(autoFilled, browser);
+    assert(edits.safetyRating, 'safetyRating edit must be detected');
+  }));
+
+  // E5. Numeric equivalence: "5" vs "5.00" → NOT an edit
+  results.push(await t('detectEdits: numeric equivalence (5 vs 5.00) → no edit', () => {
+    const autoFilled = { truckOosPct: { value: '5.00', sourceLabel: 'FMCSA' } };
+    const browser = { truckOosPct: '5' };
+    const edits = detectEdits(autoFilled, browser);
+    assert(!edits.truckOosPct, 'numeric equivalence must not flag as edit');
+  }));
+
+  // E6. Boolean equivalence: true vs "true" → NOT an edit
+  results.push(await t('detectEdits: boolean equivalence (true vs "true") → no edit', () => {
+    const autoFilled = { activeFederalOOS: { value: 'false', sourceLabel: 'FMCSA' } };
+    const browser = { activeFederalOOS: false };
+    const edits = detectEdits(autoFilled, browser);
+    assert(!edits.activeFederalOOS, 'boolean equivalence must not flag as edit');
+  }));
+
+  // ── lookup_merge.js: applyToSubmission ───────────────────────────────────────
+
+  // A1. Server OOS value overrides whatever browser sent
+  results.push(await t('applyToSubmission: server OOS enforced over browser fake', () => {
+    const savedLookup = {
+      auto_filled:   { truckOosPct: { value: '25.00', sourceLabel: 'FMCSA' } },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { truckOosPct: '5.00', loadRef: 'LOAD-001', dispatcher: 'Alice' };
+    const data = applyToSubmission(savedLookup, browser);
+    assert(data.truckOosPct === '25.00', `server OOS must win, got ${data.truckOosPct}`);
+    assert(data.loadRef === 'LOAD-001', 'manual loadRef must be preserved');
+    assert(data.dispatcher === 'Alice', 'manual dispatcher must be preserved');
+  }));
+
+  // A2. Full rules chain rejects when server has bad OOS (browser cannot fake past it)
+  results.push(await t('applyToSubmission: rules reject when server has bad OOS (browser faked lower)', () => {
+    const savedLookup = {
+      auto_filled:   {
+        truckOosPct:        { value: '25.00', sourceLabel: 'FMCSA' },
+        nationalAvgTruckOos: { value: '10.00', sourceLabel: 'FMCSA' },
+        driverOosPct:       { value: '2.00',  sourceLabel: 'FMCSA' },
+        nationalAvgDriverOos: { value: '4.00', sourceLabel: 'FMCSA' },
+        safetyRating:       { value: 'Unsatisfactory', sourceLabel: 'FMCSA' },
+        carrierName:        { value: 'Bad Carrier LLC', sourceLabel: 'FMCSA' },
+        activeFederalOOS:   { value: 'false', sourceLabel: 'FMCSA' },
+        hasBrokerAuthority: { value: 'false', sourceLabel: 'FMCSA' },
+        bipdCancelPending:  { value: 'false', sourceLabel: 'FMCSA BMC-35' },
+        bipdCancelLapsed:   { value: 'false', sourceLabel: 'FMCSA BMC-35' },
+      },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = {
+      ...CLEAN,
+      truckOosPct:  '5.00',   // faked lower
+      safetyRating: 'Satisfactory',  // faked better
+    };
+    const data = applyToSubmission(savedLookup, browser);
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `must REJECT with server values applied, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Unsatisfactory')),
+      `Unsatisfactory reason must fire: ${r.reasons.join('; ')}`);
+  }));
+
+  // ── lookup_merge.js: validateLookupRow ──────────────────────────────────────
+
+  // V1. Wrong-tenant lookup: DB query returns null (tenant filter) → "Lookup not found"
+  results.push(await t('validateLookupRow: wrong-tenant (null row) → Lookup not found', () => {
+    const err = validateLookupRow(null, '1234567', Date.now(), 24 * 60 * 60 * 1000);
+    assert(err && err.includes('Lookup not found'), `expected "Lookup not found", got: ${err}`);
+  }));
+
+  // V2. Lookup older than 24 hours → stale error
+  results.push(await t('validateLookupRow: lookup > 24h old → stale error', () => {
+    const twentyFiveHoursAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const row = { created_at: twentyFiveHoursAgo, dot_number: '1234567' };
+    const err = validateLookupRow(row, '1234567', Date.now(), 24 * 60 * 60 * 1000);
+    assert(err && err.includes('older than 24 hours'), `expected stale error, got: ${err}`);
+  }));
+
+  // V3. Lookup DOT ≠ submitted DOT → DOT mismatch error
+  results.push(await t('validateLookupRow: DOT mismatch → mismatch error', () => {
+    const freshRow = { created_at: new Date().toISOString(), dot_number: '1111111' };
+    const err = validateLookupRow(freshRow, '2222222', Date.now(), 24 * 60 * 60 * 1000);
+    assert(err && err.includes('DOT 1111111') && err.includes('DOT 2222222'),
+      `expected DOT mismatch error with both DOTs, got: ${err}`);
+  }));
+
+  // V4. Fresh row with matching DOT → no error
+  results.push(await t('validateLookupRow: fresh row + matching DOT → no error', () => {
+    const freshRow = { created_at: new Date().toISOString(), dot_number: '1234567' };
+    const err = validateLookupRow(freshRow, '1234567', Date.now(), 24 * 60 * 60 * 1000);
+    assert(err === null, `expected null (valid), got: ${err}`);
+  }));
+
+  // A3. Manual fields preserved from browser (loadRef, dispatcher, contactPhone, contactEmail)
+  results.push(await t('applyToSubmission: manual fields preserved from browser', () => {
+    const savedLookup = {
+      auto_filled:   { carrierName: { value: 'Server Carrier', sourceLabel: 'FMCSA' } },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = {
+      carrierName:   'Fake Name',       // auto-filled: server must win
+      loadRef:       'REF-XYZ',
+      dispatcher:    'Bob',
+      contactPhone:  '5559998888',
+      contactEmail:  'bob@company.com',
+    };
+    const data = applyToSubmission(savedLookup, browser);
+    assert(data.carrierName    === 'Server Carrier', 'carrierName must be from server');
+    assert(data.loadRef        === 'REF-XYZ',        'loadRef must be preserved');
+    assert(data.dispatcher     === 'Bob',            'dispatcher must be preserved');
+    assert(data.contactPhone   === '5559998888',     'contactPhone must be preserved');
+    assert(data.contactEmail   === 'bob@company.com','contactEmail must be preserved');
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first

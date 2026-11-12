@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 import { runVettingRules, RULES_VERSION } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { fetchSettings } from '../lib/settings.js';
+import { applyToSubmission, detectEdits, validateLookupRow } from '../lib/lookup_merge.js';
+import { LOOKUP_MAX_AGE_MS } from './lookup.js';
 
 const router = express.Router();
 
@@ -38,41 +40,86 @@ function validateCarrierData(d) {
 }
 
 // ── POST /api/vetting/run ─────────────────────────────────────────────────────
-// Validate → run rules → write authoritative DB record → return verdict + recordId.
-// /pdf reads from this record; it never trusts client-supplied verdict fields.
+// Requires a lookupId from POST /api/lookup. The server fetches the saved lookup,
+// validates it (tenant match + DOT match + age < 24h), then:
+//   • Uses the server's saved auto-filled values — the browser cannot override them.
+//   • Detects fields the dispatcher changed from the auto-filled value and records them.
+//   • Runs the vetting rules on the merged, server-authoritative data.
+//   • Writes an immutable vetting_logs record with lookup_id + dispatcher_edits.
 router.post('/run', async (req, res, next) => {
   try {
-    const err = validateCarrierData(req.body);
+    const { lookupId, ...browserBody } = req.body;
+    const orgId = req.auth.tenant;
+
+    // ── Validate lookupId ───────────────────────────────────────────────────
+    if (!lookupId && !browserBody.fmcsaCannotVerify) {
+      return res.status(400).json({ error: 'lookupId is required — run a lookup first' });
+    }
+
+    let savedLookup = null;
+    if (lookupId) {
+      const supabase = getSupabase();
+      const { data, error: fetchErr } = await supabase
+        .from('carrier_lookups')
+        .select('*')
+        .eq('id', lookupId)
+        .eq('tenant_id', orgId)  // wrong-tenant lookup returns null → "Lookup not found"
+        .single();
+
+      const lookupErr = validateLookupRow(
+        fetchErr ? null : data,
+        browserBody.dotNumber,
+        Date.now(),
+        LOOKUP_MAX_AGE_MS,
+      );
+      if (lookupErr) return res.status(400).json({ error: lookupErr });
+
+      savedLookup = data;
+    }
+
+    // ── Build authoritative carrier data ─────────────────────────────────────
+    // Server's saved auto-filled values override whatever the browser sent.
+    const carrierData = savedLookup
+      ? applyToSubmission(savedLookup, browserBody)
+      : { ...browserBody };  // fmcsaCannotVerify fallback: no saved lookup
+
+    // ── Detect dispatcher edits for audit trail and PDF notes ─────────────────
+    const dispatcherEdits = savedLookup
+      ? detectEdits(savedLookup.auto_filled ?? {}, browserBody)
+      : {};
+
+    // ── Validate and run rules ────────────────────────────────────────────────
+    const err = validateCarrierData(carrierData);
     if (err) return res.status(400).json({ error: err });
 
-    const orgId  = req.auth.tenant;
     const cfg    = await fetchSettings(orgId);
-    const result = runVettingRules(req.body, cfg);
+    const result = runVettingRules(carrierData, cfg);
 
+    // ── Insert authoritative record ───────────────────────────────────────────
     const recordId = randomUUID();
     const supabase = getSupabase();
-
-    // Insert authoritative record. pdf_url is null here; /pdf fills it in.
     const { error: logErr } = await supabase
       .from('vetting_logs')
       .insert({
-        id:            recordId,
-        tenant_id:     orgId,
-        load_ref:      req.body.loadRef,
-        dispatcher:    req.body.dispatcher,
-        carrier_name:  req.body.carrierName  || null,
-        dot_number:    req.body.dotNumber    || null,
-        mc_number:     req.body.mcNumber     || null,
-        verdict:       result.verdict,
-        tier:          result.tier,
-        reasons:       result.reasons,
-        warnings:      result.warnings ?? [],
-        carrier_data:  req.body,
-        rules_version: RULES_VERSION,
+        id:               recordId,
+        tenant_id:        orgId,
+        load_ref:         carrierData.loadRef,
+        dispatcher:       carrierData.dispatcher,
+        carrier_name:     carrierData.carrierName  || null,
+        dot_number:       carrierData.dotNumber    || null,
+        mc_number:        carrierData.mcNumber     || null,
+        verdict:          result.verdict,
+        tier:             result.tier,
+        reasons:          result.reasons,
+        warnings:         result.warnings ?? [],
+        carrier_data:     carrierData,
+        rules_version:    RULES_VERSION,
+        lookup_id:        lookupId ?? null,
+        dispatcher_edits: Object.keys(dispatcherEdits).length > 0 ? dispatcherEdits : null,
       });
     if (logErr) throw logErr;
 
-    res.json({ ...result, recordId });
+    res.json({ ...result, recordId, dispatcherEdits });
   } catch (e) { next(e); }
 });
 

@@ -323,9 +323,12 @@ export default function CarrierVetting({ settings }) {
   const [swDrugAlcohol, setSwDrugAlcohol] = useState(null); // { value: bool|null, source: string }
   const [basicDataSufficiency, setBasicDataSufficiency] = useState({}); // per-BASIC FMCSA data sufficiency
   const [inspSourceMeta, setInspSourceMeta] = useState(null); // dual-source OOS/insp metadata
-  // autoFilledValues: { fieldName: { value: string, sourceLabel: string } }
-  // Records the exact value auto-filled from each source so dispatcher edits can be flagged on the cert.
+  // autoFilledValues: snapshot from the server's saved lookup (populated by /api/lookup).
+  // The server replaces _autoFilled at /run time with its own authoritative copy,
+  // so this is only used to visually highlight edited fields in the form UI.
   const [autoFilledValues, setAutoFilledValues] = useState({});
+  // lookupId: UUID returned by POST /api/lookup. Must be included in /run requests.
+  const [lookupId, setLookupId] = useState(null);
 
   const [blockInfo,          setBlockInfo]          = useState(null);
   const [fmcsaCannotVerify,  setFmcsaCannotVerify]  = useState(false);
@@ -608,7 +611,7 @@ export default function CarrierVetting({ settings }) {
     setSaveStatus(null);
   }
 
-  // ── DOT lookup: FMCSA + SaferWatch in parallel ──────────────────────────────
+  // ── DOT lookup: single call to /api/lookup (server orchestrates all sources) ───
   async function lookupFmcsa() {
     const dot = form.dotNumber.replace(/\D/g, '');
     if (!dot) return setLookupErr('Enter a DOT number first.');
@@ -619,38 +622,31 @@ export default function CarrierVetting({ settings }) {
     setBlockInfo(null);
     setLookingUp(true);
     try {
-      // Chameleon runs in parallel but is capped at 6 s independently of the other calls.
-      const chamPromise = Promise.race([
-        fetch(`/api/chameleon/${dot}`).then(r => r.ok ? r.json() : { notReviewed: true }).catch(() => ({ notReviewed: true })),
-        new Promise(resolve => setTimeout(() => resolve({ notReviewed: true, timedOut: true }), 6000)),
-      ]);
+      // Block check still runs in parallel (doesn't need a saved lookup).
+      const blockPromise = fetch(`/api/monitoring/blocks/${dot}`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
 
-      const [fmcsaRes, swRes, blockRes, insRes] = await Promise.all([
-        fetch(`/api/fmcsa/dot/${dot}`),
-        fetch(`/api/saferwatch/${dot}`),
-        fetch(`/api/monitoring/blocks/${dot}`),
-        fetch(`/api/insurance/cancellation/${dot}`),
-      ]);
-      const fmcsaJson = await fmcsaRes.json();
-      const swJson    = await swRes.json();
+      const lookupRes = await fetch('/api/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dot }),
+      });
+      const data = await lookupRes.json();
+      if (!lookupRes.ok) throw new Error(data.error ?? 'Lookup failed');
 
-      if (fmcsaRes.status === 503 && fmcsaJson.cannotVerify) {
+      setLookupId(data.lookupId);
+
+      if (data.fmcsaCannotVerify) {
         setFmcsaCannotVerify(true);
-        setFmcsaLastAttemptAt(fmcsaJson.lastAttemptAt ?? null);
-      } else if (!fmcsaRes.ok) {
-        throw new Error(fmcsaJson.error ?? 'FMCSA lookup failed');
-      } else {
-        applyLookupResults(fmcsaJson, swRes, swJson);
+        setFmcsaLastAttemptAt(data.fmcsaLastAttemptAt ?? null);
+      } else if (data.fmcsa) {
+        applyLookupResults(data.fmcsa, { ok: data.sw?.ok !== false }, data.sw ?? {});
       }
 
-      if (blockRes.ok) {
-        const blockJson = await blockRes.json();
-        if (blockJson) setBlockInfo(blockJson);
-      }
-
-      if (insRes.ok) {
-        const insJson = await insRes.json();
-        if (insJson.notReviewed) {
+      // Insurance fields
+      const ins = data.insurance;
+      if (ins) {
+        if (ins.notReviewed) {
           setForm(f => ({ ...f,
             bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true,
             bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
@@ -658,36 +654,38 @@ export default function CarrierVetting({ settings }) {
           }));
         } else {
           setForm(f => ({ ...f,
-            bipdCancelPending:          insJson.bipdCancelPending,
-            bipdCancelLapsed:           insJson.bipdCancelLapsed ?? false,
+            bipdCancelPending:          ins.bipdCancelPending,
+            bipdCancelLapsed:           ins.bipdCancelLapsed ?? false,
             bipdCancelNotReviewed:      false,
-            bipdCancelEffectiveDate:    insJson.effectiveDate    ?? '',
-            bipdCancelTransDate:        insJson.transDate        ?? '',
-            bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
-            bipdCancelDaysUntil:        insJson.daysUntil        ?? null,
+            bipdCancelEffectiveDate:    ins.effectiveDate    ?? '',
+            bipdCancelTransDate:        ins.transDate        ?? '',
+            bipdCancelInsuranceCompany: ins.insuranceCompany ?? '',
+            bipdCancelDaysUntil:        ins.daysUntil        ?? null,
           }));
         }
       }
 
-      const chamJson = await chamPromise;
-      if (chamJson.timedOut) {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: true, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
-      } else if (chamJson.notReviewed) {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
+      // Chameleon fields
+      const cham = data.chameleon;
+      if (!cham || cham.notReviewed) {
+        const timedOut = cham?.timedOut ?? false;
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: timedOut, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
       } else {
-        setForm(f => ({ ...f, fmcsaChameleonMatches: chamJson.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: chamJson.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false, fmcsaEnforcementLoadedAt: chamJson.enforcementTablesLoadedAt ?? null, fmcsaContactChange: chamJson.contactChange ?? null }));
+        setForm(f => ({ ...f, fmcsaChameleonMatches: cham.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: cham.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false, fmcsaEnforcementLoadedAt: cham.enforcementTablesLoadedAt ?? null, fmcsaContactChange: cham.contactChange ?? null }));
       }
+
+      const blockJson = await blockPromise;
+      if (blockJson) setBlockInfo(blockJson);
     } catch (e) {
       setLookupErr(e.message);
     } finally {
       setLookingUp(false);
     }
   }
-
-  // ── MC lookup: resolve MC → carrier via FMCSA, SW in parallel ───────────────
+  // ── MC lookup: single call to /api/lookup (server orchestrates all sources) ───────
   async function lookupByMc() {
     const mc = form.mcNumber.replace(/^(MC|FF)/i, '').replace(/\D/g, '');
-    if (!mc) return setLookupErr('Enter an MC number first.');
+    if (\!mc) return setLookupErr('Enter an MC number first.');
     setLookupErr('');
     setSwErr('');
     setFmcsaCannotVerify(false);
@@ -695,49 +693,46 @@ export default function CarrierVetting({ settings }) {
     setBlockInfo(null);
     setLookingUp(true);
     try {
-      const [fmcsaRes, swRes] = await Promise.all([
-        fetch(`/api/fmcsa/mc/${mc}`),
-        fetch(`/api/saferwatch/${mc}?type=mc`),
-      ]);
-      const fmcsaJson = await fmcsaRes.json();
-      const swJson    = await swRes.json();
+      const lookupRes = await fetch('/api/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mc }),
+      });
+      const data = await lookupRes.json();
+      if (\!lookupRes.ok) throw new Error(data.error ?? 'MC lookup failed');
 
-      if (fmcsaRes.status === 503 && fmcsaJson.cannotVerify) {
+      setLookupId(data.lookupId);
+
+      if (data.fmcsaCannotVerify) {
         setFmcsaCannotVerify(true);
-        setFmcsaLastAttemptAt(fmcsaJson.lastAttemptAt ?? null);
-      } else if (!fmcsaRes.ok) {
-        throw new Error(fmcsaJson.error ?? 'FMCSA MC lookup failed');
-      } else {
-        applyLookupResults(fmcsaJson, swRes, swJson);
-        // Check block and insurance using DOT resolved from FMCSA
-        const dot = fmcsaJson.dotNumber;
+        setFmcsaLastAttemptAt(data.fmcsaLastAttemptAt ?? null);
+      } else if (data.fmcsa) {
+        applyLookupResults(data.fmcsa, { ok: data.sw?.ok !== false }, data.sw ?? {});
+
+        const dot = data.fmcsa.dotNumber;
         if (dot) {
           Promise.all([
             fetch(`/api/monitoring/blocks/${dot}`).then(r => r.ok ? r.json() : null).catch(() => null),
-            fetch(`/api/insurance/cancellation/${dot}`).then(r => r.ok ? r.json() : null).catch(() => null),
-          ]).then(([blockJson, insJson]) => {
+          ]).then(([blockJson]) => {
             if (blockJson) setBlockInfo(blockJson);
-            if (insJson) {
-              if (insJson.notReviewed) {
-                setForm(f => ({ ...f,
-                  bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true,
-                  bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
-                  bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
-                }));
-              } else {
-                setForm(f => ({ ...f,
-                  bipdCancelPending:          insJson.bipdCancelPending,
-                  bipdCancelLapsed:           insJson.bipdCancelLapsed ?? false,
-                  bipdCancelNotReviewed:      false,
-                  bipdCancelEffectiveDate:    insJson.effectiveDate    ?? '',
-                  bipdCancelTransDate:        insJson.transDate        ?? '',
-                  bipdCancelInsuranceCompany: insJson.insuranceCompany ?? '',
-                  bipdCancelDaysUntil:        insJson.daysUntil        ?? null,
-                }));
-              }
-            }
           });
         }
+      }
+
+      const ins = data.insurance;
+      if (ins) {
+        if (ins.notReviewed) {
+          setForm(f => ({ ...f, bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true, bipdCancelEffectiveDate: '', bipdCancelTransDate: '', bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null }));
+        } else {
+          setForm(f => ({ ...f, bipdCancelPending: ins.bipdCancelPending, bipdCancelLapsed: ins.bipdCancelLapsed ?? false, bipdCancelNotReviewed: false, bipdCancelEffectiveDate: ins.effectiveDate ?? '', bipdCancelTransDate: ins.transDate ?? '', bipdCancelInsuranceCompany: ins.insuranceCompany ?? '', bipdCancelDaysUntil: ins.daysUntil ?? null }));
+        }
+      }
+
+      const cham = data.chameleon;
+      if (\!cham || cham.notReviewed) {
+        setForm(f => ({ ...f, fmcsaChameleonMatches: null, fmcsaChameleonNotReviewed: true, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: null, fmcsaEmailNotReviewed: true, fmcsaEnforcementLoadedAt: null, fmcsaContactChange: null }));
+      } else {
+        setForm(f => ({ ...f, fmcsaChameleonMatches: cham.matches ?? [], fmcsaChameleonNotReviewed: false, fmcsaChameleonTimedOut: false, fmcsaRegisteredEmail: cham.fmcsaRegisteredEmail ?? null, fmcsaEmailNotReviewed: false, fmcsaEnforcementLoadedAt: cham.enforcementTablesLoadedAt ?? null, fmcsaContactChange: cham.contactChange ?? null }));
       }
     } catch (e) {
       setLookupErr(e.message);
@@ -745,8 +740,6 @@ export default function CarrierVetting({ settings }) {
       setLookingUp(false);
     }
   }
-
-  // ── Run vetting ─────────────────────────────────────────────────────────────
   async function runVetting() {
     setRunErr('');
     if (!form.loadRef.trim())    return setRunErr('Load Reference is required.');
@@ -765,7 +758,9 @@ export default function CarrierVetting({ settings }) {
           fmcsaCannotVerify,
           fmcsaLastAttemptAt,
           drugAlcoholSource: swDrugAlcohol?.source ?? null,
-          _autoFilled: autoFilledValues,
+          lookupId,
+          // _autoFilled is intentionally omitted: the server replaces it with
+          // the authoritative copy from the saved lookup.
         }),
       });
       const data = await res.json();
@@ -962,6 +957,7 @@ export default function CarrierVetting({ settings }) {
     setBasicDataSufficiency({});
     setInspSourceMeta(null);
     setAutoFilledValues({});
+    setLookupId(null);
   }
 
   // Auto-load audit log on first render

@@ -24,26 +24,16 @@ function daysUntil(dateStr) {
 
 function ms(start) { return `${Date.now() - start}ms`; }
 
-router.get('/cancellation/:dot', async (req, res) => {
-  const dot = req.params.dot.replace(/\D/g, '');
-  if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
-
+// Exported for use by /api/lookup combined endpoint.
+export async function insuranceLookup(dot, supabase) {
   try {
-    const supabase = getSupabase();
-
-    // Check if the table has ever been populated (daily job has run at least once)
     const tCount = Date.now();
     const { count, error: countErr } = await supabase
       .from('insurance_cancellations')
       .select('*', { count: 'exact', head: true });
     console.log(`[TIMING][INSUR] Supabase insurance_cancellations count (DOT ${dot}): ${ms(tCount)}`);
-
     if (countErr) throw countErr;
-
-    if (!count) {
-      // Table empty — job has never run; cannot confirm "No"
-      return res.json({ notReviewed: true });
-    }
+    if (!count) return { notReviewed: true };
 
     const tRow = Date.now();
     const { data: row, error: rowErr } = await supabase
@@ -52,35 +42,23 @@ router.get('/cancellation/:dot', async (req, res) => {
       .eq('dot_number', dot)
       .maybeSingle();
     console.log(`[TIMING][INSUR] Supabase insurance_cancellations row (DOT ${dot}): ${ms(tRow)}`);
-
     if (rowErr) throw rowErr;
-
-    if (!row) {
-      return res.json({ bipdCancelPending: false, bipdCancelLapsed: false });
-    }
-
+    if (!row) return { bipdCancelPending: false, bipdCancelLapsed: false };
     if (row.status === 'lapsed') {
-      return res.json({
-        bipdCancelPending:   false,
-        bipdCancelLapsed:    true,
-        effectiveDate:       row.effective_date,
-        insuranceCompany:    row.insurance_company,
-      });
+      return { bipdCancelPending: false, bipdCancelLapsed: true, effectiveDate: row.effective_date, insuranceCompany: row.insurance_company };
     }
-
-    return res.json({
-      bipdCancelPending:   true,
-      bipdCancelLapsed:    false,
-      effectiveDate:       row.effective_date,
-      transDate:           row.trans_date,
-      insuranceCompany:    row.insurance_company,
-      daysUntil:           daysUntil(row.effective_date),
-    });
+    return { bipdCancelPending: true, bipdCancelLapsed: false, effectiveDate: row.effective_date, transDate: row.trans_date, insuranceCompany: row.insurance_company, daysUntil: daysUntil(row.effective_date) };
   } catch (e) {
     console.error('[INSURANCE] cancellation lookup error:', e.message);
-    // On error return notReviewed — never silently pass
-    return res.json({ notReviewed: true });
+    return { notReviewed: true };
   }
+}
+
+router.get('/cancellation/:dot', async (req, res) => {
+  const dot = req.params.dot.replace(/\D/g, '');
+  if (!dot) return res.status(400).json({ error: 'Invalid DOT number' });
+  const result = await insuranceLookup(dot, getSupabase());
+  res.json(result);
 });
 
 export default router;

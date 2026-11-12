@@ -375,19 +375,16 @@ function isHoldWorthy(ccRow, reasons, lookbackDays) {
   });
 }
 
-router.get('/:dot', async (req, res) => {
+// Exported for use by /api/lookup combined endpoint.
+// Returns the same JSON object as the route handler (notReviewed, matches, etc.).
+export async function chameleonLookup(dot, tenantSlug) {
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const cfg = await fetchSettings(tenantSlug);
+  return _chameleonCore(dot, tenantSlug, supabase, cfg);
+}
+
+async function _chameleonCore(dot, tenantSlug, supabase, cfg) {
   const tTotal = Date.now();
-  const dot = req.params.dot.replace(/\D/g, '');
-  if (!dot) return res.status(400).json({ error: 'Invalid DOT' });
-
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-
-  let t = Date.now();
-  const cfg          = await fetchSettings(req.auth.tenant);
-  console.log(`[TIMING][CHAM] DOT ${dot}: fetchSettings: ${ms(t)}`);
   const lookbackDays = parseInt(cfg.chameleonLookbackDays, 10) || 1095;
 
   // 24-hour cache: FMCSA contact data updates at most daily.
@@ -404,7 +401,7 @@ router.get('/:dot', async (req, res) => {
       (Date.now() - new Date(cached.pulled_at).getTime()) < CACHE_TTL_MS &&
       cached.result?.cacheVersion === CACHE_VERSION) {
     console.log(`[TIMING][CHAM] DOT ${dot}: cache HIT — returning cached result, /chameleon total: ${ms(tTotal)}`);
-    return res.json({ ...cached.result, pulledAt: cached.pulled_at, fromCache: true });
+    return { ...cached.result, pulledAt: cached.pulled_at, fromCache: true };
   }
   console.log(`[TIMING][CHAM] DOT ${dot}: cache MISS — running full lookup`);
 
@@ -414,7 +411,7 @@ router.get('/:dot', async (req, res) => {
   const tableStatus = await getEnforcementTableStatus(supabase);
   if (!tableStatus.ok) {
     console.warn('[CHAMELEON] Enforcement tables empty or stale — notReviewed for DOT', dot);
-    return res.json({ notReviewed: true });
+    return { notReviewed: true };
   }
   const enforcementTablesLoadedAt = tableStatus.loadedAt;
 
@@ -428,7 +425,7 @@ router.get('/:dot', async (req, res) => {
       1,
       `self CC row`
     );
-    if (!selfRows.length) return res.json({ notReviewed: false, matches: [], fmcsaRegisteredEmail: null });
+    if (!selfRows.length) return { notReviewed: false, matches: [], fmcsaRegisteredEmail: null };
     const self = selfRows[0];
 
     const selfPhone   = self.phone ?? '';
@@ -560,12 +557,21 @@ router.get('/:dot', async (req, res) => {
                { onConflict: 'dot_number' })
       .then(({ error }) => { if (error) console.warn('[CHAMELEON] Cache write failed:', error.message); })
       .catch(e => console.warn('[CHAMELEON] Cache write exception:', e.message));
-    return res.json({ notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange });
+    return { notReviewed: false, matches, pulledAt, enforcementTablesLoadedAt, fmcsaRegisteredEmail, contactChange };
 
   } catch (e) {
     console.error('[CHAMELEON] error for DOT', dot, ':', e.message);
-    return res.json({ notReviewed: true });
+    return { notReviewed: true };
   }
+}
+
+router.get('/:dot', async (req, res) => {
+  const dot = req.params.dot.replace(/\D/g, '');
+  if (!dot) return res.status(400).json({ error: 'Invalid DOT' });
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const cfg = await fetchSettings(req.auth.tenant);
+  const result = await _chameleonCore(dot, req.auth.tenant, supabase, cfg);
+  res.json(result);
 });
 
 export default router;

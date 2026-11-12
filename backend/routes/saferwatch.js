@@ -201,304 +201,149 @@ function extractPendingCancellation(certData) {
   return { pending: false, cancellationDate: null };
 }
 
+// ── Exported core lookup function (used by /api/lookup combined endpoint) ────
+// identifier: DOT number string (or MC number when lookupType='mc')
+// Returns the full SW payload (same shape as res.json() below), or throws.
+export async function swLookup(identifier, lookupType, tenantSlug) {
+  const tTotal = Date.now();
+  const tKeys  = Date.now();
+  const { serviceKey, customerKey } = await resolveSwKeys(tenantSlug);
+  console.log(`[TIMING][SW] Supabase tenant_credentials read: ${ms(tKeys)}`);
+
+  if (!serviceKey || !customerKey) {
+    return { ok: false, error: 'SaferWatch API key not configured — add your SaferWatch key in Settings' };
+  }
+
+  const url    = swLookupUrl(identifier, lookupType ?? 'dot', serviceKey, customerKey);
+  const tFetch = Date.now();
+  const swRes  = await fetch(url, { signal: AbortSignal.timeout(12_000) });
+  console.log(`[TIMING][SW] SaferWatch HTTP (${identifier}): ${ms(tFetch)}`);
+  if (!swRes.ok) throw new Error(`SaferWatch HTTP ${swRes.status}`);
+
+  const xmlText = await swRes.text();
+  const parser  = new XMLParser({
+    ignoreAttributes:    false,
+    attributeNamePrefix: '@_',
+    isArray: (name) => ['Certificate', 'Coverage'].includes(name),
+  });
+  const parsed = parser.parse(xmlText);
+  const root   = parsed['CarrierService32.CarrierLookup'];
+  if (!root) throw new Error('Unexpected SaferWatch XML — root element is not CarrierService32.CarrierLookup');
+
+  const wrapper  = root.ResponseDO || {};
+  const status   = str(wrapper.status);
+  const action   = str(wrapper.action);
+  const code     = str(wrapper.code);
+  const dispMsg  = str(wrapper.displayMsg);
+  const techMsg  = str(wrapper.techMsg);
+  const swInspectionsDate = str(wrapper.retrievalDate || wrapper.dataDate || wrapper.asOfDate || '') || null;
+
+  if (status !== 'APPROVED' || action !== 'OK') {
+    console.warn('[SW] Non-OK response:', { status, action, code, dispMsg, techMsg });
+    return { ok: false, status, action, code, error: dispMsg || techMsg || `SaferWatch: status=${status} action=${action}` };
+  }
+
+  const details = root.CarrierDetails;
+  if (!details) return { ok: false, error: 'SaferWatch: no CarrierDetails in response' };
+
+  const identity   = details.Identity       || {};
+  const authority  = details.Authority      || {};
+  const safety     = details.Safety         || {};
+  const inspection = details.Inspection     || {};
+  const operation  = details.Operation      || {};
+  const equipment  = details.Equipment      || {};
+  const insurance  = details.FMCSAInsurance || {};
+  const certData   = details.CertData       || null;
+  const riskAssess = details.RiskAssessment || {};
+
+  const cargo               = extractCargo(certData);
+  const certStatus          = str(certData?.['@_status'] || certData?.status || '');
+  const pendingCancellation = extractPendingCancellation(certData);
+  const insuranceDataAsOf   = new Date().toISOString();
+
+  const csAlert   = str(safety.controlSubAlert).trim().toLowerCase();
+  const csPct     = parseFloat(str(safety.controlSubPCT));
+  const drvInspUS = parseInt(str(inspection.inspectDrvUS || ''), 10);
+  const vehInspUS = parseInt(str(inspection.inspectVehUS || ''), 10);
+  const hasInsp   = !isNaN(drvInspUS) && drvInspUS > 0;
+  const drvSufficientBasic = !isNaN(drvInspUS) && drvInspUS >= 3;
+  const drvSufficientFit   = !isNaN(drvInspUS) && drvInspUS >= 5;
+  const vehSufficient      = !isNaN(vehInspUS) && vehInspUS >= 5;
+  const checkedDate = new Date().toISOString().slice(0, 10);
+
+  let drugAlcoholViolation = null;
+  let drugAlcoholSource    = null;
+  if (csAlert === 'yes') {
+    drugAlcoholViolation = true;
+    drugAlcoholSource    = `Auto-filled from SaferWatch — violation detected` +
+      ` (Controlled Substances BASIC alert: Yes` + (hasInsp ? `, ${drvInspUS} driver insp.` : '') + `)`;
+  } else if (!isNaN(csPct) && csPct > 0 && hasInsp) {
+    drugAlcoholViolation = true;
+    drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — violation found` +
+      ` (controlSubPCT: ${csPct}, ${drvInspUS} driver insp., below alert threshold)`;
+  } else if (!isNaN(csPct) && csPct === 0 && hasInsp) {
+    drugAlcoholViolation = false;
+    drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — 0 violations found` +
+      ` (controlSubPCT: 0, ${drvInspUS} driver insp.), checked ${checkedDate}`;
+  } else if (!isNaN(drvInspUS) && drvInspUS === 0) {
+    drugAlcoholViolation = null;
+    drugAlcoholSource    = `SaferWatch: no driver inspections on record — answer required`;
+  }
+
+  const swFields = {
+    carrierName: str(identity.legalName),
+    authorityStatus:    normalizeAuthority(str(authority.commonAuthority), str(authority.contractAuthority), str(authority.commonAuthorityRevocation)),
+    authorityGrantDate: normalizeDate(str(authority.authGrantDate)),
+    safetyRating: normalizeSafetyRating(str(safety.rating)),
+    unsafeDrivingBasic:      drvSufficientBasic ? str(safety.unsafeDrvPCT) : '',
+    hosBasic:                drvSufficientBasic ? str(safety.hosPCT)       : '',
+    vehicleMaintenanceBasic: vehSufficient      ? str(safety.vehMaintPCT)  : '',
+    autoLiability:  parseMoney(insurance.bipdOnFile),
+    cargoInsurance: cargo.amount,
+    truckOosPct:  fmtOos(inspection.inspectVehOOSPctUS),
+    driverOosPct: fmtOos(inspection.inspectDrvOOSPctUS),
+    inspections24mo: str(inspection.inspectTotalUS),
+    powerUnits: str(equipment.totalPower),
+    activeFederalOOS: str(operation.outOfService).toLowerCase() === 'yes',
+    autoLiabilityExpiration: extractAutoLiabilityExpiration(certData),
+    cargoExpiration:         cargo.expiration,
+    insuranceDataAsOf,
+  };
+
+  const filledFields = Object.entries(swFields)
+    .filter(([, v]) => v !== '' && v !== false && v != null)
+    .map(([k]) => k);
+
+  console.log(`[TIMING][SW] swLookup total (${identifier}): ${ms(tTotal)}`);
+  return {
+    ok: true,
+    ...swFields,
+    filledFields,
+    drugAlcoholViolation,
+    drugAlcoholSource,
+    certStatus,
+    bipdRequired: parseMoney(insurance.bipdRequired),
+    riskAssessment: { overall: str(riskAssess.Overall), authority: str(riskAssess.Authority), insurance: str(riskAssess.Insurance), safety: str(riskAssess.Safety) },
+    alerts: { unsafeDriving: str(safety.unsafeDrvAlert), hos: str(safety.hosAlert), vehicleMaintenance: str(safety.vehMaintAlert), controlledSubstances: str(safety.controlSubAlert), driverFitness: str(safety.drvFitAlert) },
+    swInspectionsDate,
+    inspectVehUS:  isNaN(vehInspUS) ? null : vehInspUS,
+    inspectDrvUS:  isNaN(drvInspUS) ? null : drvInspUS,
+    basicDataSufficiency: { unsafeDriving: isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'), hos: isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'), vehicleMaintenance: isNaN(vehInspUS) ? null : (vehSufficient ? 'ok' : 'insufficient'), driverFitness: isNaN(drvInspUS) ? null : (drvSufficientFit ? 'ok' : 'insufficient'), crashIndicator: null, vehicleDriverObserved: null, hazmat: null },
+    extraBasics: { controlledSubstancesPct: str(safety.controlSubPCT), driverFitnessPct: drvSufficientFit ? str(safety.drvFitPCT) : '' },
+    rawBasics: { unsafeDrivingPct: str(safety.unsafeDrvPCT), hosPct: str(safety.hosPCT), vehicleMaintenancePct: str(safety.vehMaintPCT), driverFitnessPct: str(safety.drvFitPCT) },
+    _raw: { identity, authority, safety, inspection, operation, equipment, insurance, certStatus },
+  };
+}
+
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 router.get('/:dot', async (req, res, next) => {
-  const tTotal = Date.now();
   try {
-    const tKeys = Date.now();
-    const { serviceKey, customerKey } = await resolveSwKeys(req.auth.tenant);
-    console.log(`[TIMING][SW] Supabase tenant_credentials read: ${ms(tKeys)}`);
-
-    if (!serviceKey || !customerKey) {
-      return res.status(503).json({
-        ok: false,
-        error: 'SaferWatch API key not configured — add your SaferWatch key in Settings',
-      });
-    }
-
-    // ?type=mc when the caller is looking up by MC number
     const lookupType = req.query.type === 'mc' ? 'mc' : 'dot';
     const identifier = req.params.dot.replace(/\D/g, '');
     if (!identifier) return res.status(400).json({ ok: false, error: 'Invalid DOT/MC number' });
-
-    // ── Fetch ──────────────────────────────────────────────────────────────
-    const url   = swLookupUrl(identifier, lookupType, serviceKey, customerKey);
-    const tFetch = Date.now();
-    const swRes = await fetch(url, { signal: AbortSignal.timeout(12_000) });
-    console.log(`[TIMING][SW] SaferWatch HTTP (${identifier}): ${ms(tFetch)}`);
-    if (!swRes.ok) throw new Error(`SaferWatch HTTP ${swRes.status}`);
-
-    const xmlText = await swRes.text();
-
-    // ── Parse XML ──────────────────────────────────────────────────────────
-    const parser = new XMLParser({
-      ignoreAttributes:    false,
-      attributeNamePrefix: '@_',
-      // Force array for nodes that may repeat in the response
-      isArray: (name) => ['Certificate', 'Coverage'].includes(name),
-    });
-    const parsed = parser.parse(xmlText);
-
-    // ── Validate wrapper ───────────────────────────────────────────────────
-    // Actual root element is <CarrierService32.CarrierLookup>; ResponseDO
-    // and CarrierDetails are siblings inside it (not nested in ResponseDO).
-    const root = parsed['CarrierService32.CarrierLookup'];
-    if (!root) {
-      throw new Error('Unexpected SaferWatch XML — root element is not CarrierService32.CarrierLookup');
-    }
-
-    const wrapper = root.ResponseDO || {};
-    const status  = str(wrapper.status);
-    const action  = str(wrapper.action);
-    const code    = str(wrapper.code);
-    const dispMsg = str(wrapper.displayMsg);
-    const techMsg = str(wrapper.techMsg);
-    // SW data freshness date — present in some XML responses as retrievalDate or similar.
-    // null means SW doesn't expose a freshness date → SAFER snapshot wins by default.
-    const swInspectionsDate = str(wrapper.retrievalDate || wrapper.dataDate || wrapper.asOfDate || '') || null;
-
-    if (status !== 'APPROVED' || action !== 'OK') {
-      console.warn('[SW] Non-OK response:', { status, action, code, dispMsg, techMsg });
-      return res.json({
-        ok: false,
-        status, action, code,
-        error: dispMsg || techMsg || `SaferWatch: status=${status} action=${action}`,
-      });
-    }
-
-    const details = root.CarrierDetails;
-    if (!details) {
-      return res.json({ ok: false, error: 'SaferWatch: no CarrierDetails in response' });
-    }
-
-    // ── Extract sections ───────────────────────────────────────────────────
-    const identity   = details.Identity       || {};
-    const authority  = details.Authority      || {};
-    const safety     = details.Safety         || {};
-    const inspection = details.Inspection     || {};
-    const operation  = details.Operation      || {};
-    const equipment  = details.Equipment      || {};
-    const insurance  = details.FMCSAInsurance || {};
-    const certData   = details.CertData       || null;
-    const riskAssess = details.RiskAssessment || {};
-
-    const cargo              = extractCargo(certData);
-    const certStatus         = str(certData?.['@_status'] || certData?.status || '');
-    const pendingCancellation = extractPendingCancellation(certData);
-    const insuranceDataAsOf  = new Date().toISOString();
-
-    // ── Drug/alcohol auto-fill from Controlled Substances/Alcohol BASIC ────
-    // controlSubPCT is FMCSA's percentile (0–100, higher = worse).
-    // SaferWatch always emits the XML field; 0.0 is both the schema default AND
-    // the real "zero violations" value — only meaningful when inspectDrvUS > 0.
-    //
-    // Tested against real carriers:
-    //   0 driver insp.  → csPCT=0  meaning: NO DATA (schema default)
-    //   22k driver insp.→ csPCT=0  meaning: REAL ZERO violations
-    //   20k driver insp.→ csPCT>0  meaning: real violations confirmed
-    //
-    // Rules:
-    //   csAlert=Yes                       → auto-fill Yes (above FMCSA threshold)
-    //   csPCT > 0  AND drvInspUS > 0     → auto-fill Yes (violations exist, any level)
-    //   csPCT === 0 AND drvInspUS > 0    → auto-fill No  (real zero confirmed)
-    //   drvInspUS === 0 OR missing       → null, dispatcher must answer
-    const csAlert   = str(safety.controlSubAlert).trim().toLowerCase();
-    const csPct     = parseFloat(str(safety.controlSubPCT));
-    const drvInspUS = parseInt(str(inspection.inspectDrvUS || ''), 10);
-    const vehInspUS = parseInt(str(inspection.inspectVehUS || ''), 10);
-    const hasInsp   = !isNaN(drvInspUS) && drvInspUS > 0;
-    // FMCSA SMS data sufficiency — exact wording from §3.x.2 of CSMS Methodology (Sept 2014)
-    // Source: csa.fmcsa.dot.gov/documents/smsmethodology.pdf
-    //
-    // Unsafe Driving (§3.1.2 B): "remove carriers with less than THREE such inspections"
-    //   where "such inspections" = inspections with at least one Unsafe Driving BASIC violation.
-    //   Safety Event Groups are keyed on inspections-WITH-violations, not total driver insp.
-    //   → We proxy with driverInsp >= 3 (best available — SW doesn't supply violation counts per BASIC).
-    //
-    // HOS Compliance (§3.2.2 A): "remove carriers with (1) less than THREE relevant driver
-    //   inspections OR (2) no inspections resulting in at least one BASIC violation."
-    //   Post-group step also eliminates carriers where no violation in past 12 months AND no
-    //   violation in the latest relevant inspection. Cannot check violation recency from SW.
-    //
-    // Driver Fitness (§3.3.2 A): same two-condition rule as HOS but minimum is FIVE
-    //   relevant driver inspections.
-    //
-    // Vehicle Maintenance (§3.5.2 A): "remove carriers with (1) less than FIVE relevant
-    //   [vehicle] inspections OR (2) no inspections resulting in at least one BASIC violation."
-    //   Same 12-month recency elimination applies.
-    //
-    // HM Compliance (§3.6.2 A): same two-condition rule as VM, FIVE relevant HM inspections.
-    //   HM-specific inspection count not available in SW response — gate not applicable.
-    //
-    // Crash Indicator (§3.7.2 B): "For carriers with TWO or more applicable crashes."
-    //   Crash-based, not inspection-based — gate not applicable.
-    //
-    // Controlled Substances/Alcohol (§3.4.2 A): "Remove carriers with no violations in
-    //   this BASIC." No inspection-count floor; grouped by count of inspections-with-violations.
-    //   All violations must be within 12 months. Handled separately via drugAlcoholViolation flag.
-    //
-    // NOTE: The violation-presence condition (part 2 of HOS/DF/VM/HM gates) cannot be checked
-    // directly from SW data. A carrier meeting the inspection count but having 0 violations
-    // gets measure=0 from FMCSA and SW returns 0.0 (schema default). This is harmless —
-    // showing 0.0 does not trigger any rule. The count gate below correctly identifies cases
-    // where SW's 0.0 is definitely a schema default (no inspection history at all).
-    const drvSufficientBasic = !isNaN(drvInspUS) && drvInspUS >= 3;  // Unsafe Driving proxy, HOS
-    const drvSufficientFit   = !isNaN(drvInspUS) && drvInspUS >= 5;  // Driver Fitness
-    const vehSufficient      = !isNaN(vehInspUS) && vehInspUS >= 5;  // Vehicle Maintenance
-    const checkedDate = new Date().toISOString().slice(0, 10);
-    let drugAlcoholViolation = null;
-    let drugAlcoholSource    = null;
-
-    if (csAlert === 'yes') {
-      // Alert triggered — above FMCSA intervention threshold
-      drugAlcoholViolation = true;
-      drugAlcoholSource    = `Auto-filled from SaferWatch — violation detected` +
-        ` (Controlled Substances BASIC alert: Yes` +
-        (hasInsp ? `, ${drvInspUS} driver insp.` : '') + `)`;
-    } else if (!isNaN(csPct) && csPct > 0 && hasInsp) {
-      // PCT > 0 with real inspections — violations exist even below alert threshold
-      drugAlcoholViolation = true;
-      drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — violation found` +
-        ` (controlSubPCT: ${csPct}, ${drvInspUS} driver insp., below alert threshold)`;
-    } else if (!isNaN(csPct) && csPct === 0 && hasInsp) {
-      // PCT = 0 with real inspections — confirmed zero violations
-      drugAlcoholViolation = false;
-      drugAlcoholSource    = `Auto-filled from FMCSA records via SaferWatch — 0 violations found` +
-        ` (controlSubPCT: 0, ${drvInspUS} driver insp.), checked ${checkedDate}`;
-    } else if (!isNaN(drvInspUS) && drvInspUS === 0) {
-      // No driver inspections on record — PCT=0 is schema default, not meaningful
-      drugAlcoholViolation = null;
-      drugAlcoholSource    = `SaferWatch: no driver inspections on record — answer required`;
-    }
-    // else: data missing entirely — drugAlcoholViolation stays null, no source banner
-
-    // ── Normalise into vetting form field names ────────────────────────────
-    const swFields = {
-      // Identity
-      carrierName: str(identity.legalName),
-
-      // Authority
-      authorityStatus:    normalizeAuthority(
-        str(authority.commonAuthority),
-        str(authority.contractAuthority),
-        str(authority.commonAuthorityRevocation)
-      ),
-      authorityGrantDate: normalizeDate(str(authority.authGrantDate)),
-
-      // Safety rating
-      safetyRating: normalizeSafetyRating(str(safety.rating)),
-
-      // BASIC percentile scores — the primary gap FMCSA cannot fill.
-      // SaferWatch always emits PCT fields; 0.0 is both the XML schema default AND
-      // a genuine 0th-percentile value. Only return them when the carrier meets
-      // FMCSA's data sufficiency minimum for the relevant inspection type.
-      // Unsafe Driving / HOS use driver inspections (≥3); VM uses vehicle (≥5).
-      unsafeDrivingBasic:      drvSufficientBasic ? str(safety.unsafeDrvPCT) : '',
-      hosBasic:                drvSufficientBasic ? str(safety.hosPCT)       : '',
-      vehicleMaintenanceBasic: vehSufficient      ? str(safety.vehMaintPCT)  : '',
-
-      // Insurance amounts — was entirely manual before
-      autoLiability:  parseMoney(insurance.bipdOnFile),
-      cargoInsurance: cargo.amount,
-
-      // OOS rates (2 dp, matching FMCSA formatting)
-      truckOosPct:  fmtOos(inspection.inspectVehOOSPctUS),
-      driverOosPct: fmtOos(inspection.inspectDrvOOSPctUS),
-
-      // Total inspections
-      inspections24mo: str(inspection.inspectTotalUS),
-
-      // Power units
-      powerUnits: str(equipment.totalPower),
-
-      // Active federal OOS — boolean
-      activeFederalOOS: str(operation.outOfService).toLowerCase() === 'yes',
-
-      // Insurance expiration dates
-      autoLiabilityExpiration: extractAutoLiabilityExpiration(certData),
-      cargoExpiration:         cargo.expiration,
-
-      // Pending cancellation — detection code runs but value is NOT surfaced here until
-      // confirmed against a real carrier with an active BMC-91 cancellation notice.
-      // Re-enable when field name is verified: pendingCancellation.pending / .cancellationDate
-      // pendingInsuranceCancellation: pendingCancellation.pending,
-      // insuranceCancellationDate:    pendingCancellation.cancellationDate,
-
-      // Timestamp of this insurance data pull
-      insuranceDataAsOf,
-    };
-
-    // Fields with actual values (non-empty string, or boolean true)
-    const filledFields = Object.entries(swFields)
-      .filter(([, v]) => v !== '' && v !== false && v != null)
-      .map(([k]) => k);
-
-    console.log(`[TIMING][SW] /saferwatch total (${identifier}): ${ms(tTotal)}`);
-    res.json({
-      ok: true,
-      ...swFields,
-      filledFields,
-
-      // Drug/alcohol auto-fill — dispatcher can only upgrade No→Yes, never downgrade Yes→No
-      drugAlcoholViolation,
-      drugAlcoholSource,
-
-      // Metadata for the banner
-      certStatus,
-      bipdRequired: parseMoney(insurance.bipdRequired),
-      riskAssessment: {
-        overall:   str(riskAssess.Overall),
-        authority: str(riskAssess.Authority),
-        insurance: str(riskAssess.Insurance),
-        safety:    str(riskAssess.Safety),
-      },
-      // Alert flags (Yes = SW flagged as over threshold) — cross-check only
-      alerts: {
-        unsafeDriving:        str(safety.unsafeDrvAlert),
-        hos:                  str(safety.hosAlert),
-        vehicleMaintenance:   str(safety.vehMaintAlert),
-        controlledSubstances: str(safety.controlSubAlert),
-        driverFitness:        str(safety.drvFitAlert),
-      },
-      // SW data freshness date (null = SW doesn't expose it → SAFER snapshot wins by default)
-      swInspectionsDate,
-
-      // Inspection breakdown — vehicle vs driver (used for BASIC validity gate above)
-      inspectVehUS:  isNaN(vehInspUS) ? null : vehInspUS,
-      inspectDrvUS:  isNaN(drvInspUS) ? null : drvInspUS,
-
-      // FMCSA SMS data sufficiency per BASIC — null = relevant inspection count unavailable from SW
-      // 'ok' = at or above FMCSA minimum; 'insufficient' = below minimum, percentile not meaningful
-      // Unsafe Driving uses driver-inspection count as a proxy (FMCSA's true minimum is on
-      // inspections-WITH-violations, which SW doesn't expose separately).
-      basicDataSufficiency: {
-        unsafeDriving:         isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'),
-        hos:                   isNaN(drvInspUS) ? null : (drvSufficientBasic ? 'ok' : 'insufficient'),
-        vehicleMaintenance:    isNaN(vehInspUS) ? null : (vehSufficient      ? 'ok' : 'insufficient'),
-        driverFitness:         isNaN(drvInspUS) ? null : (drvSufficientFit   ? 'ok' : 'insufficient'),
-        crashIndicator:        null,  // manual; crash count not provided by SW
-        vehicleDriverObserved: null,  // manual
-        hazmat:                null,  // manual; HM inspection count not provided by SW
-      },
-
-      // Captured but not mapped to current form fields (future expansion)
-      extraBasics: {
-        controlledSubstancesPct: str(safety.controlSubPCT),
-        driverFitnessPct:        drvSufficientFit ? str(safety.drvFitPCT) : '',
-      },
-      // Raw BASIC PCT values without gate filtering — used by frontend to re-apply gates
-      // when the winning inspection source (SAFER) has higher counts than SaferWatch.
-      rawBasics: {
-        unsafeDrivingPct:      str(safety.unsafeDrvPCT),
-        hosPct:                str(safety.hosPCT),
-        vehicleMaintenancePct: str(safety.vehMaintPCT),
-        driverFitnessPct:      str(safety.drvFitPCT),
-      },
-      // Raw sections for side-by-side debug comparison
-      _raw: { identity, authority, safety, inspection, operation, equipment, insurance, certStatus },
-    });
-
+    const result = await swLookup(identifier, lookupType, req.auth.tenant);
+    res.json(result);
   } catch (e) {
     console.error('[SW ERROR]', e.message);
     next(e);

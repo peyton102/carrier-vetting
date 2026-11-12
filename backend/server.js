@@ -12,6 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 import { signToken }   from './lib/auth.js';
 import { requireAuth } from './middleware/requireAuth.js';
 import vettingRouter      from './routes/vetting.js';
+import lookupRouter       from './routes/lookup.js';
 import fmcsaRouter        from './routes/fmcsa.js';
 import saferwatchRouter   from './routes/saferwatch.js';
 import certificatesRouter from './routes/certificates.js';
@@ -101,6 +102,7 @@ app.get('/api/me', async (req, res, next) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/vetting',       vettingRouter);
+app.use('/api/lookup',        lookupRouter);
 app.use('/api/fmcsa',         fmcsaRouter);
 app.use('/api/saferwatch',    saferwatchRouter);
 app.use('/api/certificates',  certificatesRouter);
