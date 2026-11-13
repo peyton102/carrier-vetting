@@ -27,7 +27,7 @@ function LoginScreen({ onLogin, onForgot }) {
       });
       const data = await res.json();
       if (res.ok) {
-        onLogin({ email: data.email, name: data.name, tenant: data.tenant, isAdmin: data.isAdmin });
+        onLogin({ email: data.email, name: data.name, tenant: data.tenant, isAdmin: data.isAdmin, isCanceled: !!data.isCanceled });
       } else {
         setError(data.error || 'Invalid email or password');
       }
@@ -298,17 +298,23 @@ export default function App() {
   useEffect(() => {
     fetch('/api/me')
       .then(r => r.ok ? r.json() : null)
-      .then(data => { setUser(data || false); setReady(true); })
+      .then(data => {
+        if (data) { setUser({ ...data, isCanceled: !!data.isCanceled }); }
+        else      { setUser(false); }
+        setReady(true);
+      })
       .catch(() => { setUser(false); setReady(true); });
   }, []);
 
-  // Load settings + check SaferWatch key whenever a session is established
+  // Load settings + check SaferWatch key whenever a session is established.
+  // Canceled accounts skip the SaferWatch gate — they can export but not run vettings.
   useEffect(() => {
     if (!user) { setSwReady(null); return; }
     fetch('/api/settings')
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setSettings(data); })
       .catch(() => {});
+    if (user.isCanceled) { setSwReady(true); return; }
     fetch('/api/credentials/saferwatch')
       .then(r => r.ok ? r.json() : null)
       .then(d => setSwReady(d?.configured === true))
@@ -393,6 +399,14 @@ export default function App() {
         </span>
       </nav>
       <AlertBanner />
+      {user.isCanceled && (
+        <div style={{
+          background: '#fef2f2', borderBottom: '1px solid #fecaca',
+          padding: '10px 20px', fontSize: 13, color: '#991b1b', textAlign: 'center',
+        }}>
+          This account has been canceled. New vettings are disabled. You can still export your records from the Certificates page.
+        </div>
+      )}
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/vetting" replace />} />

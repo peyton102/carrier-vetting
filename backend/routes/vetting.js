@@ -48,6 +48,7 @@ function validateCarrierData(d) {
 //   • Writes an immutable vetting_logs record with lookup_id + dispatcher_edits.
 router.post('/run', async (req, res, next) => {
   try {
+    if (req.auth.canceled) return res.status(403).json({ error: 'Account canceled — contact support to renew.' });
     const { lookupId, ...browserBody } = req.body;
     const orgId = req.auth.tenant;
 
@@ -143,6 +144,7 @@ router.post('/run', async (req, res, next) => {
 // PDF delivery is always attempted regardless of storage/DB errors.
 router.post('/pdf', async (req, res, next) => {
   try {
+    if (req.auth.canceled) return res.status(403).json({ error: 'Account canceled — contact support to renew.' });
     const { recordId, fieldSources, override } = req.body;
     const orgId = req.auth.tenant;
 

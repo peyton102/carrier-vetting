@@ -47,7 +47,7 @@ app.post('/api/login', async (req, res) => {
   try {
     const { data: tenant, error } = await getSupabase()
       .from('tenants')
-      .select('slug, email, name, password_hash, is_active, is_admin')
+      .select('slug, email, name, password_hash, is_active, is_admin, is_canceled')
       .eq('email', email.toLowerCase().trim())
       .single();
 
@@ -64,9 +64,10 @@ app.post('/api/login', async (req, res) => {
     const valid = await bcrypt.compare(password, tenant.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
-    const token = signToken({ sub: tenant.email, tenant: tenant.slug });
+    const isCanceled = !!tenant.is_canceled;
+    const token = signToken({ sub: tenant.email, tenant: tenant.slug, canceled: isCanceled });
     res.cookie('auth', token, { httpOnly: true, sameSite: 'strict', maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin });
+    res.json({ ok: true, email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin, isCanceled });
   } catch (e) {
     console.error('[LOGIN] error:', e.message);
     res.status(500).json({ error: 'Login failed' });
@@ -91,11 +92,11 @@ app.get('/api/me', async (req, res, next) => {
   try {
     const { data: tenant, error } = await getSupabase()
       .from('tenants')
-      .select('slug, email, name, is_admin')
+      .select('slug, email, name, is_admin, is_canceled')
       .eq('slug', req.auth.tenant)
       .single();
     if (error || !tenant) return res.status(401).json({ error: 'Tenant not found' });
-    res.json({ email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin });
+    res.json({ email: tenant.email, name: tenant.name, tenant: tenant.slug, isAdmin: !!tenant.is_admin, isCanceled: !!tenant.is_canceled });
   } catch (e) { next(e); }
 });
 

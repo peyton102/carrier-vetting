@@ -8,6 +8,7 @@ const s = {
   cardHead: { fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', color: '#374151', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', paddingBottom: 10, marginBottom: 16 },
   btn:      { padding: '8px 18px', border: 'none', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff', boxShadow: '0 2px 8px rgba(249,115,22,.25)' },
   btnSm:    { padding: '4px 12px', border: 'none', borderRadius: 5, fontWeight: 600, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', background: '#f97316', color: '#fff' },
+  btnGray:  { padding: '8px 18px', border: '1px solid #e2e8f0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', background: '#f8fafc', color: '#475569' },
   table:    { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
   th:       { textAlign: 'left', padding: '8px 10px', background: '#f8fafc', fontWeight: 700, color: '#374151', borderBottom: '1px solid #e2e8f0' },
   td:       { padding: '7px 10px', borderBottom: '1px solid #f1f5f9', color: '#374151' },
@@ -20,10 +21,37 @@ function verdictColor(v) {
   return '#dc2626';
 }
 
+function FingerprintCell({ hash }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!hash) return <span style={{ color: '#94a3b8' }}>—</span>;
+
+  function copy() {
+    navigator.clipboard.writeText(hash).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
+  }
+
+  return (
+    <span
+      title={`Click to copy full SHA-256:\n${hash}`}
+      onClick={copy}
+      style={{
+        fontFamily: 'monospace', fontSize: 11, color: copied ? '#16a34a' : '#64748b',
+        cursor: 'pointer', userSelect: 'none',
+      }}
+    >
+      {copied ? 'Copied!' : `${hash.slice(0, 16)}…`}
+    </span>
+  );
+}
+
 export default function Certificates() {
-  const [certs,   setCerts]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [err,     setErr]     = useState('');
+  const [certs,     setCerts]     = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [err,       setErr]       = useState('');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { load(); }, []);
 
@@ -38,6 +66,26 @@ export default function Certificates() {
     finally { setLoading(false); }
   }
 
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await fetch('/api/certificates/export');
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? 'Export failed');
+      }
+      const blob = await res.blob();
+      const cd   = res.headers.get('Content-Disposition') ?? '';
+      const m    = cd.match(/filename="([^"]+)"/);
+      const name = m?.[1] ?? `torevez-export-${new Date().toISOString().slice(0, 10)}.zip`;
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = name; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { setErr(e.message); }
+    finally { setExporting(false); }
+  }
+
   return (
     <div style={s.page}>
       <h1 style={s.h1}>Certificates</h1>
@@ -49,9 +97,14 @@ export default function Certificates() {
       <div style={s.card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={s.cardHead}>Stored Certificates</div>
-          <button style={s.btn} disabled={loading} onClick={load}>
-            {loading ? 'Loading…' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={s.btnGray} disabled={exporting} onClick={handleExport}>
+              {exporting ? 'Exporting…' : 'Export all records'}
+            </button>
+            <button style={s.btn} disabled={loading} onClick={load}>
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {err && <p style={{ color: '#dc2626', fontSize: 13 }}>{err}</p>}
@@ -68,7 +121,7 @@ export default function Certificates() {
                 <table style={s.table}>
                   <thead>
                     <tr>
-                      {['Date', 'Carrier', 'DOT', 'MC', 'Verdict', 'PDF'].map(h => (
+                      {['Date', 'Carrier', 'DOT', 'MC', 'Verdict', 'Fingerprint', 'PDF'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
@@ -92,6 +145,9 @@ export default function Certificates() {
                           }}>
                             {c.verdict}
                           </span>
+                        </td>
+                        <td style={s.td}>
+                          <FingerprintCell hash={c.pdf_sha256} />
                         </td>
                         <td style={s.td}>
                           <a
