@@ -1,6 +1,6 @@
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
-import JSZip from 'jszip';
+import { ZipArchive } from 'archiver';
 
 const router = express.Router();
 
@@ -84,43 +84,36 @@ router.get('/export', async (req, res, next) => {
       if (!ex || ov.override_at > ex.override_at) overrideMap[ov.record_id] = ov;
     }
 
-    const rows = logsResult.data ?? [];
-    const zip  = new JSZip();
-    const pdfs = zip.folder('pdfs');
+    const rows   = logsResult.data ?? [];
+    const now    = new Date().toISOString();
+    const dateStr = now.slice(0, 10);
 
-    // Download each PDF from primary (or backup) storage
-    for (const row of rows) {
-      if (!row.pdf_url) continue;
-      const filename = row.pdf_url.split('/').pop();
-      let downloaded = false;
-      for (const bucket of [BUCKET, BUCKET_BACKUP]) {
-        if (downloaded) break;
-        try {
-          const { data: blob, error: dlErr } = await supabase.storage
-            .from(bucket).download(row.pdf_url);
-          if (!dlErr && blob) {
-            pdfs.file(filename, await blob.arrayBuffer());
-            downloaded = true;
-          }
-        } catch (e) {
-          console.error('[EXPORT PDF]', row.id, bucket, e.message);
-        }
-      }
-      if (!downloaded) console.warn('[EXPORT PDF MISSING]', row.id, row.pdf_url);
-    }
+    // Stream the ZIP directly to the response — no full-buffer accumulation.
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="torevez-export-${dateStr}.zip"`);
+
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    archive.pipe(res);
+
+    // Handle archiver errors so they don't go unhandled
+    archive.on('error', e => {
+      console.error('[EXPORT ZIP ERROR]', e.message);
+      // res may already be partially sent; just destroy
+      res.destroy(e);
+    });
 
     // Build CSV
     const csvVal = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const header = [
+    const csvHeader = [
       'Date', 'Load Ref', 'Dispatcher', 'Carrier Name', 'DOT', 'MC',
       'Verdict', 'Reasons', 'Override Manager', 'Override Reason', 'Override Time',
       'Dispatcher Edits', 'PDF Fingerprint', 'Rules Version', 'Record ID',
     ].join(',');
     const csvRows = rows.map(row => {
-      const ov        = overrideMap[row.id];
-      const verdict   = ov ? 'APPROVED WITH OVERRIDE' : row.verdict;
-      const reasons   = (row.reasons ?? []).join('; ');
-      const edits     = row.dispatcher_edits
+      const ov      = overrideMap[row.id];
+      const verdict = ov ? 'APPROVED WITH OVERRIDE' : row.verdict;
+      const reasons = (row.reasons ?? []).join('; ');
+      const edits   = row.dispatcher_edits
         ? Object.entries(row.dispatcher_edits)
             .map(([k, v]) => `${k}: ${v.submitted} (was ${v.original})`)
             .join('; ')
@@ -143,11 +136,10 @@ router.get('/export', async (req, res, next) => {
         csvVal(row.id),
       ].join(',');
     });
-    zip.file('records.csv', [header, ...csvRows].join('\n'));
+    archive.append([csvHeader, ...csvRows].join('\n'), { name: 'records.csv' });
 
     // README
-    const now = new Date().toISOString();
-    zip.file('README.txt', [
+    archive.append([
       'Torevez Carrier Vetting Export',
       '================================',
       `Generated: ${now}`,
@@ -172,13 +164,31 @@ router.get('/export', async (req, res, next) => {
       '  shasum -a 256 pdfs/<filename>.pdf',
       '',
       'The hash must match exactly (case-insensitive).',
-    ].join('\n'));
+    ].join('\n'), { name: 'README.txt' });
 
-    const buf     = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-    const dateStr = now.slice(0, 10);
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="torevez-export-${dateStr}.zip"`);
-    res.send(buf);
+    // Download each PDF and append as it arrives — one buffer in memory at a time.
+    for (const row of rows) {
+      if (!row.pdf_url) continue;
+      const filename = row.pdf_url.split('/').pop();
+      let buf = null;
+      for (const bucket of [BUCKET, BUCKET_BACKUP]) {
+        if (buf) break;
+        try {
+          const { data: blob, error: dlErr } = await supabase.storage
+            .from(bucket).download(row.pdf_url);
+          if (!dlErr && blob) buf = Buffer.from(await blob.arrayBuffer());
+        } catch (e) {
+          console.error('[EXPORT PDF]', row.id, bucket, e.message);
+        }
+      }
+      if (buf) {
+        archive.append(buf, { name: `pdfs/${filename}` });
+      } else {
+        console.warn('[EXPORT PDF MISSING]', row.id, row.pdf_url);
+      }
+    }
+
+    await archive.finalize();
   } catch (e) { next(e); }
 });
 

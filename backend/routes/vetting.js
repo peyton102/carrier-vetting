@@ -6,6 +6,7 @@ import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { fetchSettings } from '../lib/settings.js';
 import { applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { LOOKUP_MAX_AGE_MS } from './lookup.js';
+import { requireActive } from '../middleware/requireActive.js';
 
 const router = express.Router();
 
@@ -46,9 +47,8 @@ function validateCarrierData(d) {
 //   • Detects fields the dispatcher changed from the auto-filled value and records them.
 //   • Runs the vetting rules on the merged, server-authoritative data.
 //   • Writes an immutable vetting_logs record with lookup_id + dispatcher_edits.
-router.post('/run', async (req, res, next) => {
+router.post('/run', requireActive, async (req, res, next) => {
   try {
-    if (req.auth.canceled) return res.status(403).json({ error: 'Account canceled — contact support to renew.' });
     const { lookupId, ...browserBody } = req.body;
     const orgId = req.auth.tenant;
 
@@ -142,9 +142,8 @@ router.post('/run', async (req, res, next) => {
 // Generates and delivers the PDF. Uploads to storage. Updates pdf_url + override in DB.
 // The immutability trigger allows this one-time update (NULL → non-null pdf_url).
 // PDF delivery is always attempted regardless of storage/DB errors.
-router.post('/pdf', async (req, res, next) => {
+router.post('/pdf', requireActive, async (req, res, next) => {
   try {
-    if (req.auth.canceled) return res.status(403).json({ error: 'Account canceled — contact support to renew.' });
     const { recordId, fieldSources, override } = req.body;
     const orgId = req.auth.tenant;
 

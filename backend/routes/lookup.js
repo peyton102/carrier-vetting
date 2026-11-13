@@ -14,6 +14,7 @@ import { swLookup }               from './saferwatch.js';
 import { insuranceLookup }        from './insurance.js';
 import { chameleonLookup }        from './chameleon.js';
 import { mergeResults }           from '../lib/lookup_merge.js';
+import { requireActive }          from '../middleware/requireActive.js';
 
 const router = express.Router();
 const LOOKUP_MAX_AGE_MS  = 24 * 60 * 60 * 1000;
@@ -24,7 +25,7 @@ function getSupabase() {
 }
 
 // ── POST /api/lookup ─────────────────────────────────────────────────────────
-router.post('/', async (req, res, next) => {
+router.post('/', requireActive, async (req, res, next) => {
   try {
     const { dot: rawDot, mc: rawMc } = req.body;
     const tenantSlug = req.auth.tenant;
