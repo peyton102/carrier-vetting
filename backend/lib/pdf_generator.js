@@ -70,7 +70,6 @@ export function generateVettingPDF(opts) {
       timesUsed = 0,
       reissued = false,
       reissuedAt = null,
-      fingerprint = null,
     } = opts;
 
     // Sanitize date fields: treat '0000-00-00', 'Invalid Date', or unparseable strings as blank
@@ -607,11 +606,13 @@ export function generateVettingPDF(opts) {
     doc.moveDown(0.3);
     doc.fontSize(7).fillColor(C.gray)
        .text(buildDataSourceLine(fieldSources), L, doc.y, { width: W, align: 'center' });
-    if (fingerprint) {
-      doc.moveDown(0.2);
-      doc.fontSize(6.5).fillColor(C.gray)
-         .text(`SHA-256: ${fingerprint}`, L, doc.y, { width: W, align: 'center' });
-    }
+    doc.moveDown(0.2);
+    doc.fontSize(7).fillColor(C.gray)
+       .text(
+         `Record ID: ${recordId || '—'}  \u00B7  ` +
+         `Verify this certificate\u2019s SHA-256 fingerprint in Torevez\u2019s audit log.`,
+         L, doc.y, { width: W, align: 'center' }
+       );
 
     doc.end();
   });

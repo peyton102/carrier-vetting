@@ -1847,6 +1847,14 @@ export default function CarrierVetting({ settings }) {
                                 Download
                               </button>
                             : <span style={{ color: '#475569' }}>—</span>}
+                          {row.pdf_sha256 && (
+                            <div
+                              title={`SHA-256: ${row.pdf_sha256}`}
+                              style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace', marginTop: 2, cursor: 'default' }}
+                            >
+                              {row.pdf_sha256.slice(0, 16)}…
+                            </div>
+                          )}
                         </td>
                         <td style={s.logTd}>
                           {(row.tier === 'GREEN' || (row.effective_verdict ?? row.verdict) === 'APPROVED WITH OVERRIDE') && row.dot_number

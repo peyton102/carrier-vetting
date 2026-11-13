@@ -212,13 +212,8 @@ router.post('/pdf', async (req, res, next) => {
       fieldSources: fieldSources ?? {},
     };
 
-    // Two-pass: first pass produces the content hash (fingerprint) which is then
-    // printed in the footer of the final PDF.  The stored sha256 is the hash of
-    // the final PDF bytes — that is what integrity verification compares against.
-    const prelimBuffer  = await generateVettingPDF(pdfOpts);
-    const fingerprint   = createHash('sha256').update(prelimBuffer).digest('hex');
-    const pdfBuffer     = await generateVettingPDF({ ...pdfOpts, fingerprint });
-    const pdfSha256     = createHash('sha256').update(pdfBuffer).digest('hex');
+    const pdfBuffer = await generateVettingPDF(pdfOpts);
+    const pdfSha256 = createHash('sha256').update(pdfBuffer).digest('hex');
 
     const loadRef     = (row.load_ref || 'NOREF').replace(/\W/g, '');
     const dateStr     = generatedAt.toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
@@ -243,7 +238,8 @@ router.post('/pdf', async (req, res, next) => {
       supabase.storage
         .from('vetting-certificates-backup')
         .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
-        .then(({ error }) => { if (error) console.error('[CERT BACKUP ERROR]', error.message); });
+        .then(({ error }) => { if (error) console.error('[CERT BACKUP ERROR]', error.message); })
+        .catch(e => console.error('[CERT BACKUP ERROR]', e.message));
     }
 
     // ── DB update: pdf_url + pdf_sha256 (trigger allows NULL → non-null once) ──
@@ -324,7 +320,7 @@ router.get('/logs', async (req, res, next) => {
     const [logsResult, overridesResult] = await Promise.all([
       supabase
         .from('vetting_logs')
-        .select('id,created_at,load_ref,dispatcher,carrier_name,dot_number,mc_number,verdict,tier,reasons,pdf_url,rules_version,override_manager')
+        .select('id,created_at,load_ref,dispatcher,carrier_name,dot_number,mc_number,verdict,tier,reasons,pdf_url,pdf_sha256,rules_version,override_manager')
         .eq('tenant_id', orgId)
         .order('created_at', { ascending: false })
         .limit(200),

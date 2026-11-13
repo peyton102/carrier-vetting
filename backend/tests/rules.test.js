@@ -1324,10 +1324,9 @@ export async function runAll() {
       `daily_load_status not written for motus_suspensions; writes: ${JSON.stringify(dlsWrites)}`);
   }));
 
-  // PDF-FP-1. generateVettingPDF accepts fingerprint param — no crash, valid PDF
-  results.push(await t('PDF integrity: fingerprint param accepted — valid PDF', async () => {
+  // PDF-FP-1. PDF generates, SHA-256 is a 64-char hex string
+  results.push(await t('PDF integrity: sha256 of generated PDF is 64-char hex', async () => {
     const r = runVettingRules(CLEAN, CFG);
-    const fp = 'a'.repeat(64); // fake 64-char hex fingerprint
     const buf = await generateVettingPDF({
       carrierData:  CLEAN,
       verdict:      r.verdict,
@@ -1342,38 +1341,10 @@ export async function runAll() {
       brokerName:   'Test Brokerage',
       fieldSources: {},
       timesUsed:    0,
-      fingerprint:  fp,
     });
-    assert(Buffer.isBuffer(buf) && buf.length > 500, `expected valid PDF buffer, got ${buf?.length} bytes`);
-    assert(buf.slice(0, 4).toString() === '%PDF', `not a PDF: ${buf.slice(0, 4).toString('hex')}`);
-  }));
-
-  // PDF-FP-2. Two-pass fingerprint roundtrip — computed hash is 64-char hex
-  results.push(await t('PDF integrity: two-pass fingerprint roundtrip — hash is 64-char hex', async () => {
-    const r = runVettingRules(CLEAN, CFG);
-    const pdfOpts = {
-      carrierData:  CLEAN,
-      verdict:      r.verdict,
-      tier:         r.tier,
-      reasons:      r.reasons,
-      warnings:     r.warnings ?? [],
-      authorityDays: null,
-      override:     null,
-      generatedAt:  new Date(),
-      recordId:     '00000000-0000-0000-0000-000000000003',
-      settings:     CFG,
-      brokerName:   'Test Brokerage',
-      fieldSources: {},
-      timesUsed:    0,
-    };
-    const prelimBuffer = await generateVettingPDF(pdfOpts);
-    const fingerprint  = createHash('sha256').update(prelimBuffer).digest('hex');
-    assert(/^[0-9a-f]{64}$/.test(fingerprint), `fingerprint is not 64-char hex: ${fingerprint}`);
-    const finalBuffer  = await generateVettingPDF({ ...pdfOpts, fingerprint });
-    const storedHash   = createHash('sha256').update(finalBuffer).digest('hex');
-    assert(/^[0-9a-f]{64}$/.test(storedHash), `storedHash is not 64-char hex: ${storedHash}`);
-    // Final PDF (with fingerprint printed) differs from preliminary
-    assert(!finalBuffer.equals(prelimBuffer), 'final PDF must differ from preliminary (fingerprint added)');
+    assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
+    const hash = createHash('sha256').update(buf).digest('hex');
+    assert(/^[0-9a-f]{64}$/.test(hash), `sha256 is not 64-char hex: ${hash}`);
   }));
 
   // PDF-FP-3. Dispatcher edit on non-stricter field — "verified value used" note
