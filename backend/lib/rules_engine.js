@@ -146,10 +146,10 @@ export function classifyEmailMatch(d) {
     // Rule 4: different company domain — possible lookalike
     return {
       match: false,
-      pdfLabel:     `DOMAIN MISMATCH \u2014 contact: ${contactDomain} \u2260 FMCSA: ${fmcsaDomain}`,
+      pdfLabel:     `DOMAIN MISMATCH \u2014 contact: ${contactDomain} vs FMCSA: ${fmcsaDomain}`,
       rulesMessage: `Email domain (${contactDomain}) doesn't match FMCSA record (registered domain: ${fmcsaDomain}) \u2014 ` +
                     `possible lookalike domain; confirm carrier identity before booking.`,
-      summaryIssue: `Email: Domain mismatch (${contactDomain} \u2260 ${fmcsaDomain})`,
+      summaryIssue: `Email: Domain mismatch (${contactDomain} vs ${fmcsaDomain})`,
     };
   }
 
@@ -438,7 +438,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     const { recentChanges, mcs150Recent, mcs150Date } = d.fmcsaContactChange;
     const changeLines = recentChanges.map(c => {
       const when = new Date(c.detected_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      return `${c.field_label} changed ${when}: "${c.old_value ?? ''}" → "${c.new_value ?? ''}"`;
+      return `${c.field_label} changed ${when}: "${c.old_value ?? ''}" -> "${c.new_value ?? ''}"`;
     });
     let msg = `FMCSA contact info changed in the last 60 days: ${changeLines.join('; ')} — confirm carrier identity before booking`;
     if (mcs150Recent && mcs150Date) msg += `; MCS-150 also updated ${mcs150Date}`;

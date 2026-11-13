@@ -722,7 +722,7 @@ function chameleonSection(doc, L, W, d) {
     for (const c of recentChanges) {
       const when = new Date(c.detected_at).toLocaleDateString('en-US',
         { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
-      const text = `${c.field_label} changed ${when}: "${c.old_value ?? ''}" → "${c.new_value ?? ''}"`;
+      const text = `${c.field_label} changed ${when}: "${c.old_value ?? ''}" -> "${c.new_value ?? ''}"`;
       _twoColRow(doc, L, W, 'Helvetica-Bold', C.yellow, 'Contact info change (FMCSA):', 'Helvetica', C.yellow, text);
     }
     if (mcs150Recent && mcs150Date) {

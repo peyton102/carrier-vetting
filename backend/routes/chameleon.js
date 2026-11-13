@@ -403,19 +403,33 @@ async function _chameleonCore(dot, tenantSlug, supabase, cfg) {
 
   // 24-hour cache: FMCSA contact data updates at most daily.
   // Same DOT vetted by many brokers = one set of Socrata queries per 24 h.
+  //
+  // Cache is also invalidated when any enforcement table (oos_orders, safer_revocations,
+  // motus_suspensions, insurance_cancellations) was reloaded AFTER the cache entry was
+  // saved — so a nightly enforcement refresh always produces a fresh chameleon result
+  // the first time a DOT is vetted after that refresh.
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const t = Date.now();
-  const { data: cached } = await supabase
-    .from('chameleon_cache')
-    .select('pulled_at,result')
-    .eq('dot_number', dot)
-    .maybeSingle();
-  console.log(`[TIMING][CHAM] DOT ${dot}: Supabase chameleon_cache read: ${ms(t)}`);
+  const [{ data: cached }, { data: newestLoad }] = await Promise.all([
+    supabase.from('chameleon_cache').select('pulled_at,result').eq('dot_number', dot).maybeSingle(),
+    supabase.from('daily_load_status')
+      .select('last_verified_at')
+      .order('last_verified_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  console.log(`[TIMING][CHAM] DOT ${dot}: Supabase cache + DLS read (parallel): ${ms(t)}`);
+
   if (cached &&
       (Date.now() - new Date(cached.pulled_at).getTime()) < CACHE_TTL_MS &&
       cached.result?.cacheVersion === CACHE_VERSION) {
-    console.log(`[TIMING][CHAM] DOT ${dot}: cache HIT — returning cached result, /chameleon total: ${ms(tTotal)}`);
-    return { ...cached.result, pulledAt: cached.pulled_at, fromCache: true };
+    const latestLoad = newestLoad?.last_verified_at;
+    if (latestLoad && latestLoad > cached.pulled_at) {
+      console.log(`[TIMING][CHAM] DOT ${dot}: cache STALE — enforcement refreshed after cache (${latestLoad} > ${cached.pulled_at})`);
+    } else {
+      console.log(`[TIMING][CHAM] DOT ${dot}: cache HIT — returning cached result, /chameleon total: ${ms(tTotal)}`);
+      return { ...cached.result, pulledAt: cached.pulled_at, fromCache: true };
+    }
   }
   console.log(`[TIMING][CHAM] DOT ${dot}: cache MISS — running full lookup`);
 
