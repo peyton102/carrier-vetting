@@ -1077,6 +1077,13 @@ export async function refreshInsuranceCancellations(supabase) {
     // Those are carriers whose BMC-35 was superseded by a new policy — they're now clean.
     await batchedSweep(supabase, 'INSUR', 'insurance_cancellations', jobStartedAt);
 
+    const loadedAt = new Date().toISOString();
+    const { error: dlsErr } = await supabase.from('daily_load_status').upsert(
+      [{ table_name: 'insurance_cancellations', last_verified_at: loadedAt }],
+      { onConflict: 'table_name' }
+    );
+    if (dlsErr) console.error('[INSUR] daily_load_status upsert failed:', dlsErr.message);
+
     console.log('[INSUR] Refresh complete');
   } catch (e) {
     console.error('[INSUR] Refresh failed:', e.message);
@@ -1153,6 +1160,13 @@ export async function refreshOosOrders(supabase) {
     }
 
     await batchedSweep(supabase, 'OOS', 'oos_orders', jobStartedAt);
+
+    const loadedAt = new Date().toISOString();
+    const { error: dlsErr } = await supabase.from('daily_load_status').upsert(
+      [{ table_name: 'oos_orders', last_verified_at: loadedAt }],
+      { onConflict: 'table_name' }
+    );
+    if (dlsErr) console.error('[OOS] daily_load_status upsert failed:', dlsErr.message);
 
     console.log(`[OOS] Refresh complete — ${dbRows.length} rows`);
   } catch (e) {
@@ -1326,10 +1340,11 @@ export async function refreshSaferRevocations(supabase) {
     await batchedSweep(supabase, 'REVOKE-NOTICES', 'safer_revocation_notices',  jobStartedAt);
 
     const loadedAt = new Date().toISOString();
-    await supabase.from('daily_load_status').upsert([
+    const { error: dlsErr } = await supabase.from('daily_load_status').upsert([
       { table_name: 'safer_revocations',        last_verified_at: loadedAt },
       { table_name: 'safer_revocation_notices', last_verified_at: loadedAt },
     ], { onConflict: 'table_name' });
+    if (dlsErr) console.error('[REVOKE] daily_load_status upsert failed:', dlsErr.message);
 
     console.log(`[REVOKE] Refresh complete — ${fetched} rows`);
   } catch (e) {
@@ -1422,6 +1437,13 @@ export async function refreshMotusSuspensions(supabase) {
 
     await batchedSweep(supabase, 'MOTUS',         'motus_suspensions',         jobStartedAt);
     await batchedSweep(supabase, 'MOTUS-NOTICES', 'motus_suspension_notices',  jobStartedAt);
+
+    const loadedAt = new Date().toISOString();
+    const { error: dlsErr } = await supabase.from('daily_load_status').upsert(
+      [{ table_name: 'motus_suspensions', last_verified_at: loadedAt }],
+      { onConflict: 'table_name' }
+    );
+    if (dlsErr) console.error('[MOTUS] daily_load_status upsert failed:', dlsErr.message);
 
     console.log(`[MOTUS] Refresh complete — ${dbRows.length} suspensions, ${dbNotices.length} notices`);
   } catch (e) {

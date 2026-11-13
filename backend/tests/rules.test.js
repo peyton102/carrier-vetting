@@ -4,6 +4,7 @@
 import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
+import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions } from '../lib/monitor.js';
 
 const CFG = DEFAULT_SETTINGS;
 
@@ -113,6 +114,32 @@ const CLEAN = {
   fmcsaContactChange:        null,
   fmcsaChameleonMatches:     [],
 };
+
+// ── DLS test helpers ──────────────────────────────────────────────────────────
+
+function makeDlsSupa() {
+  const dlsWrites = [];
+  const supa = {
+    from(table) {
+      return {
+        upsert(data) {
+          if (table === 'daily_load_status') {
+            dlsWrites.push(...(Array.isArray(data) ? data : [data]));
+          }
+          return Promise.resolve({ error: null });
+        },
+        select() {
+          return {
+            eq() { return { maybeSingle: () => Promise.resolve({ data: null, error: null }) }; },
+          };
+        },
+        delete() { return { gte: () => Promise.resolve({ error: null }) }; },
+      };
+    },
+    rpc() { return Promise.resolve({ data: 0, error: null }); },
+  };
+  return { supa, dlsWrites };
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -1215,6 +1242,85 @@ export async function runAll() {
     assert(r.canOverride === false, 'driver OOS hard block must set canOverride:false');
     const pdfErr = await checkPdf({ ...CLEAN, driverOosPct: '7.5', nationalAvgDriverOos: '4.00' }, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // DLS-INSUR. refreshInsuranceCancellations writes daily_load_status after full load
+  results.push(await t('DLS: refreshInsuranceCancellations writes daily_load_status', async () => {
+    const { supa, dlsWrites } = makeDlsSupa();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = function(url) {
+      const u = String(url);
+      if (u.includes('$select=count(*)')) return Promise.resolve({ ok: true, json: () => Promise.resolve([{ count: '1' }]) });
+      if (u.includes('BMC-35'))           return Promise.resolve({ ok: true, json: () => Promise.resolve([{ usdot_number: '123456', docket_number: 'MC-123', effective_date: '20240101' }]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    };
+    try {
+      await refreshInsuranceCancellations(supa);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert(dlsWrites.some(r => r.table_name === 'insurance_cancellations'),
+      `daily_load_status not written for insurance_cancellations; writes: ${JSON.stringify(dlsWrites)}`);
+  }));
+
+  // DLS-OOS. refreshOosOrders writes daily_load_status after full load
+  results.push(await t('DLS: refreshOosOrders writes daily_load_status', async () => {
+    const { supa, dlsWrites } = makeDlsSupa();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = function(url) {
+      const u = String(url);
+      if (u.includes('$select=count(*)')) return Promise.resolve({ ok: true, json: () => Promise.resolve([{ count: '1' }]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([{ dot_number: '123456', oos_date: '2024-01-01', oos_reason: 'Test' }]) });
+    };
+    try {
+      await refreshOosOrders(supa);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert(dlsWrites.some(r => r.table_name === 'oos_orders'),
+      `daily_load_status not written for oos_orders; writes: ${JSON.stringify(dlsWrites)}`);
+  }));
+
+  // DLS-REVOKE. refreshSaferRevocations writes daily_load_status after full load
+  results.push(await t('DLS: refreshSaferRevocations writes daily_load_status', async () => {
+    const { supa, dlsWrites } = makeDlsSupa();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = function(url) {
+      const u = String(url);
+      if (u.includes('api/views/'))       return Promise.resolve({ ok: true, json: () => Promise.resolve({ rowsUpdatedAt: 1 }) });
+      if (u.includes('$select=count(*)')) return Promise.resolve({ ok: true, json: () => Promise.resolve([{ count: '1' }]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([{
+        dot_number: '123456', order2_type_desc: 'INVOLUNTARY REVOCATION',
+        order2_effective_date: '01/01/2024', docket_number: 'MC-123',
+      }]) });
+    };
+    try {
+      await refreshSaferRevocations(supa);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert(dlsWrites.some(r => r.table_name === 'safer_revocations'),
+      `daily_load_status not written for safer_revocations; writes: ${JSON.stringify(dlsWrites)}`);
+  }));
+
+  // DLS-MOTUS. refreshMotusSuspensions writes daily_load_status after full load
+  results.push(await t('DLS: refreshMotusSuspensions writes daily_load_status', async () => {
+    const { supa, dlsWrites } = makeDlsSupa();
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = function(url) {
+      const u = String(url);
+      if (u.includes('$select=count(*)')) return Promise.resolve({ ok: true, json: () => Promise.resolve([{ count: '1' }]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([{
+        usdot_number: '123456', order1_type_desc: 'INVOLUNTARY SUSPENSION', order1_effective_date: '2024-01-01',
+      }]) });
+    };
+    try {
+      await refreshMotusSuspensions(supa);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+    assert(dlsWrites.some(r => r.table_name === 'motus_suspensions'),
+      `daily_load_status not written for motus_suspensions; writes: ${JSON.stringify(dlsWrites)}`);
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first

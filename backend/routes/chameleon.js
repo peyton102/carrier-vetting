@@ -230,8 +230,8 @@ async function getEnforcementTableStatus(supabase) {
 
   const tStatus = Date.now();
   const [oos, motus, rev, revNotice] = await Promise.all([
-    supabase.from('oos_orders')       .select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
-    supabase.from('motus_suspensions').select('last_verified_at').order('last_verified_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'oos_orders').maybeSingle(),
+    supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'motus_suspensions').maybeSingle(),
     supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocations').maybeSingle(),
     supabase.from('daily_load_status').select('last_verified_at').eq('table_name', 'safer_revocation_notices').maybeSingle(),
   ]);
