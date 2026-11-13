@@ -28,7 +28,7 @@ export const SCALAR_AUTO_FIELDS = new Set([
   'inspections24mo', 'truckOosPct', 'driverOosPct',
   'nationalAvgTruckOos', 'nationalAvgDriverOos', 'nationalAvgOosAsOf',
   'fmcsaPhone', 'hasBrokerAuthority', 'saferSnapshotDate',
-  'activeFederalOOS', 'crashes24mo',
+  'activeFederalOOS',
   // SaferWatch
   'unsafeDrivingBasic', 'hosBasic', 'vehicleMaintenanceBasic', 'driverFitnessBasic',
   'autoLiability', 'cargoInsurance',
@@ -47,6 +47,7 @@ export const SCALAR_AUTO_FIELDS = new Set([
 // Complex fields — applied verbatim, not compared for edit detection.
 export const COMPLEX_AUTO_FIELDS = new Set([
   'fmcsaChameleonMatches', 'fmcsaContactChange',
+  'crashes24mo',   // object { count, fatal, injury, tow, items } — must NOT be stringified
 ]);
 
 const DATE_FIELDS = new Set([
@@ -98,6 +99,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
   const fmcsaOk = !!fmcsa && !fmcsa.cannotVerify;
   if (fmcsaOk) {
     for (const field of (fmcsa.filledFields ?? [])) {
+      if (field === 'crashes24mo') continue;  // complex object — handled below
       let val = fmcsa[field];
       if (DATE_FIELDS.has(field)) val = sanitizeDate(val);
       if (val !== '' && val != null) setScalar(field, val, 'fmcsa', 'FMCSA');
@@ -109,6 +111,13 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
     }
     if (autoFilled.hasBrokerAuthority === undefined) {
       setScalar('hasBrokerAuthority', fmcsa.hasBrokerAuthority ?? false, 'fmcsa', 'FMCSA');
+    }
+    // crashes24mo is { count, fatal, injury, tow, items } — setScalar would stringify it to
+    // "[object Object]". Store in serverFields so applyToSubmission applies the object verbatim.
+    // Track in fieldSources so the PDF footer can still show 'FMCSA' as the data source.
+    if (fmcsa.crashes24mo !== undefined) {
+      setComplex('crashes24mo', fmcsa.crashes24mo ?? null);
+      if (fmcsa.crashes24mo != null) fieldSources.crashes24mo = 'fmcsa';
     }
   }
 

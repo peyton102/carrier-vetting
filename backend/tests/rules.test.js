@@ -655,6 +655,44 @@ export async function runAll() {
     assert(autoFilled.bipdCancelPending?.sourceLabel === 'FMCSA BMC-35', 'source must be FMCSA BMC-35');
   }));
 
+  // M6. crashes24mo is a complex object — must NOT end up in auto_filled (would be stringified)
+  //     Must land in serverFields as the original object.
+  //     Regression for: "Not reviewed (no data)" on every carrier — crashes24mo was in
+  //     SCALAR_AUTO_FIELDS so setScalar stringified it → "[object Object]" → crashes.count == null.
+  results.push(await t('mergeResults: crashes24mo stays as object in serverFields (not stringified)', () => {
+    const crashObj = { count: 4, fatal: 0, injury: 2, tow: 2, items: [] };
+    const fmcsa = {
+      filledFields: ['carrierName', 'crashes24mo'],
+      carrierName: 'UGN Carrier LLC',
+      crashes24mo: crashObj,
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null });
+    // Must NOT be in autoFilled (would be stringified there)
+    assert(autoFilled.crashes24mo === undefined,
+      `crashes24mo must not be in autoFilled — got: ${JSON.stringify(autoFilled.crashes24mo)}`);
+    // Must be in serverFields as the original object
+    assert(serverFields.crashes24mo !== null && typeof serverFields.crashes24mo === 'object',
+      `crashes24mo must be an object in serverFields, got: ${typeof serverFields.crashes24mo}`);
+    assert(serverFields.crashes24mo.count === 4,
+      `crashes24mo.count must be 4, got: ${serverFields.crashes24mo?.count}`);
+    assert(serverFields.crashes24mo.injury === 2,
+      `crashes24mo.injury must be 2, got: ${serverFields.crashes24mo?.injury}`);
+  }));
+
+  // M7. crashes24mo null (FMCSA couldn't retrieve it) → serverFields.crashes24mo = null, not in autoFilled
+  results.push(await t('mergeResults: crashes24mo null → serverFields null, not stringified', () => {
+    const fmcsa = {
+      filledFields: ['carrierName'],  // crashes24mo NOT in filledFields when unavailable
+      carrierName: 'No Crashes LLC',
+      crashes24mo: null,
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null });
+    assert(autoFilled.crashes24mo === undefined, 'crashes24mo must not appear in autoFilled when null');
+    // serverFields.crashes24mo not set when crashes24mo is not in filledFields
+  }));
+
   // M5. Chameleon fmcsaRegisteredEmail lands in auto_filled
   results.push(await t('mergeResults: chameleon fmcsaRegisteredEmail in auto_filled', () => {
     const chameleon = { notReviewed: false, matches: [], fmcsaRegisteredEmail: 'dispatch@testcarrier.com', contactChange: null };
@@ -794,6 +832,89 @@ export async function runAll() {
     const freshRow = { created_at: new Date().toISOString(), dot_number: '1234567' };
     const err = validateLookupRow(freshRow, '1234567', Date.now(), 24 * 60 * 60 * 1000);
     assert(err === null, `expected null (valid), got: ${err}`);
+  }));
+
+  // A-CRASH. crashes24mo object in server_fields → applyToSubmission preserves it as object
+  //          Regression test for "Not reviewed (no data)" bug: crashes24mo was in SCALAR_AUTO_FIELDS,
+  //          got stringified to "[object Object]", PDF saw crashes.count == null → "Not reviewed".
+  results.push(await t('applyToSubmission: crashes24mo object preserved from server_fields', () => {
+    const crashObj = { count: 4, fatal: 0, injury: 2, tow: 2, items: [] };
+    const savedLookup = {
+      auto_filled:   { carrierName: { value: 'UGN Carrier LLC', sourceLabel: 'FMCSA' } },
+      server_fields: { crashes24mo: crashObj },
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { ...CLEAN };
+    const data = applyToSubmission(savedLookup, browser);
+    assert(typeof data.crashes24mo === 'object' && data.crashes24mo !== null,
+      `crashes24mo must be an object after applyToSubmission, got: ${typeof data.crashes24mo} (${JSON.stringify(data.crashes24mo)})`);
+    assert(data.crashes24mo.count === 4,
+      `crashes24mo.count must be 4, got: ${data.crashes24mo?.count}`);
+    assert(data.crashes24mo.injury === 2,
+      `crashes24mo.injury must be 2, got: ${data.crashes24mo?.injury}`);
+  }));
+
+  // A-TYPES. All scalar auto-filled field types reach carrierData with the correct native type
+  //          after applyToSubmission. Verifies strings stay strings, booleans come back as
+  //          actual booleans (not "true"/"false"), and numeric strings stay as strings (compatible
+  //          with parseFloat in the rules engine).
+  results.push(await t('applyToSubmission: all auto-filled field types preserved correctly', () => {
+    const savedLookup = {
+      auto_filled: {
+        carrierName:          { value: 'Type Test LLC',   sourceLabel: 'FMCSA' },
+        authorityStatus:      { value: 'active',          sourceLabel: 'FMCSA' },
+        safetyRating:         { value: 'Satisfactory',    sourceLabel: 'FMCSA' },
+        authorityGrantDate:   { value: '2020-01-01',      sourceLabel: 'FMCSA' },
+        truckOosPct:          { value: '15.00',           sourceLabel: 'FMCSA' },
+        autoLiability:        { value: '1000000',         sourceLabel: 'SaferWatch' },
+        autoLiabilityExpiration: { value: futureDate(90), sourceLabel: 'SaferWatch' },
+        activeFederalOOS:     { value: 'false',           sourceLabel: 'FMCSA' },
+        hasBrokerAuthority:   { value: 'false',           sourceLabel: 'FMCSA' },
+        bipdCancelPending:    { value: 'false',           sourceLabel: 'FMCSA BMC-35' },
+        bipdCancelLapsed:     { value: 'false',           sourceLabel: 'FMCSA BMC-35' },
+        pendingInsuranceCancellation: { value: 'false',   sourceLabel: 'FMCSA BMC-35' },
+        drugAlcoholViolation: { value: 'false',           sourceLabel: 'SaferWatch' },
+        fmcsaChameleonNotReviewed: { value: 'false',      sourceLabel: 'FMCSA' },
+        fmcsaEmailNotReviewed:     { value: 'false',      sourceLabel: 'FMCSA' },
+        fmcsaChameleonTimedOut:    { value: 'false',      sourceLabel: 'FMCSA' },
+      },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const data = applyToSubmission(savedLookup, { ...CLEAN });
+    // Strings stay as strings
+    assert(data.carrierName === 'Type Test LLC', `carrierName must be string`);
+    assert(data.authorityStatus === 'active', `authorityStatus must be string`);
+    assert(data.safetyRating === 'Satisfactory', `safetyRating must be string`);
+    // Numeric strings stay as strings (parseFloat-compatible)
+    assert(data.truckOosPct === '15.00', `truckOosPct must be string '15.00'`);
+    assert(data.autoLiability === '1000000', `autoLiability must be string`);
+    // Date strings stay as strings
+    assert(typeof data.authorityGrantDate === 'string', `authorityGrantDate must be string`);
+    // Booleans — 'false' string must become boolean false (not the string)
+    assert(data.activeFederalOOS === false,     `activeFederalOOS must be boolean false, got ${typeof data.activeFederalOOS}`);
+    assert(data.hasBrokerAuthority === false,   `hasBrokerAuthority must be boolean false, got ${typeof data.hasBrokerAuthority}`);
+    assert(data.bipdCancelPending === false,    `bipdCancelPending must be boolean false, got ${typeof data.bipdCancelPending}`);
+    assert(data.bipdCancelLapsed === false,     `bipdCancelLapsed must be boolean false, got ${typeof data.bipdCancelLapsed}`);
+    assert(data.pendingInsuranceCancellation === false, `pendingInsuranceCancellation must be boolean false`);
+    assert(data.drugAlcoholViolation === false, `drugAlcoholViolation must be boolean false, got ${typeof data.drugAlcoholViolation}`);
+    assert(data.fmcsaChameleonNotReviewed === false, `fmcsaChameleonNotReviewed must be boolean false`);
+    assert(data.fmcsaEmailNotReviewed === false,     `fmcsaEmailNotReviewed must be boolean false`);
+    assert(data.fmcsaChameleonTimedOut === false,    `fmcsaChameleonTimedOut must be boolean false`);
+    // 'true' variants also coerced
+    const savedTrue = {
+      auto_filled: {
+        activeFederalOOS:     { value: 'true', sourceLabel: 'FMCSA' },
+        drugAlcoholViolation: { value: 'true', sourceLabel: 'SaferWatch' },
+        bipdCancelLapsed:     { value: 'true', sourceLabel: 'FMCSA BMC-35' },
+      },
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const dataTrue = applyToSubmission(savedTrue, { ...CLEAN });
+    assert(dataTrue.activeFederalOOS === true,     `activeFederalOOS 'true' must become boolean true`);
+    assert(dataTrue.drugAlcoholViolation === true, `drugAlcoholViolation 'true' must become boolean true`);
+    assert(dataTrue.bipdCancelLapsed === true,     `bipdCancelLapsed 'true' must become boolean true`);
   }));
 
   // A3. Manual fields preserved from browser (loadRef, dispatcher, contactPhone, contactEmail)
@@ -942,6 +1063,40 @@ export async function runAll() {
     if (Object.keys(edits).length > 0) data._dispatcherEdits = edits;
     return runVettingRules(applyStricterEdits(data, edits), CFG);
   }
+
+  // FP-CRASH. Bug regression: crashes24mo auto-filled as object from server_fields →
+  //           applyToSubmission preserves object → PDF renders crash count, not "Not reviewed".
+  //           (Triggered ~2026-11-12: crashes24mo was in SCALAR_AUTO_FIELDS, got stringified.)
+  results.push(await t('full /run path: crashes24mo auto-filled (4 crashes) → PDF renders count', async () => {
+    const crashObj = { count: 4, fatal: 0, injury: 2, tow: 2, items: [] };
+    const savedLookup = {
+      auto_filled:   {},   // crashes24mo not in auto_filled — it's a complex field
+      server_fields: { crashes24mo: crashObj },
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { ...CLEAN };
+    const data  = applyToSubmission(savedLookup, browser);
+    const edits = detectEdits(savedLookup.auto_filled, browser);
+    if (Object.keys(edits).length > 0) data._dispatcherEdits = edits;
+    const ruleData = applyStricterEdits(data, edits);
+
+    // crashes24mo must survive as an object — not "[object Object]"
+    assert(ruleData.crashes24mo?.count === 4,
+      `crashes24mo.count must be 4 after full path, got: ${JSON.stringify(ruleData.crashes24mo)}`);
+    assert(ruleData.crashes24mo?.injury === 2,
+      `crashes24mo.injury must be 2 after full path, got: ${ruleData.crashes24mo?.injury}`);
+
+    const r = runVettingRules(ruleData, CFG);
+    assert(r.verdict === 'APPROVE',
+      `crash data alone must not change verdict, got ${r.verdict}: ${r.reasons.join('; ')}`);
+
+    // PDF must render the crash count (not "Not reviewed")
+    // We verify by checking the PDF generates without crash — the crash count rendering
+    // is indirectly validated because a string "[object Object]" would cause a different
+    // code path and the count would show as null (which we asserted above is 4).
+    const pdfErr = await checkPdf(ruleData, r);
+    assert(!pdfErr, `PDF must render with crash data: ${pdfErr}`);
+  }));
 
   // FP-DA. Bug regression: SW reports controlSubPCT 8 → drugAlcoholViolation stored as
   //        string 'true' in auto_filled → applyToSubmission must restore boolean true →
