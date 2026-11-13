@@ -5,6 +5,7 @@ import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/ru
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions } from '../lib/monitor.js';
+import { fmcsaMcLookup } from '../routes/fmcsa.js';
 import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
@@ -1370,6 +1371,78 @@ export async function runAll() {
       timesUsed:    0,
     });
     assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
+  }));
+
+  // MC-1. fmcsaMcLookup with content.carrier format (must keep working)
+  results.push(await t('fmcsaMcLookup: content.carrier format → resolves dotNumber and name', async () => {
+    const savedFetch = globalThis.fetch;
+    const carrier = {
+      dotNumber: 2939905, legalName: 'UGN TRANSPORTATION INC',
+      totalPowerUnits: 15, totalDrivers: 12,
+      commonAuthorityStatus: 'A', contractAuthorityStatus: 'I',
+      allowedToOperate: 'Y', safetyRating: null,
+      vehicleInsp: 50, vehicleOosInsp: 2, vehicleOosRate: 4.0,
+      driverInsp: 40, driverOosInsp: 1, driverOosRate: 2.5,
+    };
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes('/carriers/docket-number/'))
+        return { ok: true, status: 200, json: async () => ({ content: { carrier } }) };
+      if (u.includes('/docket-numbers'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('/authority'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('safer.fmcsa.dot.gov'))
+        return { ok: true, status: 200, text: async () => '<html></html>' };
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+    try {
+      const result = await fmcsaMcLookup('994024', 'test-webkey');
+      assert(result.dotNumber === '2939905',
+        `dotNumber must be '2939905', got ${result.dotNumber}`);
+      assert(result.carrierName === 'UGN TRANSPORTATION INC',
+        `carrierName wrong: ${result.carrierName}`);
+      assert(result.authorityStatus !== undefined, 'authorityStatus must be present');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  }));
+
+  // MC-2. fmcsaMcLookup with content directly (no .carrier wrapper) — the actual
+  //       FMCSA docket-number endpoint response shape; was broken before this fix.
+  results.push(await t('fmcsaMcLookup: content (no .carrier wrapper) → resolves dotNumber and name', async () => {
+    const savedFetch = globalThis.fetch;
+    const carrier = {
+      dotNumber: 2939905, legalName: 'UGN TRANSPORTATION INC',
+      totalPowerUnits: 15, totalDrivers: 12,
+      commonAuthorityStatus: 'A', contractAuthorityStatus: 'I',
+      allowedToOperate: 'Y', safetyRating: null,
+      vehicleInsp: 50, vehicleOosInsp: 2, vehicleOosRate: 4.0,
+      driverInsp: 40, driverOosInsp: 1, driverOosRate: 2.5,
+    };
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      // docket-number endpoint returns carrier at content directly (no .carrier wrapper)
+      if (u.includes('/carriers/docket-number/'))
+        return { ok: true, status: 200, json: async () => ({ content: carrier }) };
+      if (u.includes('/docket-numbers'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('/authority'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('safer.fmcsa.dot.gov'))
+        return { ok: true, status: 200, text: async () => '<html></html>' };
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+    try {
+      const result = await fmcsaMcLookup('994024', 'test-webkey');
+      assert(result.dotNumber === '2939905',
+        `dotNumber must be '2939905', got ${result.dotNumber}`);
+      assert(result.carrierName === 'UGN TRANSPORTATION INC',
+        `carrierName wrong: ${result.carrierName}`);
+      assert(result.authorityStatus !== undefined, 'authorityStatus must be present');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first
