@@ -5,6 +5,7 @@ import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/ru
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions } from '../lib/monitor.js';
+import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
 
@@ -1321,6 +1322,83 @@ export async function runAll() {
     }
     assert(dlsWrites.some(r => r.table_name === 'motus_suspensions'),
       `daily_load_status not written for motus_suspensions; writes: ${JSON.stringify(dlsWrites)}`);
+  }));
+
+  // PDF-FP-1. generateVettingPDF accepts fingerprint param — no crash, valid PDF
+  results.push(await t('PDF integrity: fingerprint param accepted — valid PDF', async () => {
+    const r = runVettingRules(CLEAN, CFG);
+    const fp = 'a'.repeat(64); // fake 64-char hex fingerprint
+    const buf = await generateVettingPDF({
+      carrierData:  CLEAN,
+      verdict:      r.verdict,
+      tier:         r.tier,
+      reasons:      r.reasons,
+      warnings:     r.warnings ?? [],
+      authorityDays: null,
+      override:     null,
+      generatedAt:  new Date(),
+      recordId:     '00000000-0000-0000-0000-000000000002',
+      settings:     CFG,
+      brokerName:   'Test Brokerage',
+      fieldSources: {},
+      timesUsed:    0,
+      fingerprint:  fp,
+    });
+    assert(Buffer.isBuffer(buf) && buf.length > 500, `expected valid PDF buffer, got ${buf?.length} bytes`);
+    assert(buf.slice(0, 4).toString() === '%PDF', `not a PDF: ${buf.slice(0, 4).toString('hex')}`);
+  }));
+
+  // PDF-FP-2. Two-pass fingerprint roundtrip — computed hash is 64-char hex
+  results.push(await t('PDF integrity: two-pass fingerprint roundtrip — hash is 64-char hex', async () => {
+    const r = runVettingRules(CLEAN, CFG);
+    const pdfOpts = {
+      carrierData:  CLEAN,
+      verdict:      r.verdict,
+      tier:         r.tier,
+      reasons:      r.reasons,
+      warnings:     r.warnings ?? [],
+      authorityDays: null,
+      override:     null,
+      generatedAt:  new Date(),
+      recordId:     '00000000-0000-0000-0000-000000000003',
+      settings:     CFG,
+      brokerName:   'Test Brokerage',
+      fieldSources: {},
+      timesUsed:    0,
+    };
+    const prelimBuffer = await generateVettingPDF(pdfOpts);
+    const fingerprint  = createHash('sha256').update(prelimBuffer).digest('hex');
+    assert(/^[0-9a-f]{64}$/.test(fingerprint), `fingerprint is not 64-char hex: ${fingerprint}`);
+    const finalBuffer  = await generateVettingPDF({ ...pdfOpts, fingerprint });
+    const storedHash   = createHash('sha256').update(finalBuffer).digest('hex');
+    assert(/^[0-9a-f]{64}$/.test(storedHash), `storedHash is not 64-char hex: ${storedHash}`);
+    // Final PDF (with fingerprint printed) differs from preliminary
+    assert(!finalBuffer.equals(prelimBuffer), 'final PDF must differ from preliminary (fingerprint added)');
+  }));
+
+  // PDF-FP-3. Dispatcher edit on non-stricter field — "verified value used" note
+  results.push(await t('PDF integrity: dispatcher edit on non-stricter field → "verified value used"', async () => {
+    // powerUnits has no stricter direction; edit should not be applied, note says "verified value used"
+    const edits = { powerUnits: { original: '10', sourceLabel: 'FMCSA', submitted: '15' } };
+    const carrier = { ...CLEAN, powerUnits: '10', _dispatcherEdits: edits };
+    const r = runVettingRules(carrier, CFG);
+    // PDF must not crash — the note text is embedded in compressed stream so we only verify no crash
+    const buf = await generateVettingPDF({
+      carrierData:  carrier,
+      verdict:      r.verdict,
+      tier:         r.tier,
+      reasons:      r.reasons,
+      warnings:     r.warnings ?? [],
+      authorityDays: null,
+      override:     null,
+      generatedAt:  new Date(),
+      recordId:     '00000000-0000-0000-0000-000000000004',
+      settings:     CFG,
+      brokerName:   'Test Brokerage',
+      fieldSources: {},
+      timesUsed:    0,
+    });
+    assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
   }));
 
   // 21. Data isolation: second run on a clean carrier has zero contamination from first

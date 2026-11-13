@@ -70,6 +70,7 @@ export function generateVettingPDF(opts) {
       timesUsed = 0,
       reissued = false,
       reissuedAt = null,
+      fingerprint = null,
     } = opts;
 
     // Sanitize date fields: treat '0000-00-00', 'Invalid Date', or unparseable strings as blank
@@ -606,6 +607,11 @@ export function generateVettingPDF(opts) {
     doc.moveDown(0.3);
     doc.fontSize(7).fillColor(C.gray)
        .text(buildDataSourceLine(fieldSources), L, doc.y, { width: W, align: 'center' });
+    if (fingerprint) {
+      doc.moveDown(0.2);
+      doc.fontSize(6.5).fillColor(C.gray)
+         .text(`SHA-256: ${fingerprint}`, L, doc.y, { width: W, align: 'center' });
+    }
 
     doc.end();
   });
@@ -939,6 +945,19 @@ function basicZeroNote(doc, L, W, sufficiency, rawVal) {
   doc.moveDown(0.15);
 }
 
+// Fields where there is a defined stricter direction (higher/lower/boolean/date).
+// Fields outside this set have no inherent stricter direction (e.g. powerUnits).
+const _STRICT_DIRECTION_FIELDS = new Set([
+  'truckOosPct', 'driverOosPct',
+  'unsafeDrivingBasic', 'hosBasic', 'vehicleMaintenanceBasic',
+  'driverFitnessBasic', 'crashIndicatorBasic', 'vehicleDriverObservedBasic', 'hazmatBasic',
+  'autoLiability', 'cargoInsurance', 'inspections24mo',
+  'safetyRating', 'authorityStatus',
+  'activeFederalOOS', 'hasBrokerAuthority', 'bipdCancelPending',
+  'pendingInsuranceCancellation', 'drugAlcoholViolation',
+  'autoLiabilityExpiration', 'cargoExpiration', 'authorityGrantDate',
+]);
+
 // Show an amber edit-audit note when a dispatcher changed an auto-filled value.
 // d._dispatcherEdits is stamped onto carrier_data by /run; each entry is
 // { original, sourceLabel, submitted }. The displayed field value (d[field])
@@ -954,9 +973,11 @@ function autoFilledNote(doc, L, W, d, field) {
     (!isNaN(cn) && !isNaN(sn) && cn === sn);
   const verdict = editApplied
     ? 'Applied, stricter than original.'
-    : 'Not applied, original is stricter.';
+    : _STRICT_DIRECTION_FIELDS.has(field)
+      ? 'Not applied, original is stricter.'
+      : 'Not applied, verified value used.';
   doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
-     .text(`  \u26A0 EDITED by dispatcher: ${edit.submitted} (original ${edit.original} from ${edit.sourceLabel}). ${verdict}`,
+     .text(`  EDITED by dispatcher: ${edit.submitted} (original ${edit.original} from ${edit.sourceLabel}). ${verdict}`,
            L + 8, doc.y, { width: W - 8 });
   doc.moveDown(0.15);
 }

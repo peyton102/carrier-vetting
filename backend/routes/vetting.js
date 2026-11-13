@@ -1,5 +1,5 @@
 import express from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { runVettingRules, RULES_VERSION } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
@@ -196,7 +196,7 @@ router.post('/pdf', async (req, res, next) => {
       ? Math.floor((generatedAt - new Date(carrierData.authorityGrantDate)) / 86_400_000)
       : null;
 
-    const pdfBuffer = await generateVettingPDF({
+    const pdfOpts = {
       carrierData,
       verdict:      finalVerdict,
       tier:         row.tier,
@@ -210,14 +210,22 @@ router.post('/pdf', async (req, res, next) => {
       brokerName,
       timesUsed,
       fieldSources: fieldSources ?? {},
-    });
+    };
+
+    // Two-pass: first pass produces the content hash (fingerprint) which is then
+    // printed in the footer of the final PDF.  The stored sha256 is the hash of
+    // the final PDF bytes — that is what integrity verification compares against.
+    const prelimBuffer  = await generateVettingPDF(pdfOpts);
+    const fingerprint   = createHash('sha256').update(prelimBuffer).digest('hex');
+    const pdfBuffer     = await generateVettingPDF({ ...pdfOpts, fingerprint });
+    const pdfSha256     = createHash('sha256').update(pdfBuffer).digest('hex');
 
     const loadRef     = (row.load_ref || 'NOREF').replace(/\W/g, '');
     const dateStr     = generatedAt.toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
     const filename    = `VettingCert_${dot || 'NODOT'}_${loadRef}_${dateStr}.pdf`;
     const storagePath = `${orgId}/${recordId}/${filename}`;
 
-    // ── Storage upload ────────────────────────────────────────────────────────
+    // ── Storage upload (primary + backup) ─────────────────────────────────────
     let certSaved = false;
     let certError = null;
     try {
@@ -231,12 +239,19 @@ router.post('/pdf', async (req, res, next) => {
       console.error('[CERT STORAGE ERROR]', e.message);
     }
 
-    // ── DB update: ONLY pdf_url (trigger allows NULL → non-null once) ─────────
+    if (certSaved) {
+      supabase.storage
+        .from('vetting-certificates-backup')
+        .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
+        .then(({ error }) => { if (error) console.error('[CERT BACKUP ERROR]', error.message); });
+    }
+
+    // ── DB update: pdf_url + pdf_sha256 (trigger allows NULL → non-null once) ──
     // vetting_logs.verdict never changes after insert.
     if (certSaved) {
       const { error: updErr } = await supabase
         .from('vetting_logs')
-        .update({ pdf_url: storagePath })
+        .update({ pdf_url: storagePath, pdf_sha256: pdfSha256 })
         .eq('id', recordId)
         .eq('tenant_id', orgId);
 
@@ -364,13 +379,41 @@ router.get('/logs/:id/pdf', async (req, res, next) => {
     const dateStr = originalDate.toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
     const filename = `VettingCert_${dot}_${loadRef}_${dateStr}.pdf`;
 
-    // Try original stored file first
+    // Try original stored file first; verify SHA-256 if fingerprint was recorded.
     if (row.pdf_url) {
       const { data: fileBlob, error: dlErr } = await supabase.storage
         .from('vetting-certificates')
         .download(row.pdf_url);
       if (!dlErr && fileBlob) {
         const buf = Buffer.from(await fileBlob.arrayBuffer());
+
+        // Integrity check — only on records that have a stored fingerprint.
+        if (row.pdf_sha256) {
+          const computed = createHash('sha256').update(buf).digest('hex');
+          if (computed !== row.pdf_sha256) {
+            console.warn(`[CERT] Primary fingerprint mismatch for ${row.id} — trying backup`);
+            const { data: backupBlob, error: backupErr } = await supabase.storage
+              .from('vetting-certificates-backup')
+              .download(row.pdf_url);
+            if (!backupErr && backupBlob) {
+              const backupBuf   = Buffer.from(await backupBlob.arrayBuffer());
+              const backupHash  = createHash('sha256').update(backupBuf).digest('hex');
+              if (backupHash === row.pdf_sha256) {
+                console.log(`[CERT] Served from backup for ${row.id}`);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+                res.setHeader('X-Filename',      filename);
+                res.setHeader('X-Cert-Source',   'backup');
+                res.setHeader('X-Rules-Version', row.rules_version || 'pre-v4');
+                res.setHeader('Access-Control-Expose-Headers', 'X-Filename, X-Cert-Source, X-Rules-Version');
+                return res.send(backupBuf);
+              }
+            }
+            console.error(`[CERT] Fingerprint mismatch — both primary and backup failed for ${row.id}`);
+            return res.status(409).json({ error: 'Certificate file could not be verified — fingerprint mismatch in both primary and backup storage' });
+          }
+        }
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.setHeader('X-Filename',      filename);
