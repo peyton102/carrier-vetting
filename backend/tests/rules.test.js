@@ -925,6 +925,143 @@ export async function runAll() {
     assert(s2.authorityGrantDate === newer, `older grant date must NOT override newer, got ${s2.authorityGrantDate}`);
   }));
 
+  // ── Full /run-path tests: server-authoritative lookup → runVettingRules ────────
+  // These simulate exactly what vetting.js /run does:
+  //   applyToSubmission → detectEdits → applyStricterEdits → runVettingRules
+  // Each test has the bad value in auto_filled (server-side) and a clean browser body.
+
+  function runPath(autoFilledOverrides, browserOverrides = {}) {
+    const savedLookup = {
+      auto_filled:   autoFilledOverrides,
+      server_fields: {},
+      fmcsa_cannot_verify: false,
+    };
+    const browser = { ...CLEAN, ...browserOverrides };
+    const data  = applyToSubmission(savedLookup, browser);
+    const edits = detectEdits(savedLookup.auto_filled, browser);
+    if (Object.keys(edits).length > 0) data._dispatcherEdits = edits;
+    return runVettingRules(applyStricterEdits(data, edits), CFG);
+  }
+
+  // FP-DA. Bug regression: SW reports controlSubPCT 8 → drugAlcoholViolation stored as
+  //        string 'true' in auto_filled → applyToSubmission must restore boolean true →
+  //        rules engine must see true → REJECT, no override.
+  //        (Precision Transportation bug: was HOLD because string 'true' !== true)
+  results.push(await t('full /run path: drugAlcohol auto-filled true (SW) → REJECT canOverride:false', async () => {
+    const r = runPath({
+      drugAlcoholViolation: { value: 'true', sourceLabel: 'SaferWatch' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT, got ${r.verdict} — string 'true' not being coerced to boolean true is the bug`);
+    assert(r.reasons.some(s => s.toLowerCase().includes('drug/alcohol')),
+      `drug/alcohol reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'drug/alcohol violation must set canOverride:false');
+    // Browser had drugAlcoholViolation: false — dispatcher could NOT override the SW finding
+    const pdfErr = await checkPdf({ ...CLEAN, drugAlcoholViolation: true }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-AUTH. Inactive authority auto-filled → REJECT
+  results.push(await t('full /run path: inactive authority auto-filled → REJECT canOverride:false', async () => {
+    const r = runPath({
+      authorityStatus: { value: 'inactive', sourceLabel: 'FMCSA' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for inactive authority, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('inactive')),
+      `inactive reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'inactive authority must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, authorityStatus: 'inactive' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-COND. Conditional safety rating auto-filled → REJECT
+  results.push(await t('full /run path: Conditional safety rating auto-filled → REJECT canOverride:false', async () => {
+    const r = runPath({
+      safetyRating: { value: 'Conditional', sourceLabel: 'FMCSA' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for Conditional, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Conditional')),
+      `Conditional reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'Conditional must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, safetyRating: 'Conditional' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-UNSAT. Unsatisfactory safety rating auto-filled → REJECT
+  results.push(await t('full /run path: Unsatisfactory safety rating auto-filled → REJECT canOverride:false', async () => {
+    const r = runPath({
+      safetyRating: { value: 'Unsatisfactory', sourceLabel: 'FMCSA' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for Unsatisfactory, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Unsatisfactory')),
+      `Unsatisfactory reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'Unsatisfactory must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, safetyRating: 'Unsatisfactory' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-LAPSED. Lapsed BIPD insurance auto-filled (no active SW coverage) → REJECT
+  results.push(await t('full /run path: lapsed BIPD insurance auto-filled (no SW coverage) → REJECT', async () => {
+    const r = runPath(
+      { bipdCancelLapsed: { value: 'true', sourceLabel: 'FMCSA BMC-35' } },
+      { autoLiabilityExpiration: '' },   // no active SW expiry → no conflict path → hard RED
+    );
+    assert(r.verdict === 'REJECT',
+      `want REJECT for lapsed BIPD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('cancelled')),
+      `lapsed-BIPD reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'lapsed BIPD must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, bipdCancelLapsed: true, autoLiabilityExpiration: '' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-BASIC. BASIC at-or-above threshold auto-filled (action=reject) → REJECT
+  results.push(await t('full /run path: BASIC unsafeDriving ≥ threshold auto-filled → REJECT', async () => {
+    const r = runPath({
+      unsafeDrivingBasic: { value: '65', sourceLabel: 'SaferWatch' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for BASIC at threshold, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('Unsafe Driving') && s.includes('at or above')),
+      `BASIC reject reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'BASIC reject must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, unsafeDrivingBasic: '65' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-OOS-TRUCK. Truck OOS > max auto-filled → REJECT
+  results.push(await t('full /run path: truck OOS > max auto-filled → REJECT canOverride:false', async () => {
+    const r = runPath({
+      truckOosPct:         { value: '25.00', sourceLabel: 'FMCSA' },
+      nationalAvgTruckOos: { value: '10.00', sourceLabel: 'FMCSA' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for truck OOS 25>20, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('maximum')),
+      `OOS max reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'truck OOS max must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, truckOosPct: '25.00', nationalAvgTruckOos: '10.00' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FP-OOS-DRV. Driver OOS > hard block auto-filled → REJECT
+  results.push(await t('full /run path: driver OOS > hard block auto-filled → REJECT canOverride:false', async () => {
+    const r = runPath({
+      driverOosPct:         { value: '7.5', sourceLabel: 'FMCSA' },
+      nationalAvgDriverOos: { value: '4.00', sourceLabel: 'FMCSA' },
+    });
+    assert(r.verdict === 'REJECT',
+      `want REJECT for driver OOS 7.5>7, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => s.includes('hard limit') && s.includes('7.5%')),
+      `driver hard_block reason must fire: ${r.reasons.join('; ')}`);
+    assert(r.canOverride === false, 'driver OOS hard block must set canOverride:false');
+    const pdfErr = await checkPdf({ ...CLEAN, driverOosPct: '7.5', nationalAvgDriverOos: '4.00' }, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // 21. Data isolation: second run on a clean carrier has zero contamination from first
   results.push(await t('data isolation — REJECT then APPROVE yields clean second result', async () => {
     const reject = { ...CLEAN, safetyRating: 'Unsatisfactory', drugAlcoholViolation: true, activeFederalOOS: true };

@@ -422,7 +422,8 @@ export function applyToSubmission(savedLookup, browserBody) {
     // Convert string back to native type for boolean fields
     if (['activeFederalOOS', 'hasBrokerAuthority', 'bipdCancelPending', 'bipdCancelLapsed',
          'pendingInsuranceCancellation', 'fmcsaChameleonNotReviewed',
-         'fmcsaEmailNotReviewed', 'fmcsaChameleonTimedOut'].includes(field)) {
+         'fmcsaEmailNotReviewed', 'fmcsaChameleonTimedOut',
+         'drugAlcoholViolation'].includes(field)) {
       data[field] = value === 'true' ? true : value === 'false' ? false : null;
     } else {
       data[field] = value;
