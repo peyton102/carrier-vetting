@@ -38,6 +38,12 @@ export const SCALAR_AUTO_FIELDS = new Set([
   'bipdCancelPending', 'bipdCancelLapsed', 'pendingInsuranceCancellation',
   'bipdCancelEffectiveDate', 'bipdCancelTransDate',
   'bipdCancelInsuranceCompany', 'bipdCancelDaysUntil',
+  // FMCSA QCMobile insurance (live)
+  'fmcsaLiabilityOnFile', 'fmcsaLiabilityRequired', 'fmcsaLiabilityIsRequired',
+  'fmcsaCargoOnFile', 'fmcsaCargoIsRequired',
+  // Insurance history (Socrata)
+  'currentInsurer', 'currentPolicyNo', 'currentPolicyStartDate',
+  'insurerChanges12mo',
   // Chameleon — scalar
   'fmcsaChameleonNotReviewed', 'fmcsaEmailNotReviewed',
   'fmcsaChameleonTimedOut',
@@ -47,7 +53,8 @@ export const SCALAR_AUTO_FIELDS = new Set([
 // Complex fields — applied verbatim, not compared for edit detection.
 export const COMPLEX_AUTO_FIELDS = new Set([
   'fmcsaChameleonMatches', 'fmcsaContactChange',
-  'crashes24mo',   // object { count, fatal, injury, tow, items } — must NOT be stringified
+  'crashes24mo',          // object { count, fatal, injury, tow, items } — must NOT be stringified
+  'insuranceTimeline',    // array of { date, company, formCode, policyNo }
 ]);
 
 const DATE_FIELDS = new Set([
@@ -297,6 +304,22 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
   }
   serverFields.insuranceNotReviewed = !!(insurance?.notReviewed);
 
+  // ── Insurance history (Socrata — per-DOT timeline) ───────────────────────
+  if (insurance?.history) {
+    const h = insurance.history;
+    if (h.currentInsurer)         setScalar('currentInsurer',         h.currentInsurer,         'insurance', 'FMCSA Socrata');
+    if (h.currentPolicyNo)        setScalar('currentPolicyNo',       h.currentPolicyNo,        'insurance', 'FMCSA Socrata');
+    if (h.currentPolicyStartDate) setScalar('currentPolicyStartDate', h.currentPolicyStartDate, 'insurance', 'FMCSA Socrata');
+    if (h.insurerChanges12mo != null) setScalar('insurerChanges12mo', h.insurerChanges12mo,    'insurance', 'FMCSA Socrata');
+    if (Array.isArray(h.timeline) && h.timeline.length > 0) {
+      setComplex('insuranceTimeline', h.timeline);
+      fieldSources.insuranceTimeline = 'insurance';
+    }
+    serverFields.insuranceHistoryNotReviewed = false;
+  } else {
+    serverFields.insuranceHistoryNotReviewed = !!(insurance?.historyNotReviewed ?? true);
+  }
+
   // ── Chameleon ──────────────────────────────────────────────────────────────
   if (chameleon) {
     const notReviewed = !!(chameleon.notReviewed);
@@ -449,7 +472,8 @@ export function applyToSubmission(savedLookup, browserBody) {
 
   // Apply OOS display metadata from serverFields
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
-                   'driverInspections24mo','_basicSufficiency']) {
+                   'driverInspections24mo','_basicSufficiency',
+                   'insuranceHistoryNotReviewed']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
 

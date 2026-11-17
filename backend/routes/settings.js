@@ -48,6 +48,7 @@ router.put('/', async (req, res, next) => {
       oos_max_truck:                             floatClamp(b.oosMaxTruck,        D.oosMaxTruck,         10, 35),
       oos_hard_block_driver:                     floatMin(b.oosHardBlockDriver,  D.oosHardBlockDriver,  1),
       inspection_volume_min:                     posInt(b.inspectionVolumeMin,   D.inspectionVolumeMin),
+      insurer_churn_threshold:                    clamp(b.insurerChurnThreshold, D.insurerChurnThreshold, 1, 10),
       alert_recipients:                          (b.alertRecipients ?? '').trim().slice(0, 2000),
       mileage_per_unit_min:                      posInt(b.mileagePerUnitMin,    D.mileagePerUnitMin),
       mileage_per_unit_max:                      posInt(b.mileagePerUnitMax,    D.mileagePerUnitMax),

@@ -148,6 +148,14 @@ async function fetchFMCSASnapshot(dot, webKey) {
     activeFederalOOS:     !!c.outOfServiceDate,
     hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
     fmcsaPhone:           c.telephone || c.mcsPhone || c.phone || '',
+    // FMCSA QCMobile insurance — amounts in $thousands → dollars
+    fmcsaLiabilityOnFile:    c.bipdInsuranceOnFile  != null ? parseFloat(c.bipdInsuranceOnFile) * 1000  : null,
+    fmcsaLiabilityRequired:  c.bipdRequiredAmount   != null ? parseFloat(c.bipdRequiredAmount)  * 1000  : null,
+    fmcsaLiabilityIsRequired: (c.bipdInsuranceRequired || '').toUpperCase() || 'U',
+    // Authority detail fields for monitoring alerts
+    commonAuthorityStatus:   (c.commonAuthorityStatus   || '').toUpperCase(),
+    contractAuthorityStatus: (c.contractAuthorityStatus || '').toUpperCase(),
+    allowedToOperate:        (c.allowedToOperate        || '').toUpperCase(),
   };
 }
 
@@ -274,6 +282,10 @@ function buildCarrierSnapshot(fmcsa, sw) {
     vehicleDriverObservedBasic: '',
     driverFitnessBasic:        '',
     hazmatBasic:               '',
+    // FMCSA live insurance — used by rules engine for cross-source check
+    fmcsaLiabilityOnFile:      fmcsa.fmcsaLiabilityOnFile    ?? null,
+    fmcsaLiabilityRequired:    fmcsa.fmcsaLiabilityRequired  ?? null,
+    fmcsaLiabilityIsRequired:  fmcsa.fmcsaLiabilityIsRequired ?? 'U',
     // Not relevant during monitoring
     carrierAssureGrade:        '',
     pendingInsuranceCancellation: false,
@@ -880,6 +892,177 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
       }
     }
   }
+}
+
+// ── Post-refresh insurance & authority monitoring ─────────────────────────────
+// After nightly enforcement data loads, check every carrier on an active load or
+// watch list for: cancellation filed, liability drop, insurer change, authority
+// change.  First check per carrier is baseline-only (no alerts).
+// Dedup: skip if an unacknowledged alert exists for the same DOT + alert type +
+// issue fingerprint.
+
+export async function runPostRefreshChecks(supabase) {
+  console.log('[POST-REFRESH] Starting insurance & authority checks…');
+  const webKey = process.env.FMCSA_WEBKEY || null;
+  if (!webKey) { console.warn('[POST-REFRESH] No FMCSA_WEBKEY — skipping'); return; }
+
+  // Collect all unique DOTs from active loads + watched carriers
+  const [loadsRes, watchRes] = await Promise.all([
+    supabase.from('monitored_loads').select('id, tenant_id, dot_number, carrier_name, load_ref, last_insurer, last_authority_status, last_fmcsa_liability').is('delivered_at', null),
+    supabase.from('watched_carriers').select('id, tenant_id, dot_number, carrier_name, last_insurer, last_authority_status, last_fmcsa_liability').eq('is_active', true),
+  ]);
+
+  const loads    = loadsRes.data  ?? [];
+  const watches  = watchRes.data  ?? [];
+  if (!loads.length && !watches.length) { console.log('[POST-REFRESH] No active loads or watched carriers.'); return; }
+
+  // All items keyed by DOT for batching FMCSA calls
+  const items = [...loads.map(l => ({ ...l, _table: 'monitored_loads' })),
+                 ...watches.map(w => ({ ...w, _table: 'watched_carriers', load_ref: `watch:${w.dot_number}` }))];
+
+  // Unique DOTs
+  const uniqueDots = [...new Set(items.map(i => i.dot_number))];
+  console.log(`[POST-REFRESH] ${uniqueDots.length} unique DOT(s) across ${loads.length} loads + ${watches.length} watched carriers`);
+
+  // Batch FMCSA calls: 10 in parallel, 1s delay between batches
+  const snapshots = {};
+  for (let i = 0; i < uniqueDots.length; i += 10) {
+    const batch = uniqueDots.slice(i, i + 10);
+    const results = await Promise.allSettled(
+      batch.map(dot => fetchFMCSASnapshot(dot, webKey).then(snap => ({ dot, snap })))
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled') snapshots[r.value.dot] = r.value.snap;
+    }
+    if (i + 10 < uniqueDots.length) await new Promise(r => setTimeout(r, 1000));
+  }
+
+  // Check insurance_cancellations for each DOT
+  const cancelRows = {};
+  for (const dot of uniqueDots) {
+    const { data } = await supabase.from('insurance_cancellations').select('*').eq('dot_number', dot).maybeSingle();
+    if (data) cancelRows[dot] = data;
+  }
+
+  // Resolve settings + email per tenant (cached)
+  const tenantCache = {};
+  async function getTenantInfo(tid) {
+    if (tenantCache[tid]) return tenantCache[tid];
+    const [settings, tenantRow] = await Promise.all([
+      fetchSettings(tid),
+      supabase.from('tenants').select('email').eq('slug', tid).single(),
+    ]);
+    tenantCache[tid] = { settings, tenantEmail: tenantRow.data?.email ?? null };
+    return tenantCache[tid];
+  }
+
+  let alertCount = 0;
+
+  for (const item of items) {
+    const snap = snapshots[item.dot_number];
+    if (!snap) continue;
+
+    const isBaseline = item.last_insurer == null && item.last_authority_status == null && item.last_fmcsa_liability == null;
+    const issues = [];
+
+    // Build current state
+    const curInsurer    = snap.fmcsaLiabilityIsRequired ?? 'U';  // placeholder — real insurer comes from cancel row
+    const curAuthority  = `${snap.commonAuthorityStatus || '?'}/${snap.contractAuthorityStatus || '?'}/${snap.allowedToOperate || '?'}`;
+    const curLiability  = snap.fmcsaLiabilityOnFile ?? null;
+    const curInsurerName = cancelRows[item.dot_number]?.insurance_company || null;
+
+    if (!isBaseline) {
+      // Cancellation filed
+      const cancel = cancelRows[item.dot_number];
+      if (cancel && !item._hadCancellation) {
+        issues.push(`New BIPD cancellation notice filed — effective ${cancel.effective_date}, insurer: ${cancel.insurance_company || 'unknown'}`);
+      }
+
+      // Liability dropped
+      if (item.last_fmcsa_liability != null && curLiability != null &&
+          curLiability < item.last_fmcsa_liability) {
+        issues.push(`FMCSA liability dropped from $${Number(item.last_fmcsa_liability).toLocaleString()} to $${Number(curLiability).toLocaleString()}`);
+      }
+      if (item.last_fmcsa_liability != null && item.last_fmcsa_liability > 0 && (curLiability === 0 || curLiability == null)) {
+        issues.push('FMCSA liability dropped to $0 — carrier may have lost coverage');
+      }
+
+      // Insurer changed
+      if (item.last_insurer && curInsurerName && item.last_insurer !== curInsurerName) {
+        issues.push(`Insurer changed from "${item.last_insurer}" to "${curInsurerName}"`);
+      }
+
+      // Authority changed (common, contract, allowed-to-operate)
+      if (item.last_authority_status && item.last_authority_status !== curAuthority) {
+        issues.push(`Authority status changed from ${item.last_authority_status} to ${curAuthority}`);
+      }
+    }
+
+    // Update snapshot
+    const updateData = {
+      last_insurer:          curInsurerName || item.last_insurer || null,
+      last_authority_status: curAuthority,
+      last_fmcsa_liability:  curLiability,
+    };
+    await supabase.from(item._table).update(updateData).eq('id', item.id);
+
+    if (isBaseline) {
+      console.log(`[POST-REFRESH] Baseline saved for DOT ${item.dot_number} (${item._table})`);
+      continue;
+    }
+
+    if (issues.length === 0) continue;
+
+    // Dedup: check for existing unacknowledged alert with same DOT + type
+    const { data: existing } = await supabase.from('monitoring_alerts')
+      .select('id, issues')
+      .eq('dot_number', item.dot_number)
+      .eq('alert_type', 'insurance_change')
+      .eq('is_acknowledged', false)
+      .limit(1);
+
+    if (existing?.length > 0) {
+      // Check if same issues already reported
+      const existingIssues = JSON.stringify(existing[0].issues || []);
+      if (existingIssues === JSON.stringify(issues)) {
+        console.log(`[POST-REFRESH] Duplicate alert skipped for DOT ${item.dot_number}`);
+        continue;
+      }
+    }
+
+    // Create alert
+    const alertRow = {
+      tenant_id:    item.tenant_id,
+      dot_number:   item.dot_number,
+      carrier_name: item.carrier_name,
+      load_ref:     item.load_ref,
+      alert_type:   issues.some(i => /authority/i.test(i)) ? 'authority_change' : 'insurance_change',
+      issues,
+    };
+    // Link to monitored_load if applicable
+    if (item._table === 'monitored_loads') alertRow.monitored_load_id = item.id;
+
+    await supabase.from('monitoring_alerts').insert(alertRow);
+
+    // Send email
+    try {
+      const { settings, tenantEmail } = await getTenantInfo(item.tenant_id);
+      await sendAlertEmail(
+        { carrier_name: item.carrier_name, dot_number: item.dot_number, load_ref: item.load_ref },
+        issues,
+        alertRow.alert_type,
+        settings,
+        tenantEmail
+      );
+    } catch (emailErr) {
+      console.error(`[POST-REFRESH] Email failed for DOT ${item.dot_number}: ${emailErr.message}`);
+    }
+
+    alertCount++;
+    console.log(`[POST-REFRESH] ALERT [${item.tenant_id}] DOT ${item.dot_number}: ${issues.join('; ')}`);
+  }
+
+  console.log(`[POST-REFRESH] Complete — ${alertCount} alert(s) created`);
 }
 
 // ── Insurance cancellation refresh (daily) ────────────────────────────────────

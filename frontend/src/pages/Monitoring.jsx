@@ -190,8 +190,11 @@ export default function Monitoring() {
             <div key={a.id} style={a.alert_type === 'cannot_verify' ? s.cannotCard : s.alertCard}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 13, color: a.alert_type === 'cannot_verify' ? '#fbbf24' : '#f87171', marginBottom: 4 }}>
-                    {a.alert_type === 'cannot_verify' ? 'CANNOT VERIFY' : 'STATUS ALERT'} — {a.carrier_name || a.dot_number} (Load {a.load_ref})
+                  <div style={{ fontWeight: 700, fontSize: 13, color: a.alert_type === 'cannot_verify' ? '#fbbf24' : a.alert_type === 'insurance_change' ? '#d97706' : a.alert_type === 'authority_change' ? '#f87171' : '#f87171', marginBottom: 4 }}>
+                    {a.alert_type === 'cannot_verify' ? 'CANNOT VERIFY'
+                     : a.alert_type === 'insurance_change' ? 'INSURANCE CHANGE'
+                     : a.alert_type === 'authority_change' ? 'AUTHORITY CHANGE'
+                     : 'STATUS ALERT'} — {a.carrier_name || a.dot_number} {a.load_ref ? `(Load ${a.load_ref})` : `(DOT ${a.dot_number})`}
                   </div>
                   <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
                     DOT {a.dot_number} &nbsp;|&nbsp; {fmtDate(a.created_at)}

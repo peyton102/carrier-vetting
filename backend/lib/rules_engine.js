@@ -61,6 +61,8 @@ export const DEFAULT_SETTINGS = {
   mileagePerUnitMin:  1_000,    // mi/year below this → HOLD
   mileagePerUnitMax:  250_000,  // mi/year above this → HOLD
   driversPerTruckMax: 3,        // drivers/unit above this → informational note
+  // ── Insurance churn ──────────────────────────────────────────────────────
+  insurerChurnThreshold: 3,   // distinct insurers in 12mo → HOLD
   // ── Alert email recipients ────────────────────────────────────────────────
   alertRecipients: '',
 };
@@ -303,6 +305,36 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     }
   }
 
+  // FMCSA QCMobile live liability cross-source check
+  // bipdIsReq 'Y' = FMCSA says liability is required; 'U' = unknown → "Not reviewed"
+  // Rule fires only when both FMCSA AND nightly insurance data agree there's no coverage.
+  // If sources disagree → HOLD "sources conflict". If 'U' → not reviewed.
+  {
+    const fmcsaOnFile   = d.fmcsaLiabilityOnFile;
+    const fmcsaRequired = d.fmcsaLiabilityRequired;
+    const fmcsaIsReq    = (d.fmcsaLiabilityIsRequired ?? '').toUpperCase();
+    if (fmcsaIsReq === 'Y' && fmcsaOnFile != null) {
+      const liabOnFile = parseFloat(fmcsaOnFile);
+      const liabReq    = parseFloat(fmcsaRequired) || 0;
+      const nightlyLapsed = d.bipdCancelLapsed === true;
+      // SaferWatch coverage info (independent source)
+      const swAutoLiab    = parseFloat(d.autoLiability);
+      const swHasCoverage = !isNaN(swAutoLiab) && swAutoLiab >= liabReq;
+      if (!isNaN(liabOnFile) && (liabOnFile === 0 || liabOnFile < liabReq)) {
+        if (nightlyLapsed && !swHasCoverage) {
+          // Both FMCSA live AND nightly data agree — no adequate coverage
+          red.push(`FMCSA liability on file $${fmtMoney(liabOnFile)} is below the required $${fmtMoney(liabReq)} — both live and nightly FMCSA data confirm no adequate coverage`);
+        } else if (!nightlyLapsed && !swHasCoverage) {
+          // FMCSA live says short, but nightly doesn't show lapsed — sources may disagree
+          yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)} — nightly data does not confirm lapse; sources may be out of sync, manager review required`);
+        } else if (swHasCoverage) {
+          // FMCSA live says short, but SaferWatch shows adequate coverage — conflict
+          yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)}, but SaferWatch shows $${fmtMoney(swAutoLiab)} — sources conflict, manager review required`);
+        }
+      }
+    }
+  }
+
   // Insurance expiry — already expired → hard fail
   const autoExpDays = daysUntilExpiry(d.autoLiabilityExpiration);
   if (autoExpDays !== null && autoExpDays < 0) {
@@ -505,6 +537,26 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       );
     }
     // Far out (> threshold): the cert row is informational only — no rule violation
+  }
+
+  // Insurance churn — too many distinct insurers in 12 months
+  {
+    const churnCount = parseInt(d.insurerChanges12mo, 10);
+    const churnThreshold = parseInt(cfg.insurerChurnThreshold, 10) || 3;
+    if (!isNaN(churnCount) && churnCount >= churnThreshold) {
+      yellow.push(
+        `Insurance churn: ${churnCount} distinct insurer${churnCount === 1 ? '' : 's'} in the last 12 months ` +
+        `(threshold: ${churnThreshold}) — frequent insurer changes may indicate instability, manager review required`
+      );
+    }
+  }
+
+  // Policy started recently — informational only
+  if (d.currentPolicyStartDate) {
+    const policyDaysAgo = -daysUntilExpiry(d.currentPolicyStartDate);
+    if (policyDaysAgo >= 0 && policyDaysAgo <= 30) {
+      notes.push(`Current insurance policy started ${policyDaysAgo} day${policyDaysAgo === 1 ? '' : 's'} ago (${d.currentPolicyStartDate}) — recently issued`);
+    }
   }
 
   // FMCSA identity linkage (chameleon check) — one HOLD per linked carrier with bad history

@@ -9,6 +9,11 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
+const SOCRATA_BASE        = 'https://data.transportation.gov/resource';
+const INSUR_ACTIVE_DS     = 'c5y8-a4uz';   // Active BIPD filings (BMC-35, BMC-91, BMC-91X)
+const INSUR_HISTORY_DS    = '3uet-3z4i';   // Historical BIPD filings
+const HISTORY_TIMEOUT_MS  = 5_000;          // Per-lookup Socrata timeout for history
+
 function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
@@ -24,6 +29,98 @@ function daysUntil(dateStr) {
 
 function ms(start) { return `${Date.now() - start}ms`; }
 
+// ── Insurance history — Socrata per-DOT query ───────────────────────────────
+// Queries both the active (c5y8-a4uz) and history (3uet-3z4i) datasets for a
+// single DOT's BMC-91/91X filings over the last 12 months.  Runs with its own
+// time cap so a slow Socrata response never blocks the lookup.
+//
+// Returns { currentInsurer, currentPolicyNo, currentPolicyStartDate,
+//           insurerChanges12mo, timeline, policyStartedRecently }
+// or { historyNotReviewed: true, reason } on timeout/error.
+
+export async function fetchInsuranceHistory(dot) {
+  const t = Date.now();
+  try {
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 1);
+    const cutoffYmd = cutoff.toISOString().slice(0, 10);
+
+    // Query both datasets in parallel — BMC-91/91X filings for this DOT
+    const where = `usdot_number='${dot}' AND ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`;
+    const fields = '$select=insurance_company_name,policy_no,effective_date,trans_date,ins_form_code';
+    const order  = '$order=effective_date DESC';
+    const limit  = '$limit=100';
+
+    const [activeRes, historyRes] = await Promise.all([
+      fetch(
+        `${SOCRATA_BASE}/${INSUR_ACTIVE_DS}.json?$where=${encodeURIComponent(where)}&${fields}&${order}&${limit}`,
+        { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }
+      ),
+      fetch(
+        `${SOCRATA_BASE}/${INSUR_HISTORY_DS}.json?$where=${encodeURIComponent(where)}&${fields}&${order}&${limit}`,
+        { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }
+      ),
+    ]);
+
+    const [activeRows, historyRows] = await Promise.all([
+      activeRes.ok ? activeRes.json() : [],
+      historyRes.ok ? historyRes.json() : [],
+    ]);
+
+    // Merge + deduplicate by (company, effective_date, policy_no)
+    const seen = new Set();
+    const all = [];
+    for (const row of [...activeRows, ...historyRows]) {
+      const eff     = String(row.effective_date ?? '').slice(0, 10);
+      const company = (row.insurance_company_name ?? '').trim();
+      const policyNo = (row.policy_no ?? '').trim();
+      const key = `${company}|${eff}|${policyNo}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push({ date: eff, company, policyNo, formCode: row.ins_form_code ?? '' });
+    }
+
+    // Sort by effective date descending
+    all.sort((a, b) => b.date.localeCompare(a.date));
+
+    // Current insurer = most recent BMC-91/91X filing
+    const current = all[0] || null;
+
+    // Filter to last 12 months for churn count
+    const recent = all.filter(r => r.date >= cutoffYmd);
+    const distinctInsurers = new Set(recent.map(r => r.company.toUpperCase()).filter(Boolean));
+
+    // Policy started recently? (most recent filing within 30 days)
+    let policyStartedRecently = false;
+    if (current?.date) {
+      const daysSince = daysUntil(current.date);
+      if (daysSince !== null && daysSince >= -30 && daysSince <= 0) {
+        policyStartedRecently = true;
+      }
+      // daysUntil returns positive for future, negative for past
+      // but effective_date in past means policy started X days ago
+      const daysAgo = -daysSince;
+      if (daysAgo >= 0 && daysAgo <= 30) policyStartedRecently = true;
+    }
+
+    console.log(`[TIMING][INSUR] Socrata insurance history (DOT ${dot}): ${ms(t)} — ${all.length} filings, ${distinctInsurers.size} distinct insurers (12mo)`);
+
+    return {
+      currentInsurer:         current?.company || null,
+      currentPolicyNo:        current?.policyNo || null,
+      currentPolicyStartDate: current?.date || null,
+      insurerChanges12mo:     distinctInsurers.size,
+      timeline:               recent,
+      policyStartedRecently,
+    };
+  } catch (e) {
+    const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    const reason    = isTimeout ? 'FMCSA slow to respond' : e.message;
+    console.warn(`[INSUR] Insurance history for DOT ${dot} failed (${ms(t)}): ${reason}`);
+    return { historyNotReviewed: true, reason };
+  }
+}
+
 // Exported for use by /api/lookup combined endpoint.
 export async function insuranceLookup(dot, supabase) {
   try {
@@ -35,19 +132,29 @@ export async function insuranceLookup(dot, supabase) {
     if (countErr) throw countErr;
     if (!count) return { notReviewed: true };
 
-    const tRow = Date.now();
-    const { data: row, error: rowErr } = await supabase
-      .from('insurance_cancellations')
-      .select('*')
-      .eq('dot_number', dot)
-      .maybeSingle();
-    console.log(`[TIMING][INSUR] Supabase insurance_cancellations row (DOT ${dot}): ${ms(tRow)}`);
-    if (rowErr) throw rowErr;
-    if (!row) return { bipdCancelPending: false, bipdCancelLapsed: false };
-    if (row.status === 'lapsed') {
-      return { bipdCancelPending: false, bipdCancelLapsed: true, effectiveDate: row.effective_date, insuranceCompany: row.insurance_company };
-    }
-    return { bipdCancelPending: true, bipdCancelLapsed: false, effectiveDate: row.effective_date, transDate: row.trans_date, insuranceCompany: row.insurance_company, daysUntil: daysUntil(row.effective_date) };
+    // Fetch cancellation row + insurance history in parallel
+    const [rowResult, history] = await Promise.all([
+      (async () => {
+        const tRow = Date.now();
+        const { data: row, error: rowErr } = await supabase
+          .from('insurance_cancellations')
+          .select('*')
+          .eq('dot_number', dot)
+          .maybeSingle();
+        console.log(`[TIMING][INSUR] Supabase insurance_cancellations row (DOT ${dot}): ${ms(tRow)}`);
+        if (rowErr) throw rowErr;
+        return row;
+      })(),
+      fetchInsuranceHistory(dot),
+    ]);
+
+    const base = !rowResult
+      ? { bipdCancelPending: false, bipdCancelLapsed: false }
+      : rowResult.status === 'lapsed'
+        ? { bipdCancelPending: false, bipdCancelLapsed: true, effectiveDate: rowResult.effective_date, insuranceCompany: rowResult.insurance_company }
+        : { bipdCancelPending: true, bipdCancelLapsed: false, effectiveDate: rowResult.effective_date, transDate: rowResult.trans_date, insuranceCompany: rowResult.insurance_company, daysUntil: daysUntil(rowResult.effective_date) };
+
+    return { ...base, history };
   } catch (e) {
     console.error('[INSURANCE] cancellation lookup error:', e.message);
     return { notReviewed: true };

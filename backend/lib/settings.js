@@ -38,6 +38,7 @@ export function rowToCfg(row) {
     inspectionVolumeMin:                    row.inspection_volume_min,
     bipdCancelDays:                         row.bipd_cancel_days,
     chameleonLookbackDays:                  row.chameleon_lookback_days,
+    insurerChurnThreshold:                  row.insurer_churn_threshold,
     alertRecipients:                        row.alert_recipients ?? '',
     mileagePerUnitMin:                      row.mileage_per_unit_min,
     mileagePerUnitMax:                      row.mileage_per_unit_max,

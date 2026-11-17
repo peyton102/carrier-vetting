@@ -10,6 +10,7 @@ import {
   refreshOosOrders,
   refreshSaferRevocations,
   refreshMotusSuspensions,
+  runPostRefreshChecks,
 } from '../lib/monitor.js';
 
 const supabase = createClient(
@@ -23,6 +24,9 @@ await withLoadTimeout('INSUR',  () => refreshInsuranceCancellations(supabase));
 await withLoadTimeout('OOS',    () => refreshOosOrders(supabase));
 await withLoadTimeout('REVOKE', () => refreshSaferRevocations(supabase));
 await withLoadTimeout('MOTUS',  () => refreshMotusSuspensions(supabase));
+
+// Post-refresh: check monitored carriers for insurance & authority changes
+await withLoadTimeout('POST-REFRESH', () => runPostRefreshChecks(supabase));
 
 console.log('[DAILY] All loads complete.');
 process.exit(0);

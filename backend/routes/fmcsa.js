@@ -121,6 +121,13 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
   // Vehicle inspection count: SAFER HTML vehicle count; fall back to QCMobile
   const vehicleInspCount = saferInsp?.vehicleInsp ?? truckInsp;
 
+  // FMCSA QCMobile insurance fields — amounts are in $thousands (e.g. "750" = $750,000)
+  const bipdOnFile   = c.bipdInsuranceOnFile  != null ? parseFloat(c.bipdInsuranceOnFile) * 1000  : null;
+  const bipdRequired = c.bipdRequiredAmount   != null ? parseFloat(c.bipdRequiredAmount)  * 1000  : null;
+  const bipdIsReq    = (c.bipdInsuranceRequired || '').toUpperCase();  // 'Y', 'N', or 'u'
+  const cargoOnFile  = c.cargoInsuranceOnFile != null ? parseFloat(c.cargoInsuranceOnFile) * 1000 : null;
+  const cargoIsReq   = (c.cargoInsuranceRequired || '').toUpperCase();
+
   const fmcsaFields = {
     carrierName:          c.legalName   || '',
     dotNumber:            String(c.dotNumber || dot),
@@ -142,6 +149,12 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     fmcsaPhone:           saferPhone,   // parsed from SAFER HTML — QCMobile JSON has no phone field
     hasBrokerAuthority:   (c.brokerAuthorityStatus || '').toUpperCase() === 'A',
     saferSnapshotDate:    saferSnapshotDate || '',
+    // FMCSA QCMobile insurance — live from carrier record
+    fmcsaLiabilityOnFile:    bipdOnFile,         // dollars (null if unknown)
+    fmcsaLiabilityRequired:  bipdRequired,       // dollars (null if unknown)
+    fmcsaLiabilityIsRequired: bipdIsReq,         // 'Y', 'N', 'U' (unknown)
+    fmcsaCargoOnFile:        cargoOnFile,        // dollars (null if unknown)
+    fmcsaCargoIsRequired:    cargoIsReq,         // 'Y', 'N', 'U'
   };
 
   const filledFields = Object.keys(fmcsaFields).filter(f => {
@@ -156,6 +169,11 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
   // evaluated from FMCSA data so the PDF certificate can show the source tag even when false.
   if (!filledFields.includes('activeFederalOOS')) filledFields.push('activeFederalOOS');
   if (!filledFields.includes('hasBrokerAuthority')) filledFields.push('hasBrokerAuthority');
+  // FMCSA insurance fields — always include so cert always shows them
+  for (const f of ['fmcsaLiabilityOnFile', 'fmcsaLiabilityRequired', 'fmcsaLiabilityIsRequired',
+                    'fmcsaCargoOnFile', 'fmcsaCargoIsRequired']) {
+    if (!filledFields.includes(f)) filledFields.push(f);
+  }
 
   // Crashes: primary source is SAFER HTML (live totals); null = not available → "Not reviewed"
   if (saferCrashes != null) filledFields.push('crashes24mo');

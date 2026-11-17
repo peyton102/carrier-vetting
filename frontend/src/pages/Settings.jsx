@@ -332,6 +332,24 @@ export default function Settings({ settings, onSave }) {
           </div>
         </div>
 
+        {/* ── Insurance Churn ── */}
+        <div style={s.card}>
+          <div style={s.cardHead}>Insurance Churn Detection</div>
+          <div style={{ maxWidth: 320 }}>
+            <label style={s.label}>Insurer churn threshold (12 months)</label>
+            <input
+              type="number" min={1} max={10}
+              value={form.insurerChurnThreshold ?? ''}
+              onChange={e => set('insurerChurnThreshold', parseInt(e.target.value, 10))}
+              style={{ ...s.input, width: 100 }}
+            />
+            <p style={{ fontSize: 11, color: '#475569', margin: '6px 0 0' }}>
+              Carriers with this many or more distinct insurers in the last 12 months are
+              flagged for manager review (HOLD). Default: 3.
+            </p>
+          </div>
+        </div>
+
         {/* ── Alert Recipients ── */}
         <div style={s.card}>
           <div style={s.cardHead}>Monitoring Alert Recipients</div>

@@ -213,6 +213,9 @@ export function generateVettingPDF(opts) {
       d.hasBrokerAuthority === true ? 'YES — carrier also holds broker authority' : (d.hasBrokerAuthority === false ? 'No' : null),
       src('hasBrokerAuthority'));
 
+    // FMCSA QCMobile live liability (always shown if available)
+    fmcsaLiabilityRow(doc, L, W, d);
+
     dataRow(doc, L, W, `Auto Liability (min $${fmtMoney(cfg.autoLiabilityMin)})`,
       d.autoLiability != null && d.autoLiability !== ''
         ? `$${Number(d.autoLiability).toLocaleString('en-US')}` : null,
@@ -240,6 +243,7 @@ export function generateVettingPDF(opts) {
     }
 
     bipdCancellationRow(doc, L, W, d, cfg.bipdCancelDays ?? 30);
+    insuranceHistorySection(doc, L, W, d, cfg);
 
     // Insurance data timestamp
     if (d.insuranceDataAsOf) {
@@ -849,6 +853,77 @@ function bipdCancellationRow(doc, L, W, d, cancelDays) {
     'Helvetica-Bold',
     withinThreshold ? C.yellow : C.darkgray,
     text);
+}
+
+// FMCSA QCMobile live liability on file — always shown when data is available.
+function fmcsaLiabilityRow(doc, L, W, d) {
+  const isReq  = (d.fmcsaLiabilityIsRequired ?? '').toUpperCase();
+  const onFile = d.fmcsaLiabilityOnFile;
+
+  if (isReq === 'U' || isReq === '' || onFile == null) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Liability on file with FMCSA:',
+      'Helvetica-Oblique', C.gray, 'Not reviewed');
+    return;
+  }
+
+  const amt = parseFloat(onFile);
+  const req = parseFloat(d.fmcsaLiabilityRequired) || 0;
+  const shortfall = isReq === 'Y' && !isNaN(amt) && (amt === 0 || amt < req);
+
+  const text = !isNaN(amt)
+    ? `$${amt.toLocaleString('en-US')} (live)` + (shortfall ? ` — BELOW REQUIRED $${req.toLocaleString('en-US')}` : '')
+    : 'Unknown';
+  const color = shortfall ? C.red : C.black;
+
+  _twoColRow(doc, L, W,
+    'Helvetica-Bold', C.darkgray, 'Liability on file with FMCSA:',
+    shortfall ? 'Helvetica-Bold' : 'Helvetica', color, text);
+}
+
+// Insurance history section — current insurer + 12-month changes
+function insuranceHistorySection(doc, L, W, d, cfg) {
+  if (d.insuranceHistoryNotReviewed || (!d.currentInsurer && !d.insurerChanges12mo)) {
+    if (d.insuranceHistoryNotReviewed) {
+      _twoColRow(doc, L, W,
+        'Helvetica-Bold', C.darkgray, 'Insurance History (12 months):',
+        'Helvetica-Oblique', C.gray, 'Not reviewed (FMCSA slow to respond)');
+    }
+    return;
+  }
+
+  const churnThreshold = parseInt(cfg.insurerChurnThreshold, 10) || 3;
+  const changes = parseInt(d.insurerChanges12mo, 10) || 0;
+  const isChurn = changes >= churnThreshold;
+
+  if (d.currentInsurer) {
+    let text = d.currentInsurer;
+    if (d.currentPolicyNo) text += ` — Policy #${d.currentPolicyNo}`;
+    if (d.currentPolicyStartDate) text += ` — Effective ${d.currentPolicyStartDate}`;
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Current Insurer (FMCSA):',
+      'Helvetica', C.black, text);
+  }
+
+  if (changes > 0) {
+    const text = `${changes} distinct insurer${changes === 1 ? '' : 's'} in 12 months` +
+      (isChurn ? ` — EXCEEDS ${churnThreshold} THRESHOLD` : '');
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Insurer Changes (12 months):',
+      isChurn ? 'Helvetica-Bold' : 'Helvetica',
+      isChurn ? C.yellow : C.black, text);
+  }
+
+  // Timeline entries (compact)
+  const timeline = d.insuranceTimeline;
+  if (Array.isArray(timeline) && timeline.length > 1) {
+    for (let i = 1; i < Math.min(timeline.length, 6); i++) {
+      const e = timeline[i];
+      doc.fontSize(8).font('Helvetica').fillColor(C.gray)
+         .text(`  ${e.date}: ${e.company}${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
+    }
+    doc.moveDown(0.2);
+  }
 }
 
 function drugAlcoholRow(doc, L, W, val, source) {

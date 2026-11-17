@@ -1469,5 +1469,179 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // ── FMCSA liability cross-source checks ──────────────────────────────────
+
+  // FMCSA liability: both live + nightly agree no coverage → RED REJECT
+  results.push(await t('FMCSA liability: live=0, nightly lapsed, no SW → RED REJECT', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y', bipdCancelLapsed: true, autoLiability: '' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'REJECT', `expected REJECT, got ${r.verdict}`);
+    assert(r.reasons.some(r => /FMCSA liability on file.*below.*required/i.test(r)),
+      `expected FMCSA liability reason, got: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FMCSA liability: live says short, SW shows adequate → HOLD (sources conflict)
+  results.push(await t('FMCSA liability: live below required, SW shows adequate → HOLD sources conflict', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y', bipdCancelLapsed: false, autoLiability: '1000000' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /sources conflict/i.test(r)),
+      `expected sources conflict reason, got: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FMCSA liability: live says short, nightly no lapse, no SW → HOLD out of sync
+  results.push(await t('FMCSA liability: live below required, nightly no lapse → HOLD out of sync', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 300000, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y', bipdCancelLapsed: false, autoLiability: '' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /out of sync/i.test(r)),
+      `expected out of sync reason, got: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // FMCSA liability: meets requirement → no rule fires
+  results.push(await t('FMCSA liability: on file meets required → APPROVE', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 750000, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `expected APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+  }));
+
+  // FMCSA liability: required='U' (unknown) → no rule fires, cert says "Not reviewed"
+  results.push(await t('FMCSA liability: required=U → no rule fires', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 0,
+                fmcsaLiabilityIsRequired: 'U' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `expected APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // ── Insurance churn checks ───────────────────────────────────────────────
+
+  // Insurance churn: 3 distinct insurers, threshold=3 → HOLD
+  results.push(await t('insurance churn: 3 insurers in 12mo, threshold=3 → HOLD', async () => {
+    const d = { ...CLEAN, insurerChanges12mo: 3, currentInsurer: 'Acme Insurance',
+                currentPolicyStartDate: futureDate(-45) };
+    const r = runVettingRules(d, { ...CFG, insurerChurnThreshold: 3 });
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /insurance churn/i.test(r)),
+      `expected churn reason, got: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // Insurance churn: 2 distinct insurers, threshold=3 → APPROVE
+  results.push(await t('insurance churn: 2 insurers in 12mo, threshold=3 → APPROVE', async () => {
+    const d = { ...CLEAN, insurerChanges12mo: 2 };
+    const r = runVettingRules(d, { ...CFG, insurerChurnThreshold: 3 });
+    assert(r.verdict === 'APPROVE', `expected APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+  }));
+
+  // Policy started 15 days ago → informational note, no HOLD
+  results.push(await t('policy started 15 days ago → informational note, no HOLD', async () => {
+    const d = { ...CLEAN, currentPolicyStartDate: futureDate(-15), insurerChanges12mo: 1 };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `expected APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.notes.some(n => /recently issued/i.test(n)),
+      `expected recently issued note, got notes: ${r.notes.join('; ')}`);
+  }));
+
+  // Policy started 45 days ago → no note
+  results.push(await t('policy started 45 days ago → no note', async () => {
+    const d = { ...CLEAN, currentPolicyStartDate: futureDate(-45), insurerChanges12mo: 1 };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'APPROVE', `expected APPROVE, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(!r.notes.some(n => /recently issued/i.test(n)),
+      `should not have recently issued note, got notes: ${r.notes.join('; ')}`);
+  }));
+
+  // PDF renders FMCSA liability row
+  results.push(await t('PDF renders "Liability on file with FMCSA" row', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 750000, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y' };
+    const r = runVettingRules(d, CFG);
+    const buf = await generateVettingPDF({
+      carrierData: d, verdict: r.verdict, tier: r.tier, reasons: r.reasons,
+      warnings: [], authorityDays: r.authorityDays, override: null,
+      generatedAt: new Date(), recordId: '00000000-0000-0000-0000-000000000001',
+      settings: CFG, brokerName: 'Test Brokerage', fieldSources: {}, timesUsed: 0,
+    });
+    assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
+  }));
+
+  // PDF renders insurance history section
+  results.push(await t('PDF renders insurance history section with churn', async () => {
+    const d = { ...CLEAN, insurerChanges12mo: 4, currentInsurer: 'Progressive',
+                currentPolicyNo: 'POL-123', currentPolicyStartDate: futureDate(-10),
+                insuranceTimeline: [
+                  { date: futureDate(-10), company: 'Progressive', policyNo: 'POL-123', formCode: 'BMC-91X' },
+                  { date: futureDate(-90), company: 'National Indemnity', policyNo: 'NI-456', formCode: 'BMC-91' },
+                  { date: futureDate(-180), company: 'Acme Insurance', policyNo: 'AC-789', formCode: 'BMC-91X' },
+                  { date: futureDate(-270), company: 'Zurich', policyNo: 'ZU-012', formCode: 'BMC-91' },
+                ],
+                insuranceHistoryNotReviewed: false };
+    const r = runVettingRules(d, { ...CFG, insurerChurnThreshold: 3 });
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}`);
+    const buf = await generateVettingPDF({
+      carrierData: d, verdict: r.verdict, tier: r.tier, reasons: r.reasons,
+      warnings: [], authorityDays: r.authorityDays, override: null,
+      generatedAt: new Date(), recordId: '00000000-0000-0000-0000-000000000002',
+      settings: { ...CFG, insurerChurnThreshold: 3 }, brokerName: 'Test Brokerage',
+      fieldSources: {}, timesUsed: 0,
+    });
+    assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
+  }));
+
+  // MC lookup extracts FMCSA insurance fields from real response shape
+  results.push(await t('fmcsaMcLookup extracts fmcsaLiabilityOnFile from real response', async () => {
+    const savedFetch = globalThis.fetch;
+    const carrier = {
+      dotNumber: 2939905, legalName: 'UGN LOGISTICS INC',
+      totalPowerUnits: 41, totalDrivers: 41,
+      commonAuthorityStatus: 'A', contractAuthorityStatus: 'N',
+      allowedToOperate: 'Y', safetyRating: null,
+      vehicleInsp: 39, vehicleOosInsp: 7, vehicleOosRate: 17.95,
+      driverInsp: 98, driverOosInsp: 1, driverOosRate: 1.02,
+      brokerAuthorityStatus: 'N',
+      bipdInsuranceOnFile: '750', bipdRequiredAmount: '750', bipdInsuranceRequired: 'Y',
+      cargoInsuranceOnFile: '0', cargoInsuranceRequired: 'u',
+    };
+    globalThis.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes('/carriers/docket-number/'))
+        return { ok: true, status: 200, json: async () => ({
+          content: [{ _links: {}, carrier }],
+          retrievalDate: '2026-11-17T19:25:49.228+0000',
+        }) };
+      if (u.includes('/docket-numbers'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('/authority'))
+        return { ok: true, status: 200, json: async () => ({ content: { item: [] } }) };
+      if (u.includes('safer.fmcsa.dot.gov'))
+        return { ok: true, status: 200, text: async () => '<html></html>' };
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+    try {
+      const result = await fmcsaMcLookup('994024', 'test-webkey');
+      assert(result.fmcsaLiabilityOnFile === 750000,
+        `fmcsaLiabilityOnFile should be 750000, got ${result.fmcsaLiabilityOnFile}`);
+      assert(result.fmcsaLiabilityRequired === 750000,
+        `fmcsaLiabilityRequired should be 750000, got ${result.fmcsaLiabilityRequired}`);
+      assert(result.fmcsaLiabilityIsRequired === 'Y',
+        `fmcsaLiabilityIsRequired should be 'Y', got ${result.fmcsaLiabilityIsRequired}`);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  }));
+
   return results;
 }
