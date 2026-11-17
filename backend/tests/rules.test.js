@@ -1525,6 +1525,22 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // bipdCancelLapsed but QCMobile shows adequate liability on file → HOLD (DOT 2640993 scenario)
+  results.push(await t('bipdCancelLapsed: QCMobile shows adequate liability → HOLD conflict (not RED)', async () => {
+    const d = { ...CLEAN, bipdCancelLapsed: true, bipdCancelEffectiveDate: '2026-06-13',
+                autoLiability: '', autoLiabilityExpiration: '',
+                fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /QCMobile live shows/i.test(r)),
+      `expected QCMobile conflict reason, got: ${r.reasons.join('; ')}`);
+    assert(!r.reasons.some(r => /no replacement on file \(FMCSA\)/i.test(r)),
+      `must not RED-reject when QCMobile shows adequate: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // No-SW tenant: QCMobile short + nightly lapsed, but active filing shows insurer → HOLD
   results.push(await t('FMCSA liability: no SW, live=0, nightly lapsed, active filing → HOLD conflict', async () => {
     const d = { ...CLEAN, fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 750000,

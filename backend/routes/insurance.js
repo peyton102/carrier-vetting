@@ -45,8 +45,8 @@ export async function fetchInsuranceHistory(dot) {
     cutoff.setFullYear(cutoff.getFullYear() - 1);
     const cutoffYmd = cutoff.toISOString().slice(0, 10);
 
-    // Query both datasets in parallel — BMC-91/91X filings for this DOT
-    const where = `usdot_number='${dot}' AND ins_form_code IN('BMC-91','BMC-91X') AND ins_type_code='1'`;
+    // Query both datasets in parallel — all BIPD filings (BMC-91, BMC-91X, BMC-35) for this DOT
+    const where = `usdot_number='${dot}' AND ins_type_code='1'`;
     const fields = '$select=insurance_company_name,policy_no,effective_date,trans_date,ins_form_code';
     const order  = '$order=effective_date DESC';
     const limit  = '$limit=100';
