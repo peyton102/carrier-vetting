@@ -1525,18 +1525,18 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // bipdCancelLapsed but QCMobile shows adequate liability on file → HOLD (DOT 2640993 scenario)
-  results.push(await t('bipdCancelLapsed: QCMobile shows adequate liability → HOLD conflict (not RED)', async () => {
+  // bipdCancelLapsed + QCMobile still shows $1M → REJECT + "likely not yet updated" note
+  results.push(await t('bipdCancelLapsed: QCMobile shows stale liability → REJECT + note', async () => {
     const d = { ...CLEAN, bipdCancelLapsed: true, bipdCancelEffectiveDate: '2026-06-13',
                 autoLiability: '', autoLiabilityExpiration: '',
                 fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000,
                 fmcsaLiabilityIsRequired: 'Y' };
     const r = runVettingRules(d, CFG);
-    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
-    assert(r.reasons.some(r => /QCMobile live shows/i.test(r)),
-      `expected QCMobile conflict reason, got: ${r.reasons.join('; ')}`);
-    assert(!r.reasons.some(r => /no replacement on file \(FMCSA\)/i.test(r)),
-      `must not RED-reject when QCMobile shows adequate: ${r.reasons.join('; ')}`);
+    assert(r.verdict === 'REJECT', `expected REJECT, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /no replacement on file/i.test(r)),
+      `expected lapsed RED, got: ${r.reasons.join('; ')}`);
+    assert(r.notes.some(n => /likely not yet updated/i.test(n)),
+      `expected stale-QCMobile note, got notes: ${r.notes.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
@@ -1564,7 +1564,7 @@ export async function runAll() {
                 currentInsurer: 'Great West Casualty', insuranceHistoryNotReviewed: false };
     const r = runVettingRules(d, CFG);
     assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
-    assert(r.reasons.some(r => /active FMCSA filing shows insurer/i.test(r)),
+    assert(r.reasons.some(r => /active FMCSA filing.*shows insurer/i.test(r)),
       `expected active filing conflict reason, got: ${r.reasons.join('; ')}`);
     assert(!r.reasons.some(r => /no replacement on file \(FMCSA\)/i.test(r)),
       `must not RED-reject: ${r.reasons.join('; ')}`);
@@ -1630,10 +1630,11 @@ export async function runAll() {
     const d = { ...CLEAN, insurerChanges12mo: 4, currentInsurer: 'Progressive',
                 currentPolicyNo: 'POL-123', currentPolicyStartDate: futureDate(-10),
                 insuranceTimeline: [
-                  { date: futureDate(-10), company: 'Progressive', policyNo: 'POL-123', formCode: 'BMC-91X' },
-                  { date: futureDate(-90), company: 'National Indemnity', policyNo: 'NI-456', formCode: 'BMC-91' },
-                  { date: futureDate(-180), company: 'Acme Insurance', policyNo: 'AC-789', formCode: 'BMC-91X' },
-                  { date: futureDate(-270), company: 'Zurich', policyNo: 'ZU-012', formCode: 'BMC-91' },
+                  { date: futureDate(-10), company: 'Progressive', policyNo: 'POL-123', formCode: 'BMC-91X', isPolicy: true },
+                  { date: futureDate(-90), company: 'National Indemnity', policyNo: 'NI-456', formCode: 'BMC-91', isPolicy: true },
+                  { date: futureDate(-90), company: 'National Indemnity', policyNo: 'NI-456', formCode: 'BMC-35', isPolicy: false },
+                  { date: futureDate(-180), company: 'Acme Insurance', policyNo: 'AC-789', formCode: 'BMC-91X', isPolicy: true },
+                  { date: futureDate(-270), company: 'Zurich', policyNo: 'ZU-012', formCode: 'BMC-91', isPolicy: true },
                 ],
                 insuranceHistoryNotReviewed: false };
     const r = runVettingRules(d, { ...CFG, insurerChurnThreshold: 3 });

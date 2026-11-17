@@ -914,13 +914,16 @@ function insuranceHistorySection(doc, L, W, d, cfg) {
       isChurn ? C.yellow : C.black, text);
   }
 
-  // Timeline entries (compact)
+  // Timeline entries (compact) — BMC-35 = cancellation, BMC-91/91X/82 = policy
   const timeline = d.insuranceTimeline;
   if (Array.isArray(timeline) && timeline.length > 1) {
     for (let i = 1; i < Math.min(timeline.length, 6); i++) {
       const e = timeline[i];
-      doc.fontSize(8).font('Helvetica').fillColor(C.gray)
-         .text(`  ${e.date}: ${e.company}${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
+      const isCancellation = e.formCode === 'BMC-35';
+      const label = isCancellation ? 'CANCELLED' : (e.formCode || 'policy');
+      const color = isCancellation ? C.red : C.gray;
+      doc.fontSize(8).font('Helvetica').fillColor(color)
+         .text(`  ${e.date}: ${e.company} [${label}]${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
     }
     doc.moveDown(0.2);
   }

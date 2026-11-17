@@ -45,7 +45,8 @@ export async function fetchInsuranceHistory(dot) {
     cutoff.setFullYear(cutoff.getFullYear() - 1);
     const cutoffYmd = cutoff.toISOString().slice(0, 10);
 
-    // Query both datasets in parallel — all BIPD filings (BMC-91, BMC-91X, BMC-35) for this DOT
+    // Query both datasets in parallel — all BIPD filings (ins_type_code='1') for this DOT.
+    // BMC-91, BMC-91X, BMC-82 = active policies; BMC-35 = cancellation notice (not coverage).
     const where = `usdot_number='${dot}' AND ins_type_code='1'`;
     const fields = '$select=insurance_company_name,policy_no,effective_date,trans_date,ins_form_code';
     const order  = '$order=effective_date DESC';
@@ -67,28 +68,33 @@ export async function fetchInsuranceHistory(dot) {
       historyRes.ok ? historyRes.json() : [],
     ]);
 
-    // Merge + deduplicate by (company, effective_date, policy_no)
+    // Merge + deduplicate by (company, effective_date, policy_no, formCode)
+    const POLICY_FORMS = new Set(['BMC-91', 'BMC-91X', 'BMC-82']);
     const seen = new Set();
     const all = [];
     for (const row of [...activeRows, ...historyRows]) {
-      const eff     = String(row.effective_date ?? '').slice(0, 10);
-      const company = (row.insurance_company_name ?? '').trim();
+      const eff      = String(row.effective_date ?? '').slice(0, 10);
+      const company  = (row.insurance_company_name ?? '').trim();
       const policyNo = (row.policy_no ?? '').trim();
-      const key = `${company}|${eff}|${policyNo}`;
+      const formCode = (row.ins_form_code ?? '').trim();
+      const key = `${company}|${eff}|${policyNo}|${formCode}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      all.push({ date: eff, company, policyNo, formCode: row.ins_form_code ?? '' });
+      const isPolicy = POLICY_FORMS.has(formCode);
+      all.push({ date: eff, company, policyNo, formCode, isPolicy });
     }
 
     // Sort by effective date descending
     all.sort((a, b) => b.date.localeCompare(a.date));
 
-    // Current insurer = most recent BMC-91/91X filing
-    const current = all[0] || null;
+    // Policies only (BMC-91, 91X, 82) — BMC-35 is a cancellation notice, not coverage
+    const policies = all.filter(r => r.isPolicy);
+    const current = policies[0] || null;
 
-    // Filter to last 12 months for churn count
+    // Filter to last 12 months for churn count (policies only)
     const recent = all.filter(r => r.date >= cutoffYmd);
-    const distinctInsurers = new Set(recent.map(r => r.company.toUpperCase()).filter(Boolean));
+    const recentPolicies = policies.filter(r => r.date >= cutoffYmd);
+    const distinctInsurers = new Set(recentPolicies.map(r => r.company.toUpperCase()).filter(Boolean));
 
     // Policy started recently? (most recent filing within 30 days)
     let policyStartedRecently = false;

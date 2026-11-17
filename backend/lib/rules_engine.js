@@ -287,37 +287,32 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   }
 
   // FMCSA-sourced BIPD already lapsed — cancellation took effect, no replacement on file.
-  // If ANY other source (SaferWatch, active FMCSA filing, or QCMobile live) shows
-  // coverage, downgrade to HOLD so a manager can reconcile rather than auto-rejecting.
+  // If SaferWatch or a newer active filing (BMC-91/91X/82) shows coverage, downgrade to
+  // HOLD.  If QCMobile still shows adequate $, that's stale data — keep REJECT but note it.
   if (d.bipdCancelLapsed === true) {
     const effPart    = d.bipdCancelEffectiveDate ? ` ${d.bipdCancelEffectiveDate}` : '';
     const swExpDays  = daysUntilExpiry(d.autoLiabilityExpiration);
     const swIsActive = swExpDays !== null && swExpDays >= 0;
     const hasActiveFiling = !!d.currentInsurer && !d.insuranceHistoryNotReviewed;
-    // QCMobile live: if it shows adequate liability on file, that conflicts with "lapsed"
-    const qcLiabOnFile = parseFloat(d.fmcsaLiabilityOnFile);
-    const qcLiabReq    = parseFloat(d.fmcsaLiabilityRequired) || 750_000;
-    const qcShowsCoverage = !isNaN(qcLiabOnFile) && qcLiabOnFile >= qcLiabReq;
     if (swIsActive) {
       yellow.push(
         `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
         `but SaferWatch shows active coverage (expires ${d.autoLiabilityExpiration}); ` +
         `sources conflict, manager review required`
       );
-    } else if (qcShowsCoverage) {
-      yellow.push(
-        `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
-        `but QCMobile live shows $${fmtMoney(qcLiabOnFile)} on file (meets $${fmtMoney(qcLiabReq)} required); ` +
-        `sources conflict, manager review required`
-      );
     } else if (hasActiveFiling) {
       yellow.push(
         `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
-        `but active FMCSA filing shows insurer ${d.currentInsurer}; ` +
+        `but active FMCSA filing (BMC-91/91X/82) shows insurer ${d.currentInsurer}; ` +
         `sources conflict, manager review required`
       );
     } else {
       red.push(`Liability insurance cancelled${effPart}, no replacement on file (FMCSA)`);
+      // QCMobile may still show stale $; note it but don't downgrade
+      const qcLiabOnFile = parseFloat(d.fmcsaLiabilityOnFile);
+      if (!isNaN(qcLiabOnFile) && qcLiabOnFile > 0) {
+        notes.push(`FMCSA live record still shows $${fmtMoney(qcLiabOnFile)} on file, likely not yet updated`);
+      }
     }
   }
 
