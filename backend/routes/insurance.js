@@ -29,6 +29,14 @@ function daysUntil(dateStr) {
 
 function ms(start) { return `${Date.now() - start}ms`; }
 
+// Convert YYYYMMDD or YYYY-MM-DD to MM/DD/YYYY for display
+function fmtDate(raw) {
+  if (!raw) return '';
+  const s = String(raw).replace(/-/g, '');
+  if (s.length < 8) return raw;
+  return `${s.slice(4, 6)}/${s.slice(6, 8)}/${s.slice(0, 4)}`;
+}
+
 // ── Insurance history — Socrata per-DOT query ───────────────────────────────
 // Queries both the active (c5y8-a4uz) and history (3uet-3z4i) datasets for a
 // single DOT's BMC-91/91X filings over the last 12 months.  Runs with its own
@@ -81,32 +89,31 @@ export async function fetchInsuranceHistory(dot) {
       if (seen.has(key)) continue;
       seen.add(key);
       const isPolicy = POLICY_FORMS.has(formCode);
-      all.push({ date: eff, company, policyNo, formCode, isPolicy });
+      all.push({ date: fmtDate(eff), rawDate: eff, company, policyNo, formCode, isPolicy });
     }
 
     // Sort by effective date descending
-    all.sort((a, b) => b.date.localeCompare(a.date));
+    all.sort((a, b) => b.rawDate.localeCompare(a.rawDate));
 
     // Policies only (BMC-91, 91X, 82) — BMC-35 is a cancellation notice, not coverage
     const policies = all.filter(r => r.isPolicy);
     const current = policies[0] || null;
 
     // Filter to last 12 months for churn count (policies only)
-    const recent = all.filter(r => r.date >= cutoffYmd);
-    const recentPolicies = policies.filter(r => r.date >= cutoffYmd);
+    const recent = all.filter(r => r.rawDate >= cutoffYmd);
+    const recentPolicies = policies.filter(r => r.rawDate >= cutoffYmd);
     const distinctInsurers = new Set(recentPolicies.map(r => r.company.toUpperCase()).filter(Boolean));
 
     // Policy started recently? (most recent filing within 30 days)
     let policyStartedRecently = false;
-    if (current?.date) {
-      const daysSince = daysUntil(current.date);
-      if (daysSince !== null && daysSince >= -30 && daysSince <= 0) {
-        policyStartedRecently = true;
+    if (current?.rawDate) {
+      // daysUntil expects YYYY-MM-DD; rawDate is YYYYMMDD — convert
+      const isoDate = current.rawDate.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+      const daysSince = daysUntil(isoDate);
+      if (daysSince !== null) {
+        const daysAgo = -daysSince;
+        if (daysAgo >= 0 && daysAgo <= 30) policyStartedRecently = true;
       }
-      // daysUntil returns positive for future, negative for past
-      // but effective_date in past means policy started X days ago
-      const daysAgo = -daysSince;
-      if (daysAgo >= 0 && daysAgo <= 30) policyStartedRecently = true;
     }
 
     console.log(`[TIMING][INSUR] Socrata insurance history (DOT ${dot}): ${ms(t)} — ${all.length} filings, ${distinctInsurers.size} distinct insurers (12mo)`);

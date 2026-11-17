@@ -55,6 +55,16 @@ const INITIAL_FORM = {
   bipdCancelInsuranceCompany: '',
   bipdCancelDaysUntil:       null,
   bipdCancelNotReviewed:     false,
+  // FMCSA insurance history (Socrata)
+  fmcsaLiabilityOnFile:      null,
+  fmcsaLiabilityRequired:    null,
+  fmcsaLiabilityIsRequired:  '',
+  currentInsurer:            null,
+  currentPolicyNo:           null,
+  currentPolicyStartDate:    null,
+  insurerChanges12mo:        null,
+  insuranceTimeline:         null,
+  insuranceHistoryNotReviewed: true,
   // FMCSA identity linkage (chameleon check)
   fmcsaChameleonMatches:     null,   // null = not reviewed; [] = clean; array of match objects
   fmcsaChameleonNotReviewed: false,
@@ -651,8 +661,10 @@ export default function CarrierVetting({ settings }) {
             bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true,
             bipdCancelEffectiveDate: '', bipdCancelTransDate: '',
             bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null,
+            insuranceHistoryNotReviewed: true,
           }));
         } else {
+          const h = ins.history || {};
           setForm(f => ({ ...f,
             bipdCancelPending:          ins.bipdCancelPending,
             bipdCancelLapsed:           ins.bipdCancelLapsed ?? false,
@@ -661,8 +673,23 @@ export default function CarrierVetting({ settings }) {
             bipdCancelTransDate:        ins.transDate        ?? '',
             bipdCancelInsuranceCompany: ins.insuranceCompany ?? '',
             bipdCancelDaysUntil:        ins.daysUntil        ?? null,
+            currentInsurer:             h.currentInsurer     ?? null,
+            currentPolicyNo:            h.currentPolicyNo    ?? null,
+            currentPolicyStartDate:     h.currentPolicyStartDate ?? null,
+            insurerChanges12mo:         h.insurerChanges12mo ?? null,
+            insuranceTimeline:          h.timeline           ?? null,
+            insuranceHistoryNotReviewed: !!(h.historyNotReviewed),
           }));
         }
+      }
+
+      // FMCSA QCMobile liability fields (from auto_filled via server merge)
+      if (data.fmcsa) {
+        setForm(f => ({ ...f,
+          fmcsaLiabilityOnFile:     data.fmcsa.fmcsaLiabilityOnFile     ?? f.fmcsaLiabilityOnFile,
+          fmcsaLiabilityRequired:   data.fmcsa.fmcsaLiabilityRequired   ?? f.fmcsaLiabilityRequired,
+          fmcsaLiabilityIsRequired: data.fmcsa.fmcsaLiabilityIsRequired ?? f.fmcsaLiabilityIsRequired,
+        }));
       }
 
       // Chameleon fields
@@ -722,10 +749,20 @@ export default function CarrierVetting({ settings }) {
       const ins = data.insurance;
       if (ins) {
         if (ins.notReviewed) {
-          setForm(f => ({ ...f, bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true, bipdCancelEffectiveDate: '', bipdCancelTransDate: '', bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null }));
+          setForm(f => ({ ...f, bipdCancelPending: null, bipdCancelLapsed: false, bipdCancelNotReviewed: true, bipdCancelEffectiveDate: '', bipdCancelTransDate: '', bipdCancelInsuranceCompany: '', bipdCancelDaysUntil: null, insuranceHistoryNotReviewed: true }));
         } else {
-          setForm(f => ({ ...f, bipdCancelPending: ins.bipdCancelPending, bipdCancelLapsed: ins.bipdCancelLapsed ?? false, bipdCancelNotReviewed: false, bipdCancelEffectiveDate: ins.effectiveDate ?? '', bipdCancelTransDate: ins.transDate ?? '', bipdCancelInsuranceCompany: ins.insuranceCompany ?? '', bipdCancelDaysUntil: ins.daysUntil ?? null }));
+          const h = ins.history || {};
+          setForm(f => ({ ...f, bipdCancelPending: ins.bipdCancelPending, bipdCancelLapsed: ins.bipdCancelLapsed ?? false, bipdCancelNotReviewed: false, bipdCancelEffectiveDate: ins.effectiveDate ?? '', bipdCancelTransDate: ins.transDate ?? '', bipdCancelInsuranceCompany: ins.insuranceCompany ?? '', bipdCancelDaysUntil: ins.daysUntil ?? null,
+            currentInsurer: h.currentInsurer ?? null, currentPolicyNo: h.currentPolicyNo ?? null, currentPolicyStartDate: h.currentPolicyStartDate ?? null, insurerChanges12mo: h.insurerChanges12mo ?? null, insuranceTimeline: h.timeline ?? null, insuranceHistoryNotReviewed: !!(h.historyNotReviewed) }));
         }
+      }
+
+      if (data.fmcsa) {
+        setForm(f => ({ ...f,
+          fmcsaLiabilityOnFile:     data.fmcsa.fmcsaLiabilityOnFile     ?? f.fmcsaLiabilityOnFile,
+          fmcsaLiabilityRequired:   data.fmcsa.fmcsaLiabilityRequired   ?? f.fmcsaLiabilityRequired,
+          fmcsaLiabilityIsRequired: data.fmcsa.fmcsaLiabilityIsRequired ?? f.fmcsaLiabilityIsRequired,
+        }));
       }
 
       const cham = data.chameleon;
@@ -1252,7 +1289,77 @@ export default function CarrierVetting({ settings }) {
         </div>
       </div>
 
-      {/* ── Section 3b: FMCSA Identity Linkage ── */}
+      {/* ── Section 3b: FMCSA Insurance Info ── */}
+      <div style={s.card}>
+        <div style={s.cardHead}>FMCSA Insurance (Live)</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
+          {/* FMCSA liability on file (QCMobile) */}
+          {form.fmcsaLiabilityOnFile != null ? (() => {
+            const amt = parseFloat(form.fmcsaLiabilityOnFile);
+            const req = parseFloat(form.fmcsaLiabilityRequired) || 0;
+            const isReq = (form.fmcsaLiabilityIsRequired || '').toUpperCase();
+            const shortfall = isReq === 'Y' && !isNaN(amt) && (amt === 0 || amt < req);
+            const stale = form.bipdCancelLapsed && !isNaN(amt) && amt > 0;
+            return (
+              <div style={{ fontSize: 12 }}>
+                <strong>Liability on file (live):</strong>{' '}
+                <span style={{ fontWeight: shortfall || stale ? 700 : 400, color: shortfall ? '#dc2626' : stale ? '#b45309' : '#111827' }}>
+                  ${!isNaN(amt) ? amt.toLocaleString('en-US') : '?'}
+                  {shortfall ? ` — BELOW REQUIRED $${req.toLocaleString('en-US')}` : ''}
+                  {stale ? ' — likely not yet updated' : ''}
+                </span>
+              </div>
+            );
+          })() : (
+            <div style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Liability on file: Not reviewed</div>
+          )}
+          {/* Current insurer / history */}
+          {form.insuranceHistoryNotReviewed ? (
+            <div style={{ fontSize: 12, color: '#6b7280', fontStyle: 'italic' }}>Insurance history: Not reviewed</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 12 }}>
+                <strong>Current insurer:</strong>{' '}
+                {form.currentInsurer ? (
+                  <span>
+                    {form.currentInsurer}
+                    {form.currentPolicyNo ? ` — #${form.currentPolicyNo}` : ''}
+                    {form.currentPolicyStartDate ? ` — Eff. ${form.currentPolicyStartDate}` : ''}
+                  </span>
+                ) : (
+                  <span style={{ fontWeight: 700, color: '#dc2626' }}>No active liability policy on file</span>
+                )}
+              </div>
+              {form.insurerChanges12mo != null && form.insurerChanges12mo > 0 && (
+                <div style={{ fontSize: 12 }}>
+                  <strong>Insurer changes (12 mo):</strong>{' '}
+                  <span style={{ fontWeight: form.insurerChanges12mo >= (cfg.insurerChurnThreshold || 3) ? 700 : 400,
+                                 color: form.insurerChanges12mo >= (cfg.insurerChurnThreshold || 3) ? '#b45309' : '#111827' }}>
+                    {form.insurerChanges12mo} distinct insurer{form.insurerChanges12mo === 1 ? '' : 's'}
+                    {form.insurerChanges12mo >= (cfg.insurerChurnThreshold || 3) ? ' — EXCEEDS THRESHOLD' : ''}
+                  </span>
+                </div>
+              )}
+              {Array.isArray(form.insuranceTimeline) && form.insuranceTimeline.length > 0 && (
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                  {form.insuranceTimeline.slice(0, 6).map((e, i) => {
+                    const isCancellation = e.formCode === 'BMC-35';
+                    const isPolicy = e.isPolicy;
+                    return (
+                      <div key={i} style={{ color: !isPolicy ? '#dc2626' : '#6b7280' }}>
+                        {e.date}: {e.company} [{isCancellation ? 'CANCELLED' : e.formCode}]
+                        {e.policyNo ? ` (#${e.policyNo})` : ''}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Section 3c: FMCSA Identity Linkage ── */}
       <div style={s.card}>
         <div style={s.cardHead}>FMCSA Identity Linkage</div>
         {form.fmcsaChameleonMatches === null

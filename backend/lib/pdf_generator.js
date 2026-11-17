@@ -870,31 +870,33 @@ function fmcsaLiabilityRow(doc, L, W, d) {
   const amt = parseFloat(onFile);
   const req = parseFloat(d.fmcsaLiabilityRequired) || 0;
   const shortfall = isReq === 'Y' && !isNaN(amt) && (amt === 0 || amt < req);
+  // When cancelled but QCMobile still shows $ → note it's stale
+  const staleNote = d.bipdCancelLapsed && !isNaN(amt) && amt > 0;
 
-  const text = !isNaN(amt)
+  let text = !isNaN(amt)
     ? `$${amt.toLocaleString('en-US')} (live)` + (shortfall ? ` — BELOW REQUIRED $${req.toLocaleString('en-US')}` : '')
     : 'Unknown';
-  const color = shortfall ? C.red : C.black;
+  if (staleNote) text += ' — likely not yet updated';
+  const color = shortfall ? C.red : staleNote ? '#b45309' : C.black;
 
   _twoColRow(doc, L, W,
     'Helvetica-Bold', C.darkgray, 'Liability on file with FMCSA:',
-    shortfall ? 'Helvetica-Bold' : 'Helvetica', color, text);
+    (shortfall || staleNote) ? 'Helvetica-Bold' : 'Helvetica', color, text);
 }
 
-// Insurance history section — current insurer + 12-month changes
+// Insurance history section — always shown when data is available
 function insuranceHistorySection(doc, L, W, d, cfg) {
-  if (d.insuranceHistoryNotReviewed || (!d.currentInsurer && !d.insurerChanges12mo)) {
-    if (d.insuranceHistoryNotReviewed) {
-      _twoColRow(doc, L, W,
-        'Helvetica-Bold', C.darkgray, 'Insurance History (12 months):',
-        'Helvetica-Oblique', C.gray, 'Not reviewed (FMCSA slow to respond)');
-    }
+  if (d.insuranceHistoryNotReviewed) {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Insurance History (FMCSA):',
+      'Helvetica-Oblique', C.gray, 'Not reviewed (FMCSA slow to respond)');
     return;
   }
 
   const churnThreshold = parseInt(cfg.insurerChurnThreshold, 10) || 3;
   const changes = parseInt(d.insurerChanges12mo, 10) || 0;
   const isChurn = changes >= churnThreshold;
+  const timeline = Array.isArray(d.insuranceTimeline) ? d.insuranceTimeline : [];
 
   if (d.currentInsurer) {
     let text = d.currentInsurer;
@@ -903,6 +905,10 @@ function insuranceHistorySection(doc, L, W, d, cfg) {
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'Current Insurer (FMCSA):',
       'Helvetica', C.black, text);
+  } else {
+    _twoColRow(doc, L, W,
+      'Helvetica-Bold', C.darkgray, 'Current Insurer (FMCSA):',
+      'Helvetica-Bold', C.red, 'No active liability policy on file');
   }
 
   if (changes > 0) {
@@ -914,19 +920,20 @@ function insuranceHistorySection(doc, L, W, d, cfg) {
       isChurn ? C.yellow : C.black, text);
   }
 
-  // Timeline entries (compact) — BMC-35 = cancellation, BMC-91/91X/82 = policy
-  const timeline = d.insuranceTimeline;
-  if (Array.isArray(timeline) && timeline.length > 1) {
-    for (let i = 1; i < Math.min(timeline.length, 6); i++) {
-      const e = timeline[i];
-      const isCancellation = e.formCode === 'BMC-35';
-      const label = isCancellation ? 'CANCELLED' : (e.formCode || 'policy');
-      const color = isCancellation ? C.red : C.gray;
-      doc.fontSize(8).font('Helvetica').fillColor(color)
-         .text(`  ${e.date}: ${e.company} [${label}]${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
-    }
-    doc.moveDown(0.2);
+  // Timeline entries — BMC-35 = cancellation (red), cancelled policies (red), active policies (gray)
+  const showCount = Math.min(timeline.length, 8);
+  const startIdx = d.currentInsurer ? 1 : 0; // skip first entry if it's the current insurer
+  for (let i = startIdx; i < showCount; i++) {
+    const e = timeline[i];
+    const isCancellation = e.formCode === 'BMC-35';
+    const isCancelledPolicy = !e.isPolicy && !isCancellation; // from history dataset with CANCEL status
+    const showRed = isCancellation || isCancelledPolicy || !e.isPolicy;
+    const label = isCancellation ? 'CANCELLED' : (e.formCode || 'policy');
+    const color = showRed ? C.red : C.gray;
+    doc.fontSize(8).font('Helvetica').fillColor(color)
+       .text(`  ${e.date}: ${e.company} [${label}]${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
   }
+  if (showCount > startIdx) doc.moveDown(0.2);
 }
 
 function drugAlcoholRow(doc, L, W, val, source) {

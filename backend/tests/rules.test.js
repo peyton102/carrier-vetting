@@ -1649,6 +1649,29 @@ export async function runAll() {
     assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
   }));
 
+  // PDF: no active policy → shows "No active liability policy on file" + cancellations
+  results.push(await t('PDF renders "No active policy" with cancellation timeline', async () => {
+    const d = { ...CLEAN, bipdCancelLapsed: true, bipdCancelEffectiveDate: '06/13/2026',
+                autoLiability: '', autoLiabilityExpiration: '',
+                fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y',
+                currentInsurer: null, insurerChanges12mo: 0,
+                insuranceTimeline: [
+                  { date: '06/13/2026', company: 'MS Transverse Insurance Company', policyNo: 'TIRPCA000121', formCode: 'BMC-35', isPolicy: false },
+                  { date: '06/13/2025', company: 'MS Transverse Insurance Company', policyNo: 'TIRPCA000121', formCode: 'BMC-91X', isPolicy: true },
+                ],
+                insuranceHistoryNotReviewed: false };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'REJECT', `expected REJECT, got ${r.verdict}`);
+    const buf = await generateVettingPDF({
+      carrierData: d, verdict: r.verdict, tier: r.tier, reasons: r.reasons,
+      warnings: r.warnings, authorityDays: r.authorityDays, override: null,
+      generatedAt: new Date(), recordId: '00000000-0000-0000-0000-000000000003',
+      settings: CFG, brokerName: 'Test Brokerage', fieldSources: {}, timesUsed: 0,
+    });
+    assert(Buffer.isBuffer(buf) && buf.slice(0, 4).toString() === '%PDF', 'expected valid PDF');
+  }));
+
   // MC lookup extracts FMCSA insurance fields from real response shape
   results.push(await t('fmcsaMcLookup extracts fmcsaLiabilityOnFile from real response', async () => {
     const savedFetch = globalThis.fetch;
