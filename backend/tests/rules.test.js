@@ -1525,6 +1525,37 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
+  // No-SW tenant: QCMobile short + nightly lapsed, but active filing shows insurer → HOLD
+  results.push(await t('FMCSA liability: no SW, live=0, nightly lapsed, active filing → HOLD conflict', async () => {
+    const d = { ...CLEAN, fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 750000,
+                fmcsaLiabilityIsRequired: 'Y', bipdCancelLapsed: true, autoLiability: '',
+                currentInsurer: 'National Indemnity', insuranceHistoryNotReviewed: false };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /sources conflict/i.test(r)),
+      `expected sources conflict reason, got: ${r.reasons.join('; ')}`);
+    // Must NOT contain the RED "confirm no adequate coverage" reason
+    assert(!r.reasons.some(r => /confirm no adequate coverage/i.test(r)),
+      `must not RED-reject with active filing present: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // No-SW tenant: nightly lapsed only (no QCMobile), active filing shows insurer → HOLD
+  results.push(await t('bipdCancelLapsed: no SW, active filing → HOLD conflict (not RED)', async () => {
+    const d = { ...CLEAN, bipdCancelLapsed: true, bipdCancelEffectiveDate: '2026-10-01',
+                autoLiability: '', autoLiabilityExpiration: '',
+                currentInsurer: 'Great West Casualty', insuranceHistoryNotReviewed: false };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'HOLD', `expected HOLD, got ${r.verdict}: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(r => /active FMCSA filing shows insurer/i.test(r)),
+      `expected active filing conflict reason, got: ${r.reasons.join('; ')}`);
+    assert(!r.reasons.some(r => /no replacement on file \(FMCSA\)/i.test(r)),
+      `must not RED-reject: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
   // ── Insurance churn checks ───────────────────────────────────────────────
 
   // Insurance churn: 3 distinct insurers, threshold=3 → HOLD

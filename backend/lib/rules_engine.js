@@ -287,17 +287,23 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   }
 
   // FMCSA-sourced BIPD already lapsed — cancellation took effect, no replacement on file.
-  // If SaferWatch simultaneously shows a future expiry date the two sources conflict;
-  // downgrade to HOLD so a manager can reconcile rather than auto-rejecting a carrier
-  // that may actually have valid coverage not yet reflected in the FMCSA dataset.
+  // If another source (SaferWatch OR active FMCSA filing) shows coverage, downgrade to
+  // HOLD so a manager can reconcile rather than auto-rejecting.
   if (d.bipdCancelLapsed === true) {
     const effPart    = d.bipdCancelEffectiveDate ? ` ${d.bipdCancelEffectiveDate}` : '';
     const swExpDays  = daysUntilExpiry(d.autoLiabilityExpiration);
     const swIsActive = swExpDays !== null && swExpDays >= 0;
+    const hasActiveFiling = !!d.currentInsurer && !d.insuranceHistoryNotReviewed;
     if (swIsActive) {
       yellow.push(
         `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
         `but SaferWatch shows active coverage (expires ${d.autoLiabilityExpiration}); ` +
+        `sources conflict, manager review required`
+      );
+    } else if (hasActiveFiling) {
+      yellow.push(
+        `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
+        `but active FMCSA filing shows insurer ${d.currentInsurer}; ` +
         `sources conflict, manager review required`
       );
     } else {
@@ -307,8 +313,8 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
 
   // FMCSA QCMobile live liability cross-source check
   // bipdIsReq 'Y' = FMCSA says liability is required; 'U' = unknown → "Not reviewed"
-  // Rule fires only when both FMCSA AND nightly insurance data agree there's no coverage.
-  // If sources disagree → HOLD "sources conflict". If 'U' → not reviewed.
+  // RED only when ALL available sources agree there's no coverage.
+  // If any source disagrees → HOLD "sources conflict". If 'U' → not reviewed.
   {
     const fmcsaOnFile   = d.fmcsaLiabilityOnFile;
     const fmcsaRequired = d.fmcsaLiabilityRequired;
@@ -317,19 +323,24 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
       const liabOnFile = parseFloat(fmcsaOnFile);
       const liabReq    = parseFloat(fmcsaRequired) || 0;
       const nightlyLapsed = d.bipdCancelLapsed === true;
-      // SaferWatch coverage info (independent source)
-      const swAutoLiab    = parseFloat(d.autoLiability);
-      const swHasCoverage = !isNaN(swAutoLiab) && swAutoLiab >= liabReq;
+      // Independent sources that can contradict QCMobile
+      const swAutoLiab      = parseFloat(d.autoLiability);
+      const swHasCoverage   = !isNaN(swAutoLiab) && swAutoLiab >= liabReq;
+      const hasActiveFiling = !!d.currentInsurer && !d.insuranceHistoryNotReviewed;
+      const anySourceShowsCoverage = swHasCoverage || hasActiveFiling;
       if (!isNaN(liabOnFile) && (liabOnFile === 0 || liabOnFile < liabReq)) {
-        if (nightlyLapsed && !swHasCoverage) {
-          // Both FMCSA live AND nightly data agree — no adequate coverage
+        if (nightlyLapsed && !anySourceShowsCoverage) {
+          // All sources agree — no adequate coverage
           red.push(`FMCSA liability on file $${fmtMoney(liabOnFile)} is below the required $${fmtMoney(liabReq)} — both live and nightly FMCSA data confirm no adequate coverage`);
-        } else if (!nightlyLapsed && !swHasCoverage) {
-          // FMCSA live says short, but nightly doesn't show lapsed — sources may disagree
-          yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)} — nightly data does not confirm lapse; sources may be out of sync, manager review required`);
         } else if (swHasCoverage) {
-          // FMCSA live says short, but SaferWatch shows adequate coverage — conflict
+          // SaferWatch shows adequate coverage — conflict with QCMobile
           yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)}, but SaferWatch shows $${fmtMoney(swAutoLiab)} — sources conflict, manager review required`);
+        } else if (hasActiveFiling) {
+          // Active FMCSA filing shows an insurer — conflict with QCMobile
+          yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)}, but active FMCSA filing shows insurer ${d.currentInsurer} — sources conflict, manager review required`);
+        } else if (!nightlyLapsed) {
+          // QCMobile says short, but nightly doesn't confirm lapse — out of sync
+          yellow.push(`FMCSA live data shows liability on file $${fmtMoney(liabOnFile)} below required $${fmtMoney(liabReq)} — nightly data does not confirm lapse; sources may be out of sync, manager review required`);
         }
       }
     }
