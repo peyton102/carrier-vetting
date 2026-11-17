@@ -521,11 +521,14 @@ export async function fmcsaMcLookup(mc, webKey) {
   if (docketRes.status === 404) { const e = new Error(`MC ${mc} not found in FMCSA database`); e.httpStatus = 404; throw e; }
   if (!docketRes.ok) throw new Error(`FMCSA API HTTP ${docketRes.status} for MC ${mc}`);
 
-  // GET /carriers/docket-number/{mc} returns the carrier at content directly
-  // (no .carrier wrapper), unlike GET /carriers/{dot} which uses content.carrier.
-  // Accept both shapes for resilience.
+  // GET /carriers/docket-number/{mc} returns { content: [ { carrier: {…} } ] }
+  // — content is an ARRAY of objects, each with a nested .carrier property.
+  // Accept legacy shapes (content.carrier, content as carrier) for resilience.
   const json = await docketRes.json();
-  const c = json?.content?.carrier ?? json?.content;
+  const raw = json?.content;
+  const c = Array.isArray(raw) ? raw[0]?.carrier
+          : raw?.carrier       ? raw.carrier
+          : (raw?.dotNumber    ? raw : null);
   if (!c || typeof c !== 'object' || !c.dotNumber) {
     console.error('[FMCSA] MC', mc, 'docket lookup: unexpected response —', JSON.stringify(json).slice(0, 300));
     const e = new Error('FMCSA returned no carrier record for that MC number'); e.httpStatus = 404; throw e;
