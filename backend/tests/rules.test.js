@@ -1832,12 +1832,13 @@ export async function runAll() {
       `alert should mention insurer change: ${JSON.stringify(issues)}`);
   }));
 
-  // PR-3. Policy disappears (was insured, now NONE ON FILE) → alert fires
-  results.push(await t('POST-REFRESH: policy disappears (NONE ON FILE) creates alert', async () => {
+  // PR-3. Policy disappears (was insured, now NONE ON FILE, QCMobile also $0) → alert fires
+  results.push(await t('POST-REFRESH: policy disappears (NONE ON FILE + QCMobile $0) creates alert', async () => {
     const row = { id: 'w3', tenant_id: 'test-brokerage', dot_number: '1835635', carrier_name: 'Test',
       last_insurer: 'Great West Casualty', last_authority_status: 'A/NONE/Y', last_fmcsa_liability: 1000000, baseline_saved_at: '2026-11-01T00:00:00Z', is_active: true };
+    // QCMobile also shows $0 — both sources agree, no coverage
     const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
-      watchedRows: [row], fmcsaSnap: FMCSA_CARRIER, insurerName: null,  // no active policy
+      watchedRows: [row], fmcsaSnap: { ...FMCSA_CARRIER, bipdInsuranceOnFile: 0 }, insurerName: null,
     });
     try {
       await runPostRefreshChecks(supa);
@@ -1847,7 +1848,6 @@ export async function runAll() {
     const issues = alertInserts[0].data.issues;
     assert(issues.some(i => /Great West Casualty.*NONE ON FILE/i.test(i)),
       `alert should show NONE ON FILE: ${JSON.stringify(issues)}`);
-    // Update should store NONE ON FILE
     const upd = updates.find(u => u.id === 'w3');
     assert(upd.data.last_insurer === 'NONE ON FILE', `last_insurer should be NONE ON FILE, got ${upd.data.last_insurer}`);
   }));
@@ -1889,6 +1889,46 @@ export async function runAll() {
     // No alert on baseline
     const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
     assert(alertInserts.length === 0, `expected 0 alerts on baseline, got ${alertInserts.length}`);
+  }));
+
+  // PR-6. Old policy invisible to Socrata but QCMobile shows liability → conflict, insurer skipped
+  results.push(await t('POST-REFRESH: Socrata NONE ON FILE + QCMobile $750K → conflict, no alert', async () => {
+    const row = { id: 'w6', tenant_id: 'test-brokerage', dot_number: '1887601', carrier_name: 'Old Policy Carrier',
+      last_insurer: 'Great West Casualty', last_authority_status: 'A/NONE/Y', last_fmcsa_liability: 750000, baseline_saved_at: '2026-11-01T00:00:00Z', is_active: true };
+    // Socrata returns 0 filings (old policy), but QCMobile shows $750K on file
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: { ...FMCSA_CARRIER, bipdInsuranceOnFile: 750 }, insurerName: null,
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    // No alert — sources conflict
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 0, `expected 0 alerts on conflict, got ${alertInserts.length}`);
+    // last_insurer must NOT be overwritten (insurer skipped due to conflict)
+    const upd = updates.find(u => u.id === 'w6');
+    assert(upd, 'row should still be updated (authority/liability)');
+    assert(!('last_insurer' in upd.data), `last_insurer should not be in update on conflict: ${JSON.stringify(upd.data)}`);
+  }));
+
+  // PR-7. Same conflict on baseline: QCMobile shows $, Socrata empty → baseline saves but insurer skipped
+  results.push(await t('POST-REFRESH: baseline + Socrata/QCMobile conflict → baseline saved, insurer skipped', async () => {
+    const row = { id: 'w7', tenant_id: 'test-brokerage', dot_number: '1887601', carrier_name: 'Old Policy Carrier',
+      last_insurer: null, last_authority_status: null, last_fmcsa_liability: null, baseline_saved_at: null, is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: { ...FMCSA_CARRIER, bipdInsuranceOnFile: 750 }, insurerName: null,
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    const upd = updates.find(u => u.id === 'w7');
+    assert(upd, 'row must be updated');
+    assert(upd.data.baseline_saved_at, 'baseline_saved_at must be set');
+    // Insurer NOT written — conflict means we don't know who the insurer is
+    assert(!('last_insurer' in upd.data), `last_insurer should not be in update on conflict: ${JSON.stringify(upd.data)}`);
+    // Authority and liability still saved
+    assert(upd.data.last_authority_status, 'authority should still be saved');
+    assert(upd.data.last_fmcsa_liability === 750000, `liability should be 750000, got ${upd.data.last_fmcsa_liability}`);
   }));
 
   return results;

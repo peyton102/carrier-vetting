@@ -984,13 +984,22 @@ export async function runPostRefreshChecks(supabase) {
   for (const item of items) {
     const dot = item.dot_number;
     const snap = snapshots[dot];
-    const curInsurerName = insurerMap[dot] ?? null;  // null = lookup failed or not attempted
+    let   curInsurerName = insurerMap[dot] ?? null;  // null = lookup failed or not attempted
 
     // If FMCSA snapshot failed, log and skip — never overwrite stored values on error
     if (!snap) {
       const reason = snapErrors[dot] || 'no snapshot returned';
       console.log(`[POST-REFRESH] DOT ${dot}: skipped (FMCSA: ${reason})`);
       continue;
+    }
+
+    // Cross-check: Socrata says no active policy but QCMobile shows liability on file.
+    // This happens when the policy predates Socrata's data or the datasets are out of sync.
+    // Treat as a conflict — keep the stored insurer value, don't alert, don't overwrite.
+    const qcLiability = snap.fmcsaLiabilityOnFile ?? null;
+    if (curInsurerName === 'NONE ON FILE' && qcLiability != null && qcLiability > 0) {
+      console.log(`[POST-REFRESH] DOT ${dot}: Socrata shows no active policy but QCMobile shows $${Number(qcLiability).toLocaleString()} on file — conflict, insurer skipped`);
+      curInsurerName = null;  // skip insurer tracking for this DOT
     }
 
     // If insurer lookup failed, skip insurer tracking for this DOT but still check authority/liability
