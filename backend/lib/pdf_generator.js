@@ -14,6 +14,14 @@ const C = {
   darkgray:'#374151',
 };
 
+// Format an ISO date (YYYY-MM-DD) as MM/DD/YYYY for display; passthrough if not ISO.
+function fmtDate(v) {
+  if (!v) return v;
+  const s = String(v);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : s;
+}
+
 // Fields expected to be reviewed — blank ones go in the DATA GAPS section.
 const REVIEWABLE_FIELDS = [
   ['authorityGrantDate',        'Authority Grant Date'],
@@ -206,7 +214,7 @@ export function generateVettingPDF(opts) {
     sectionHeader(doc, L, W, 'AUTHORITY & INSURANCE');
     dataRow(doc, L, W, 'Authority Status',    d.authorityStatus,   src('authorityStatus'));
     autoFilledNote(doc, L, W, d, 'authorityStatus');
-    dataRow(doc, L, W, 'Authority Grant Date', d.authorityGrantDate, src('authorityGrantDate'));
+    dataRow(doc, L, W, 'Authority Grant Date', fmtDate(d.authorityGrantDate), src('authorityGrantDate'));
     dataRow(doc, L, W, 'Authority Age',
       authorityDays != null && !isNaN(authorityDays) ? `${authorityDays} days` : null);
     dataRow(doc, L, W, 'Holds Broker Authority',
@@ -224,7 +232,7 @@ export function generateVettingPDF(opts) {
     if (d.autoLiabilityExpiration) {
       const expDays = daysUntilExpiry(d.autoLiabilityExpiration);
       const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
-      dataRow(doc, L, W, 'Auto Liability Expiration', d.autoLiabilityExpiration + expNote, src('autoLiabilityExpiration'));
+      dataRow(doc, L, W, 'Auto Liability Expiration', fmtDate(d.autoLiabilityExpiration) + expNote, src('autoLiabilityExpiration'));
     } else {
       dataRow(doc, L, W, 'Auto Liability Expiration', null);
     }
@@ -237,7 +245,7 @@ export function generateVettingPDF(opts) {
     if (d.cargoExpiration) {
       const expDays = daysUntilExpiry(d.cargoExpiration);
       const expNote = expDays === null ? '' : expDays < 0 ? `  !! EXPIRED ${Math.abs(expDays)}d ago` : expDays <= 30 ? `  !! expires in ${expDays}d` : '';
-      dataRow(doc, L, W, 'Cargo Insurance Expiration', d.cargoExpiration + expNote, src('cargoExpiration'));
+      dataRow(doc, L, W, 'Cargo Insurance Expiration', fmtDate(d.cargoExpiration) + expNote, src('cargoExpiration'));
     } else {
       dataRow(doc, L, W, 'Cargo Insurance Expiration', null);
     }
@@ -805,7 +813,7 @@ function bipdCancellationRow(doc, L, W, d, cancelDays) {
     let text, color;
     if (swIsActive) {
       text  = `FMCSA: cancelled effective ${fmtD(d.bipdCancelEffectiveDate) ?? '?'}, no replacement on file` +
-              ` — SaferWatch shows active (exp ${d.autoLiabilityExpiration}) — SOURCES CONFLICT`;
+              ` — SaferWatch shows active (exp ${fmtDate(d.autoLiabilityExpiration)}) — SOURCES CONFLICT`;
       color = C.yellow;
     } else {
       text  = `CANCELLED effective ${fmtD(d.bipdCancelEffectiveDate) ?? '?'} — no replacement on file`;

@@ -67,6 +67,14 @@ export const DEFAULT_SETTINGS = {
   alertRecipients: '',
 };
 
+// Format an ISO date (YYYY-MM-DD) as MM/DD/YYYY for display in reason strings.
+function fmtDate(v) {
+  if (!v) return v;
+  const s = String(v);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : s;
+}
+
 // Federal auto liability floor — always RED regardless of tenant setting.
 const FEDERAL_AUTO_LIABILITY_MIN = 750_000;
 
@@ -290,14 +298,14 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   // If SaferWatch or a newer active filing (BMC-91/91X/82) shows coverage, downgrade to
   // HOLD.  If QCMobile still shows adequate $, that's stale data — keep REJECT but note it.
   if (d.bipdCancelLapsed === true) {
-    const effPart    = d.bipdCancelEffectiveDate ? ` ${d.bipdCancelEffectiveDate}` : '';
+    const effPart    = d.bipdCancelEffectiveDate ? ` ${fmtDate(d.bipdCancelEffectiveDate)}` : '';
     const swExpDays  = daysUntilExpiry(d.autoLiabilityExpiration);
     const swIsActive = swExpDays !== null && swExpDays >= 0;
     const hasActiveFiling = !!d.currentInsurer && !d.insuranceHistoryNotReviewed;
     if (swIsActive) {
       yellow.push(
         `FMCSA shows BI&PD liability cancelled${effPart}, no replacement on file — ` +
-        `but SaferWatch shows active coverage (expires ${d.autoLiabilityExpiration}); ` +
+        `but SaferWatch shows active coverage (expires ${fmtDate(d.autoLiabilityExpiration)}); ` +
         `sources conflict, manager review required`
       );
     } else if (hasActiveFiling) {
@@ -354,11 +362,11 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   // Insurance expiry — already expired → hard fail
   const autoExpDays = daysUntilExpiry(d.autoLiabilityExpiration);
   if (autoExpDays !== null && autoExpDays < 0) {
-    red.push(`Auto liability insurance expired on ${d.autoLiabilityExpiration} (${Math.abs(autoExpDays)} day${Math.abs(autoExpDays) === 1 ? '' : 's'} ago) — carrier cannot legally haul`);
+    red.push(`Auto liability insurance expired on ${fmtDate(d.autoLiabilityExpiration)} (${Math.abs(autoExpDays)} day${Math.abs(autoExpDays) === 1 ? '' : 's'} ago) — carrier cannot legally haul`);
   }
   const cargoExpDays = daysUntilExpiry(d.cargoExpiration);
   if (cargoExpDays !== null && cargoExpDays < 0) {
-    red.push(`Cargo insurance expired on ${d.cargoExpiration} (${Math.abs(cargoExpDays)} day${Math.abs(cargoExpDays) === 1 ? '' : 's'} ago)`);
+    red.push(`Cargo insurance expired on ${fmtDate(d.cargoExpiration)} (${Math.abs(cargoExpDays)} day${Math.abs(cargoExpDays) === 1 ? '' : 's'} ago)`);
   }
 
   // Carrier Assure grade F
@@ -530,10 +538,10 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
 
   // Insurance expiry — within 30 days → HOLD
   if (autoExpDays !== null && autoExpDays >= 0 && autoExpDays <= 30) {
-    yellow.push(`Auto liability insurance expires in ${autoExpDays} day${autoExpDays === 1 ? '' : 's'} (${d.autoLiabilityExpiration}) — confirm renewal before booking`);
+    yellow.push(`Auto liability insurance expires in ${autoExpDays} day${autoExpDays === 1 ? '' : 's'} (${fmtDate(d.autoLiabilityExpiration)}) — confirm renewal before booking`);
   }
   if (cargoExpDays !== null && cargoExpDays >= 0 && cargoExpDays <= 30) {
-    yellow.push(`Cargo insurance expires in ${cargoExpDays} day${cargoExpDays === 1 ? '' : 's'} (${d.cargoExpiration}) — confirm renewal before booking`);
+    yellow.push(`Cargo insurance expires in ${cargoExpDays} day${cargoExpDays === 1 ? '' : 's'} (${fmtDate(d.cargoExpiration)}) — confirm renewal before booking`);
   }
 
   // Pending insurance cancellation (legacy SW-based field — kept for existing certs)
@@ -546,7 +554,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     const daysOut   = d.bipdCancelDaysUntil;
     const threshold = parseInt(cfg.bipdCancelDays, 10) || 30;
     if (daysOut !== null && daysOut !== undefined && daysOut <= threshold) {
-      const effPart = d.bipdCancelEffectiveDate ? ` effective ${d.bipdCancelEffectiveDate}` : '';
+      const effPart = d.bipdCancelEffectiveDate ? ` effective ${fmtDate(d.bipdCancelEffectiveDate)}` : '';
       yellow.push(
         `BI&PD cancellation notice on file (FMCSA BMC-35)${effPart} — ` +
         `${daysOut} day${daysOut === 1 ? '' : 's'} until cancellation, within this broker's ${threshold}-day threshold`
@@ -571,7 +579,7 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   if (d.currentPolicyStartDate) {
     const policyDaysAgo = -daysUntilExpiry(d.currentPolicyStartDate);
     if (policyDaysAgo >= 0 && policyDaysAgo <= 30) {
-      notes.push(`Current insurance policy started ${policyDaysAgo} day${policyDaysAgo === 1 ? '' : 's'} ago (${d.currentPolicyStartDate}) — recently issued`);
+      notes.push(`Current insurance policy started ${policyDaysAgo} day${policyDaysAgo === 1 ? '' : 's'} ago (${fmtDate(d.currentPolicyStartDate)}) — recently issued`);
     }
   }
 
