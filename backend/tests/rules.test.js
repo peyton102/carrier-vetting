@@ -4,7 +4,7 @@
 import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/rules_engine.js';
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
-import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions } from '../lib/monitor.js';
+import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions, runPostRefreshChecks } from '../lib/monitor.js';
 import { fmcsaMcLookup } from '../routes/fmcsa.js';
 import { createHash } from 'crypto';
 
@@ -1712,6 +1712,183 @@ export async function runAll() {
     } finally {
       globalThis.fetch = savedFetch;
     }
+  }));
+
+  // ── POST-REFRESH tests ─────────────────────────────────────────────────────
+  // Helper: build a mock supabase + fetch for runPostRefreshChecks tests.
+  // `watchedRows` = array of watched_carriers rows to return.
+  // `fmcsaSnap` = object returned by FMCSA QCMobile for any DOT (or null to simulate failure).
+  // `insurerName` = string returned by Socrata insurance history as the current insurer
+  //                 (null = no active policy, undefined = timeout/error).
+  // Returns { supa, updates, inserts, alerts } to inspect what was written.
+  function makePostRefreshMocks({ watchedRows = [], fmcsaSnap = null, insurerName, socrataError = false }) {
+    const updates = [];   // { table, id, data }
+    const inserts = [];   // { table, data }
+    const supa = {
+      from(table) {
+        const chain = {
+          select() {
+            return {
+              is(col, val) {
+                // monitored_loads — return empty
+                return Promise.resolve({ data: [], error: null });
+              },
+              eq(col, val) {
+                if (table === 'watched_carriers') return Promise.resolve({ data: watchedRows, error: null });
+                if (table === 'monitoring_alerts') return {
+                  eq() { return { eq() { return { limit() { return Promise.resolve({ data: [], error: null }); } } } } },
+                };
+                if (table === 'tenants') return { single() { return Promise.resolve({ data: { email: 'test@example.com' }, error: null }); } };
+                if (table === 'tenant_settings') return { maybeSingle() { return Promise.resolve({ data: null, error: null }); } };
+                return Promise.resolve({ data: [], error: null });
+              },
+            };
+          },
+          update(data) {
+            return { eq(col, val) { updates.push({ table, id: val, data }); return Promise.resolve({ error: null }); } };
+          },
+          insert(data) {
+            inserts.push({ table, data });
+            return Promise.resolve({ error: null });
+          },
+        };
+        return chain;
+      },
+    };
+
+    // Set FMCSA_WEBKEY so runPostRefreshChecks doesn't bail early
+    const origWebKey = process.env.FMCSA_WEBKEY;
+    process.env.FMCSA_WEBKEY = 'test-key';
+
+    // Mock fetch: FMCSA QCMobile + Socrata insurance history
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = function(url) {
+      const u = String(url);
+      // FMCSA QCMobile carrier lookup
+      if (u.includes('mobile.fmcsa.dot.gov') && u.includes('/carriers/')) {
+        if (!fmcsaSnap) return Promise.reject(new Error('FMCSA timeout'));
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ content: { carrier: fmcsaSnap } }),
+        });
+      }
+      // Socrata insurance history (active + historical datasets)
+      if (u.includes('data.transportation.gov/resource/')) {
+        if (socrataError) return Promise.reject(new Error('Socrata timeout'));
+        // Return one active BMC-91X filing if insurerName is set, otherwise empty
+        if (insurerName === undefined) return Promise.reject(new Error('Socrata timeout'));
+        const rows = insurerName
+          ? [{ insurance_company_name: insurerName, policy_no: 'POL-1', effective_date: '2026-01-01', trans_date: '2026-01-01', ins_form_code: 'BMC-91X' }]
+          : [];
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(rows) });
+      }
+      return origFetch(url);
+    };
+
+    return { supa, updates, inserts, restoreFetch: () => { globalThis.fetch = origFetch; if (origWebKey === undefined) delete process.env.FMCSA_WEBKEY; else process.env.FMCSA_WEBKEY = origWebKey; } };
+  }
+
+  // A minimal FMCSA carrier object for the QCMobile snapshot
+  const FMCSA_CARRIER = {
+    legalName: 'TEST CARRIER', dotNumber: '1835635',
+    commonAuthorityStatus: 'A', contractAuthorityStatus: 'NONE', allowedToOperate: 'Y',
+    bipdInsuranceOnFile: 1000, bipdRequiredAmount: 750, bipdInsuranceRequired: 'Y',
+  };
+
+  // PR-1. Baseline: first run (baseline_saved_at null) → saves baseline, no alert
+  results.push(await t('POST-REFRESH: baseline saved on first run, no alert', async () => {
+    const row = { id: 'w1', tenant_id: 'test-brokerage', dot_number: '1835635', carrier_name: 'Test',
+      last_insurer: null, last_authority_status: null, last_fmcsa_liability: null, baseline_saved_at: null, is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: FMCSA_CARRIER, insurerName: 'Great West Casualty',
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    // Should have updated the row with baseline
+    const upd = updates.find(u => u.table === 'watched_carriers' && u.id === 'w1');
+    assert(upd, 'watched_carriers row not updated');
+    assert(upd.data.baseline_saved_at, `baseline_saved_at not set: ${JSON.stringify(upd.data)}`);
+    assert(upd.data.last_insurer === 'Great West Casualty', `last_insurer should be Great West Casualty, got ${upd.data.last_insurer}`);
+    // No alert created
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 0, `expected 0 alerts on baseline, got ${alertInserts.length}`);
+  }));
+
+  // PR-2. Insurer changed → alert fires
+  results.push(await t('POST-REFRESH: insurer change creates alert', async () => {
+    const row = { id: 'w2', tenant_id: 'test-brokerage', dot_number: '1835635', carrier_name: 'Test',
+      last_insurer: 'Old Insurance Co', last_authority_status: 'A/NONE/Y', last_fmcsa_liability: 1000000, baseline_saved_at: '2026-11-01T00:00:00Z', is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: FMCSA_CARRIER, insurerName: 'New Insurance Co',
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 1, `expected 1 alert, got ${alertInserts.length}`);
+    const issues = alertInserts[0].data.issues;
+    assert(issues.some(i => /Old Insurance Co.*New Insurance Co/i.test(i)),
+      `alert should mention insurer change: ${JSON.stringify(issues)}`);
+  }));
+
+  // PR-3. Policy disappears (was insured, now NONE ON FILE) → alert fires
+  results.push(await t('POST-REFRESH: policy disappears (NONE ON FILE) creates alert', async () => {
+    const row = { id: 'w3', tenant_id: 'test-brokerage', dot_number: '1835635', carrier_name: 'Test',
+      last_insurer: 'Great West Casualty', last_authority_status: 'A/NONE/Y', last_fmcsa_liability: 1000000, baseline_saved_at: '2026-11-01T00:00:00Z', is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: FMCSA_CARRIER, insurerName: null,  // no active policy
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 1, `expected 1 alert, got ${alertInserts.length}`);
+    const issues = alertInserts[0].data.issues;
+    assert(issues.some(i => /Great West Casualty.*NONE ON FILE/i.test(i)),
+      `alert should show NONE ON FILE: ${JSON.stringify(issues)}`);
+    // Update should store NONE ON FILE
+    const upd = updates.find(u => u.id === 'w3');
+    assert(upd.data.last_insurer === 'NONE ON FILE', `last_insurer should be NONE ON FILE, got ${upd.data.last_insurer}`);
+  }));
+
+  // PR-4. Socrata timeout → skip insurer, don't overwrite stored value, don't alert
+  results.push(await t('POST-REFRESH: Socrata timeout skips insurer without overwriting', async () => {
+    const row = { id: 'w4', tenant_id: 'test-brokerage', dot_number: '1835635', carrier_name: 'Test',
+      last_insurer: 'Existing Insurer', last_authority_status: 'A/NONE/Y', last_fmcsa_liability: 1000000, baseline_saved_at: '2026-11-01T00:00:00Z', is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: FMCSA_CARRIER, insurerName: undefined,  // timeout
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    // No insurer-change alert
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 0, `expected 0 alerts on timeout, got ${alertInserts.length}`);
+    // last_insurer must NOT be in the update (preserved, not overwritten)
+    const upd = updates.find(u => u.id === 'w4');
+    assert(upd, 'row should still be updated (authority/liability)');
+    assert(!('last_insurer' in upd.data), `last_insurer should not be in update on timeout, got: ${JSON.stringify(upd.data)}`);
+  }));
+
+  // PR-5. Null row graduates after one run (precision-style: all last_* null, baseline_saved_at null)
+  results.push(await t('POST-REFRESH: null-field row graduates from baseline after one run', async () => {
+    const row = { id: 'w5', tenant_id: 'precision-transportation', dot_number: '1835635', carrier_name: 'Test',
+      last_insurer: null, last_authority_status: null, last_fmcsa_liability: null, baseline_saved_at: null, is_active: true };
+    const { supa, updates, inserts, restoreFetch } = makePostRefreshMocks({
+      watchedRows: [row], fmcsaSnap: { ...FMCSA_CARRIER, bipdInsuranceOnFile: null },  // FMCSA returns null liability
+      insurerName: null,  // no active policy
+    });
+    try {
+      await runPostRefreshChecks(supa);
+    } finally { restoreFetch(); }
+    const upd = updates.find(u => u.id === 'w5');
+    assert(upd, 'row must be updated');
+    assert(upd.data.baseline_saved_at, 'baseline_saved_at must be set even with null values');
+    assert(upd.data.last_insurer === 'NONE ON FILE', `last_insurer should be NONE ON FILE, got ${upd.data.last_insurer}`);
+    // No alert on baseline
+    const alertInserts = inserts.filter(i => i.table === 'monitoring_alerts');
+    assert(alertInserts.length === 0, `expected 0 alerts on baseline, got ${alertInserts.length}`);
   }));
 
   return results;
