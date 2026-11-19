@@ -192,12 +192,20 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
     for (const field of (sw.filledFields ?? [])) {
       // OOS rates already set from the winner above; skip SW overwrite
       if (field === 'truckOosPct' || field === 'driverOosPct') continue;
-      // If SAFER won, keep SAFER's inspection count
-      if (useSafer && field === 'inspections24mo') continue;
+      // If SAFER won and has a real inspection count, keep it.
+      // If SAFER's value is blank/null (timeout or parse failure), fall through to SW.
+      if (useSafer && field === 'inspections24mo') {
+        const saferInsp = autoFilled.inspections24mo?.value;
+        if (saferInsp != null && saferInsp !== '') continue;
+      }
       const val = sw[field];
       if (val !== '' && val != null && val !== false) {
         const dateVal = DATE_FIELDS.has(field) ? sanitizeDate(val) : val;
-        if (dateVal !== '') setScalar(field, dateVal, 'saferwatch', 'SaferWatch');
+        // When SW inspections24mo is used because SAFER failed, label it clearly on the cert
+        const label = (field === 'inspections24mo' && useSafer)
+          ? 'SaferWatch (vehicle + driver total, SAFER unavailable)'
+          : 'SaferWatch';
+        if (dateVal !== '') setScalar(field, dateVal, 'saferwatch', label);
       }
     }
 

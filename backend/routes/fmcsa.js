@@ -94,7 +94,7 @@ function extractGrantDate(authorityJson) {
 }
 
 function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
-  const truckInsp = c.vehicleInsp    ?? 0;
+  const truckInsp = c.vehicleInsp    ?? null;
   const truckOos  = c.vehicleOosInsp ?? 0;
   const {
     phone:        saferPhone        = '',
@@ -118,7 +118,8 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     ? parseFloat(saferInsp.driverOosPct).toFixed(2)
     : c.driverOosRate  != null ? parseFloat(c.driverOosRate).toFixed(2)  : '';
 
-  // Vehicle inspection count: SAFER HTML vehicle count; fall back to QCMobile
+  // Vehicle inspection count: SAFER HTML vehicle count; fall back to QCMobile.
+  // null means "data unavailable" — must NOT become "0" (would trigger ghost-carrier REJECT).
   const vehicleInspCount = saferInsp?.vehicleInsp ?? truckInsp;
 
   // FMCSA QCMobile insurance fields — amounts are in $thousands (e.g. "750" = $750,000)
@@ -140,7 +141,7 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
     // SAFER HTML is the authoritative mileage source — QCMobile rarely has these fields.
     mcs150Mileage:        saferMileage?.mileage     != null ? String(saferMileage.mileage)     : (c.mcs150Mileage     != null ? String(c.mcs150Mileage)     : ''),
     mcs150MileageYear:    saferMileage?.mileageYear != null ? String(saferMileage.mileageYear) : (c.mcs150MileageYear != null ? String(c.mcs150MileageYear) : ''),
-    inspections24mo:      String(vehicleInspCount),
+    inspections24mo:      vehicleInspCount != null ? String(vehicleInspCount) : '',
     truckOosPct:          truckOosPctStr,
     driverOosPct:         driverOosPctStr,
     nationalAvgTruckOos:  natTruckOos,
@@ -419,8 +420,8 @@ export function parseSaferInspections(html) {
 
     if (vehicleInsp === null && driverInsp === null) return null;
     return {
-      vehicleInsp:    isNaN(vehicleInsp)    ? 0 : vehicleInsp,
-      driverInsp:     isNaN(driverInsp)     ? 0 : driverInsp,
+      vehicleInsp:    isNaN(vehicleInsp)    ? null : vehicleInsp,
+      driverInsp:     isNaN(driverInsp)     ? null : driverInsp,
       vehicleOosInsp: isNaN(vehicleOosInsp) ? 0 : vehicleOosInsp,
       driverOosInsp:  isNaN(driverOosInsp)  ? 0 : driverOosInsp,
       vehicleOosPct:  isNaN(vehicleOosPct)  ? null : vehicleOosPct,
@@ -478,8 +479,11 @@ async function fetchSaferData(dot) {
     }
   }
 
-  if (!html) return {};
-  return {
+  if (!html) {
+    console.warn(`[SAFER] DOT ${dot} — HTML unavailable, inspection data will be empty`);
+    return {};
+  }
+  const result = {
     phone:        parseSaferPhone(html),
     crashes:      parseSaferCrashes(html),
     oos:          parseSaferOosAverages(html),
@@ -487,6 +491,12 @@ async function fetchSaferData(dot) {
     snapshotDate: parseSaferSnapshotDate(html),
     mileage:      parseSaferMileage(html),
   };
+  if (!result.inspections) {
+    console.warn(`[SAFER] DOT ${dot} — HTML fetched but inspection table could not be parsed`);
+  } else if (result.inspections.vehicleInsp == null) {
+    console.warn(`[SAFER] DOT ${dot} — inspection table parsed but vehicle count is empty/NaN`);
+  }
+  return result;
 }
 
 async function fetchGrantDate(dot, webKey) {

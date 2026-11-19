@@ -379,10 +379,16 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     red.push('Carrier has an active federal Out-of-Service order');
   }
 
-  // Ghost-carrier pattern — applies to ALL carriers regardless of rated status
+  // Ghost-carrier pattern — applies to ALL carriers regardless of rated status.
+  // ONLY fires when inspection data is known (inspKnown=true). Missing/failed
+  // inspection data must never produce a false REJECT.
   const units = parseInt(d.powerUnits, 10);
-  if (!isNaN(units) && inspKnown && units >= 5 && inspCount === 0) {
-    red.push(`Ghost-carrier pattern: ${units} power units with 0 inspections in 24 months`);
+  if (!isNaN(units) && units >= 5) {
+    if (inspKnown && inspCount === 0) {
+      red.push(`Ghost-carrier pattern: ${units} power units with 0 inspections in 24 months`);
+    } else if (!inspKnown) {
+      notes.push(`Ghost-carrier check skipped: inspection data unavailable (${units} power units)`);
+    }
   }
 
   // Unrated carrier with Carrier Assure C/D → hard reject

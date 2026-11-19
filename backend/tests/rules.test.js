@@ -5,7 +5,7 @@ import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/ru
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions, runPostRefreshChecks } from '../lib/monitor.js';
-import { fmcsaMcLookup } from '../routes/fmcsa.js';
+import { fmcsaMcLookup, parseSaferInspections } from '../routes/fmcsa.js';
 import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
@@ -1929,6 +1929,108 @@ export async function runAll() {
     // Authority and liability still saved
     assert(upd.data.last_authority_status, 'authority should still be saved');
     assert(upd.data.last_fmcsa_liability === 750000, `liability should be 750000, got ${upd.data.last_fmcsa_liability}`);
+  }));
+
+  // ── Ghost-carrier: missing inspection data must never REJECT ──────────────
+
+  // Ghost-carrier: SAFER timeout + no SW → "Not reviewed", no REJECT
+  results.push(await t('ghost-carrier: SAFER timeout + no SW → note only, no REJECT', async () => {
+    const d = { ...CLEAN, powerUnits: '10', inspections24mo: null };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict !== 'REJECT',
+      `missing inspections must never REJECT for ghost-carrier (got ${r.verdict})`);
+    assert(r.notes.some(s => /ghost.?carrier.*skipped/i.test(s)),
+      `ghost-carrier skipped note not found: ${r.notes.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // Ghost-carrier: SAFER timeout + no SW (empty string) → same as null
+  results.push(await t('ghost-carrier: inspections24mo empty string → note only, no REJECT', async () => {
+    const d = { ...CLEAN, powerUnits: '8', inspections24mo: '' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict !== 'REJECT',
+      `empty inspections must never REJECT for ghost-carrier (got ${r.verdict})`);
+    assert(r.notes.some(s => /ghost.?carrier.*skipped/i.test(s)),
+      `ghost-carrier skipped note not found: ${r.notes.join('; ')}`);
+  }));
+
+  // Ghost-carrier: SAFER fails + SW has 4 → uses 4, no REJECT
+  results.push(await t('ghost-carrier: SAFER fails but SW has 4 inspections → no REJECT via merge', async () => {
+    // Simulate: FMCSA returns no inspection count, SW returns 4
+    const fmcsa = {
+      filledFields: ['carrierName', 'powerUnits', 'inspections24mo', 'saferSnapshotDate'],
+      carrierName: 'Test Carrier', powerUnits: '10', inspections24mo: '',
+      saferSnapshotDate: '11/01/2026', saferData: {},
+      activeFederalOOS: false, hasBrokerAuthority: false,
+    };
+    const sw = {
+      ok: true,
+      filledFields: ['inspections24mo', 'powerUnits'],
+      inspections24mo: '4', powerUnits: '10',
+      swInspectionsDate: '10/15/2026',
+    };
+    const { merged } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    assert(merged.inspections24mo === '4',
+      `merge should use SW inspections24mo when SAFER is empty, got: ${merged.inspections24mo}`);
+    // Now run rules with the merged data
+    const d = { ...CLEAN, ...merged };
+    const r = runVettingRules(d, CFG);
+    assert(!r.reasons.some(s => /ghost.?carrier/i.test(s)),
+      `ghost-carrier REJECT must not fire when SW has 4 inspections: ${r.reasons.join('; ')}`);
+  }));
+
+  // Ghost-carrier: real 0 from SAFER + 5 units → still REJECT
+  results.push(await t('ghost-carrier: real 0 inspections + 5 units → REJECT', async () => {
+    const d = { ...CLEAN, powerUnits: '5', inspections24mo: '0' };
+    const r = runVettingRules(d, CFG);
+    assert(r.verdict === 'REJECT', `genuine 0 inspections + 5 units must REJECT, got ${r.verdict}`);
+    assert(r.reasons.some(s => /ghost.?carrier/i.test(s)),
+      `ghost-carrier reason not found: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // Ghost-carrier: SAFER returns a real number → unchanged behavior
+  results.push(await t('ghost-carrier: SAFER returns 50 inspections + 10 units → no ghost flag', async () => {
+    const d = { ...CLEAN, powerUnits: '10', inspections24mo: '50' };
+    const r = runVettingRules(d, CFG);
+    assert(!r.reasons.some(s => /ghost.?carrier/i.test(s)),
+      `50 inspections must not trigger ghost-carrier: ${r.reasons.join('; ')}`);
+    assert(!r.notes.some(s => /ghost.?carrier/i.test(s)),
+      `50 inspections must not produce ghost-carrier note: ${r.notes.join('; ')}`);
+  }));
+
+  // mergeResults: SAFER has real inspections24mo → SW value skipped
+  results.push(await t('mergeResults: SAFER has real inspections24mo → SW skipped', () => {
+    const fmcsa = {
+      filledFields: ['inspections24mo', 'saferSnapshotDate'],
+      inspections24mo: '12', saferSnapshotDate: '11/01/2026', saferData: {},
+      activeFederalOOS: false, hasBrokerAuthority: false,
+    };
+    const sw = {
+      ok: true, filledFields: ['inspections24mo'],
+      inspections24mo: '20', swInspectionsDate: '10/15/2026',
+    };
+    const { merged } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    assert(merged.inspections24mo === '12',
+      `SAFER's value should win when present, got: ${merged.inspections24mo}`);
+  }));
+
+  // parseSaferInspections: empty/NaN vehicle count → null, not 0
+  results.push(await t('parseSaferInspections: NaN vehicle count → null not 0', () => {
+    // Build a minimal SAFER HTML table where vehicle column is empty but driver has a value
+    const html = `<TABLE summary="Inspections">
+      <TR><TH SCOPE="ROW">Inspections</TH><TD></TD><TD>5</TD></TR>
+      <TR><TH SCOPE="ROW">Out of Service</TH><TD></TD><TD>1</TD></TR>
+      <TR><TH SCOPE="ROW">Out of Service %</TH><TD></TD><TD>20.0</TD></TR>
+    </TABLE>`;
+    const result = parseSaferInspections(html);
+    assert(result !== null, 'should return a result object when driver column is present');
+    assert(result.vehicleInsp === null,
+      `empty vehicle column should be null, got: ${result.vehicleInsp}`);
+    assert(result.driverInsp === 5,
+      `driver column should be 5, got: ${result.driverInsp}`);
   }));
 
   return results;
