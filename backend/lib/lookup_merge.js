@@ -203,7 +203,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
         const dateVal = DATE_FIELDS.has(field) ? sanitizeDate(val) : val;
         // When SW inspections24mo is used because SAFER failed, label it clearly on the cert
         const label = (field === 'inspections24mo' && useSafer)
-          ? 'SaferWatch (vehicle + driver total, SAFER unavailable)'
+          ? 'SaferWatch (vehicle + driver total)'
           : 'SaferWatch';
         if (dateVal !== '') setScalar(field, dateVal, 'saferwatch', label);
       }

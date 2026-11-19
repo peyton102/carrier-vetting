@@ -446,7 +446,13 @@ export function generateVettingPDF(opts) {
     }
 
     {
-      const inspSrcLabel = d.saferSnapshotDate ? `SAFER (as of ${d.saferSnapshotDate})` : src('inspections24mo');
+      // When inspections came from SaferWatch as a fallback (SAFER failed), show the
+      // SW label on the cert. Otherwise use the SAFER snapshot date or generic source.
+      const inspAutoLabel = (d._autoFilled || {}).inspections24mo?.sourceLabel;
+      const inspFromSwFallback = inspAutoLabel && /SaferWatch/.test(inspAutoLabel);
+      const inspSrcLabel = inspFromSwFallback
+        ? inspAutoLabel
+        : (d.saferSnapshotDate ? `SAFER (as of ${d.saferSnapshotDate})` : src('inspections24mo'));
       const veh = d.inspections24mo       != null && d.inspections24mo       !== '' ? String(d.inspections24mo)       : null;
       const drv = d.driverInspections24mo != null && d.driverInspections24mo !== '' ? String(d.driverInspections24mo) : null;
       const inspDisplay = (veh || drv)

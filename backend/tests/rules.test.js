@@ -1955,7 +1955,7 @@ export async function runAll() {
       `ghost-carrier skipped note not found: ${r.notes.join('; ')}`);
   }));
 
-  // Ghost-carrier: SAFER fails + SW has 4 → uses 4, no REJECT
+  // Ghost-carrier: SAFER fails + SW has 4 → uses 4, no REJECT, cert shows SW label
   results.push(await t('ghost-carrier: SAFER fails but SW has 4 inspections → no REJECT via merge', async () => {
     // Simulate: FMCSA returns no inspection count, SW returns 4
     const fmcsa = {
@@ -1970,14 +1970,22 @@ export async function runAll() {
       inspections24mo: '4', powerUnits: '10',
       swInspectionsDate: '10/15/2026',
     };
-    const { merged } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    const { merged, autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
     assert(merged.inspections24mo === '4',
       `merge should use SW inspections24mo when SAFER is empty, got: ${merged.inspections24mo}`);
+    // Cert label must show SaferWatch source
+    assert(autoFilled.inspections24mo?.sourceLabel?.includes('SaferWatch'),
+      `cert label should mention SaferWatch, got: ${autoFilled.inspections24mo?.sourceLabel}`);
+    assert(autoFilled.inspections24mo.sourceLabel.includes('vehicle + driver total'),
+      `cert label should say "vehicle + driver total", got: ${autoFilled.inspections24mo.sourceLabel}`);
     // Now run rules with the merged data
-    const d = { ...CLEAN, ...merged };
+    const d = { ...CLEAN, ...merged, _autoFilled: autoFilled };
     const r = runVettingRules(d, CFG);
     assert(!r.reasons.some(s => /ghost.?carrier/i.test(s)),
       `ghost-carrier REJECT must not fire when SW has 4 inspections: ${r.reasons.join('; ')}`);
+    // PDF should not crash
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
   // Ghost-carrier: real 0 from SAFER + 5 units → still REJECT
