@@ -82,6 +82,7 @@ const CLEAN = {
   safetyRating:              'Satisfactory',
   powerUnits:                '10',
   inspections24mo:           '50',
+  driverInspections24mo:     '30',
   cleanInspections24mo:      '45',
   truckOosPct:               '5.00',
   driverOosPct:              '2.00',
@@ -1935,7 +1936,7 @@ export async function runAll() {
 
   // Ghost-carrier: SAFER timeout + no SW → "Not reviewed", no REJECT
   results.push(await t('ghost-carrier: SAFER timeout + no SW → note only, no REJECT', async () => {
-    const d = { ...CLEAN, powerUnits: '10', inspections24mo: null };
+    const d = { ...CLEAN, powerUnits: '10', inspections24mo: null, driverInspections24mo: null };
     const r = runVettingRules(d, CFG);
     assert(r.verdict !== 'REJECT',
       `missing inspections must never REJECT for ghost-carrier (got ${r.verdict})`);
@@ -1947,10 +1948,30 @@ export async function runAll() {
 
   // Ghost-carrier: SAFER timeout + no SW (empty string) → same as null
   results.push(await t('ghost-carrier: inspections24mo empty string → note only, no REJECT', async () => {
-    const d = { ...CLEAN, powerUnits: '8', inspections24mo: '' };
+    const d = { ...CLEAN, powerUnits: '8', inspections24mo: '', driverInspections24mo: '' };
     const r = runVettingRules(d, CFG);
     assert(r.verdict !== 'REJECT',
       `empty inspections must never REJECT for ghost-carrier (got ${r.verdict})`);
+    assert(r.notes.some(s => /ghost.?carrier.*skipped/i.test(s)),
+      `ghost-carrier skipped note not found: ${r.notes.join('; ')}`);
+  }));
+
+  // Ghost-carrier: vehicle 0 + driver 4 → no ghost (driver inspections prove activity)
+  results.push(await t('ghost-carrier: vehicle 0 + driver 4 → no ghost REJECT', async () => {
+    const d = { ...CLEAN, powerUnits: '5', inspections24mo: '0', driverInspections24mo: '4' };
+    const r = runVettingRules(d, CFG);
+    assert(!r.reasons.some(s => /ghost.?carrier/i.test(s)),
+      `vehicle 0 + driver 4 must not trigger ghost-carrier: ${r.reasons.join('; ')}`);
+    const pdfErr = await checkPdf(d, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // Ghost-carrier: vehicle 0 + driver unknown → skipped note
+  results.push(await t('ghost-carrier: vehicle 0 + driver unknown → skipped note', async () => {
+    const d = { ...CLEAN, powerUnits: '6', inspections24mo: '0', driverInspections24mo: null };
+    const r = runVettingRules(d, CFG);
+    assert(!r.reasons.some(s => /ghost.?carrier/i.test(s)),
+      `vehicle 0 + driver unknown must not REJECT: ${r.reasons.join('; ')}`);
     assert(r.notes.some(s => /ghost.?carrier.*skipped/i.test(s)),
       `ghost-carrier skipped note not found: ${r.notes.join('; ')}`);
   }));
@@ -1969,10 +1990,14 @@ export async function runAll() {
       filledFields: ['inspections24mo', 'powerUnits'],
       inspections24mo: '4', powerUnits: '10',
       swInspectionsDate: '10/15/2026',
+      inspectDrvUS: 3,
     };
-    const { merged, autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
+    const { merged, autoFilled, serverFields: sf } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null });
     assert(merged.inspections24mo === '4',
       `merge should use SW inspections24mo when SAFER is empty, got: ${merged.inspections24mo}`);
+    // Driver inspections should also fall back to SW
+    assert(sf.driverInspections24mo === '3',
+      `driver inspections should fall back to SW, got: ${sf.driverInspections24mo}`);
     // Cert label must show SaferWatch source
     assert(autoFilled.inspections24mo?.sourceLabel?.includes('SaferWatch'),
       `cert label should mention SaferWatch, got: ${autoFilled.inspections24mo?.sourceLabel}`);
@@ -1988,13 +2013,15 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // Ghost-carrier: real 0 from SAFER + 5 units → still REJECT
-  results.push(await t('ghost-carrier: real 0 inspections + 5 units → REJECT', async () => {
-    const d = { ...CLEAN, powerUnits: '5', inspections24mo: '0' };
+  // Ghost-carrier: both 0 + 5 units → ghost REJECT
+  results.push(await t('ghost-carrier: both 0 inspections + 5 units → REJECT', async () => {
+    const d = { ...CLEAN, powerUnits: '5', inspections24mo: '0', driverInspections24mo: '0' };
     const r = runVettingRules(d, CFG);
-    assert(r.verdict === 'REJECT', `genuine 0 inspections + 5 units must REJECT, got ${r.verdict}`);
+    assert(r.verdict === 'REJECT', `genuine 0/0 inspections + 5 units must REJECT, got ${r.verdict}`);
     assert(r.reasons.some(s => /ghost.?carrier/i.test(s)),
       `ghost-carrier reason not found: ${r.reasons.join('; ')}`);
+    assert(r.reasons.some(s => /0 vehicle and 0 driver/i.test(s)),
+      `reason must mention both vehicle and driver: ${r.reasons.join('; ')}`);
     const pdfErr = await checkPdf(d, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));

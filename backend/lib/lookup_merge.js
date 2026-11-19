@@ -174,10 +174,13 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
   serverFields.driverOosPctAlt    = (altDriverOos != null && altDriverOos !== winDriverOos) ? altDriverOos : '';
   serverFields.driverOosPctAltSrc = (altDriverOos != null && altDriverOos !== winDriverOos) ? oosAltLabel  : '';
 
-  // Driver inspection count from SAFER (for cert display)
+  // Driver inspection count from SAFER (for cert display + ghost-carrier rule).
+  // Falls back to SaferWatch when SAFER is unavailable, same as vehicle inspections.
   const saferDrvInspCount = fmcsa?.saferData?.driverInsp ?? null;
-  if (saferDrvInspCount != null) {
-    serverFields.driverInspections24mo = String(saferDrvInspCount);
+  const swDrvInspCount    = swOk && sw.inspectDrvUS != null ? sw.inspectDrvUS : null;
+  const drvInspCount      = saferDrvInspCount ?? swDrvInspCount;
+  if (drvInspCount != null) {
+    serverFields.driverInspections24mo = String(drvInspCount);
   }
 
   // Winning inspection counts for BASIC gate recomputation

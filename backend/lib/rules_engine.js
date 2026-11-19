@@ -380,13 +380,16 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   }
 
   // Ghost-carrier pattern — applies to ALL carriers regardless of rated status.
-  // ONLY fires when inspection data is known (inspKnown=true). Missing/failed
-  // inspection data must never produce a false REJECT.
-  const units = parseInt(d.powerUnits, 10);
+  // Fires only when BOTH vehicle AND driver inspection counts are known and both
+  // are 0. A carrier with driver inspections but 0 vehicle inspections is operating
+  // (drivers are being inspected) and must not be flagged as a ghost.
+  const units       = parseInt(d.powerUnits, 10);
+  const drvInspCount = parseInt(d.driverInspections24mo, 10);
+  const drvInspKnown = !isNaN(drvInspCount);
   if (!isNaN(units) && units >= 5) {
-    if (inspKnown && inspCount === 0) {
-      red.push(`Ghost-carrier pattern: ${units} power units with 0 inspections in 24 months`);
-    } else if (!inspKnown) {
+    if (inspKnown && drvInspKnown && inspCount === 0 && drvInspCount === 0) {
+      red.push(`Ghost-carrier pattern: ${units} power units with 0 vehicle and 0 driver inspections in 24 months`);
+    } else if (!inspKnown || !drvInspKnown) {
       notes.push(`Ghost-carrier check skipped: inspection data unavailable (${units} power units)`);
     }
   }
