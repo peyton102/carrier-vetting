@@ -433,6 +433,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   // Hard-block (> rejectThreshold) still works because it doesn't use the average.
   if ((avgTruck === null || avgDriver === null) && !isNaN(truckOos) && !isNaN(driverOos)) {
     notes.push('OOS national-average comparison not run (national average data unavailable)');
+  } else if (d.nationalAvgOosCached && avgTruck !== null) {
+    const asOf = d.nationalAvgOosAsOf ? ` as of ${d.nationalAvgOosAsOf}` : '';
+    notes.push(`OOS national averages used from cache (${avgTruck}% / ${avgDriver}%${asOf}) — SAFER was unavailable during this lookup`);
   }
 
   if (truckOosClass === 'hard_block') {

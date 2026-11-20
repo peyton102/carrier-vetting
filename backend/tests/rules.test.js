@@ -2188,5 +2188,63 @@ export async function runAll() {
     assert(r.notes.some(n => /national.average.*unavailable/i.test(n)), 'should have OOS avg note');
   }));
 
+  // #1 cache: cached national OOS averages → yellow flag works, note mentions "cache"
+  results.push(await t('#1 cached OOS averages → yellow flag fires normally, note mentions cache', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:   '10.00',
+      nationalAvgDriverOos:  '4.00',
+      nationalAvgOosAsOf:    '10/01/2026',
+      nationalAvgOosCached:  true,
+      truckOosPct:           '25.00',  // above 10% × 1.5 = 15% yellow threshold
+      driverOosPct:          '2.00',
+    };
+    const r = runVettingRules(data, CFG);
+    // Should REJECT due to truck OOS > 20% hard block
+    assert(r.verdict === 'REJECT', `should REJECT (truck OOS 25% > 20% hard block), got ${r.verdict}`);
+    const cacheNote = r.notes.some(n => /cache/i.test(n));
+    assert(cacheNote, `should have note mentioning cache, got notes: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  results.push(await t('#1 cached OOS averages → HOLD when above yellow threshold', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:   '10.00',
+      nationalAvgDriverOos:  '4.00',
+      nationalAvgOosAsOf:    '10/01/2026',
+      nationalAvgOosCached:  true,
+      truckOosPct:           '20.00',  // exactly at 10% × 2 = 20% yellow threshold (hard block is >20%)
+      driverOosPct:          '2.00',
+      truckInspections:      '10',
+      driverInspections:     '10',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'HOLD', `should HOLD (yellow flag), got ${r.verdict}`);
+    assert(r.reasons.some(w => /truck OOS/i.test(w)), `should have truck OOS reason, got reasons: ${JSON.stringify(r.reasons)}`);
+    const cacheNote = r.notes.some(n => /cache/i.test(n) && /10%.*4%/i.test(n));
+    assert(cacheNote, `should have note with cached percentages, got notes: ${JSON.stringify(r.notes)}`);
+  }));
+
+  results.push(await t('#1 cached OOS averages without date → note says "cached" without date', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:   '10.00',
+      nationalAvgDriverOos:  '4.00',
+      nationalAvgOosAsOf:    '',
+      nationalAvgOosCached:  true,
+      truckOosPct:           '5.00',
+      driverOosPct:          '2.00',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const cacheNote = r.notes.some(n => /cache/i.test(n));
+    assert(cacheNote, `should have cache note, got notes: ${JSON.stringify(r.notes)}`);
+    // Should NOT have the "data unavailable" note since averages were filled from cache
+    const unavailNote = r.notes.some(n => /national average data unavailable/i.test(n));
+    assert(!unavailNote, 'should NOT have unavailable note when cached averages are present');
+  }));
+
   return results;
 }

@@ -295,6 +295,8 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
 
   // Propagate source errors so the rules engine and PDF can note unavailable data.
   serverFields.sourceErrors      = fmcsa?.sourceErrors ?? {};
+  // Flag when national averages came from cache instead of live SAFER HTML.
+  serverFields.nationalAvgOosCached = !!(fmcsa?.nationalAvgOosCached);
 
   // ── Insurance ──────────────────────────────────────────────────────────────
   if (insurance && !insurance.notReviewed) {
@@ -487,7 +489,8 @@ export function applyToSubmission(savedLookup, browserBody) {
   // Apply OOS display metadata from serverFields
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
                    'driverInspections24mo','_basicSufficiency',
-                   'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures']) {
+                   'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures',
+                   'nationalAvgOosCached']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
 

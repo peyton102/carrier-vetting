@@ -68,6 +68,43 @@ router.post('/', requireActive, async (req, res, next) => {
       return res.status(400).json({ error: 'Could not resolve a DOT number from the lookup' });
     }
 
+    // ── 1b. OOS national-average cache ─────────────────────────────────────────
+    // These values change monthly; cache them so a SAFER outage doesn't silently
+    // disable the OOS yellow-flag check for every lookup.
+    if (fmcsa && !fmcsaCannotVerify) {
+      const hasAvg = fmcsa.nationalAvgTruckOos && fmcsa.nationalAvgDriverOos;
+      if (hasAvg) {
+        // Write cache (fire-and-forget)
+        getSupabase().from('oos_national_averages_cache').upsert({
+          id:         'current',
+          truck_avg:  parseFloat(fmcsa.nationalAvgTruckOos),
+          driver_avg: parseFloat(fmcsa.nationalAvgDriverOos),
+          as_of:      fmcsa.nationalAvgOosAsOf || null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' })
+          .then(({ error }) => { if (error) console.warn('[LOOKUP] OOS avg cache write failed:', error.message); })
+          .catch(e => console.warn('[LOOKUP] OOS avg cache write exception:', e.message));
+      } else if (fmcsa.sourceErrors?.safer) {
+        // SAFER failed — try to fill from cache
+        try {
+          const { data: cached } = await getSupabase()
+            .from('oos_national_averages_cache')
+            .select('truck_avg, driver_avg, as_of')
+            .eq('id', 'current')
+            .maybeSingle();
+          if (cached) {
+            fmcsa.nationalAvgTruckOos  = String(cached.truck_avg);
+            fmcsa.nationalAvgDriverOos = String(cached.driver_avg);
+            fmcsa.nationalAvgOosAsOf   = cached.as_of || '';
+            fmcsa.nationalAvgOosCached = true;
+            console.log(`[LOOKUP] OOS national averages filled from cache (as of ${cached.as_of})`);
+          }
+        } catch (e) {
+          console.warn('[LOOKUP] OOS avg cache read failed:', e.message);
+        }
+      }
+    }
+
     // ── 2. SaferWatch + insurance + chameleon in parallel ─────────────────────
     // Chameleon is capped at 12s so a runaway Socrata call never blocks /run.
     const chameleonCapped = Promise.race([

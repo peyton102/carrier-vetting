@@ -511,7 +511,8 @@ export function generateVettingPDF(opts) {
       doc.moveDown(0.15);
     }
 
-    const oosAsOf = d.nationalAvgOosAsOf ? ` (as of ${d.nationalAvgOosAsOf})` : '';
+    const cachedTag = d.nationalAvgOosCached ? ', cached' : '';
+    const oosAsOf = d.nationalAvgOosAsOf ? ` (as of ${d.nationalAvgOosAsOf}${cachedTag})` : (cachedTag ? ' (cached)' : '');
     dataRow(doc, L, W, `Natl Avg Truck OOS %${oosAsOf}`,  natAvgTruck  != null ? `${natAvgTruck.toFixed(2)}%`  : null);
     dataRow(doc, L, W, `Natl Avg Driver OOS %${oosAsOf}`, natAvgDriver != null ? `${natAvgDriver.toFixed(2)}%` : null);
 
