@@ -231,6 +231,19 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const yellow = [];
   const notes  = [];
 
+  // ── Source availability notes ─────────────────────────────────────────────
+  const srcErr = d.sourceErrors ?? {};
+  if (srcErr.safer) {
+    notes.push('SAFER HTML was unavailable during lookup — phone, crash data, national OOS averages, and mileage were not reviewed');
+  }
+  if (srcErr.authorityGrantDate) {
+    notes.push('Authority grant date could not be retrieved — authority age not reviewed');
+  }
+  const srcFails = d.lookupSourceFailures ?? [];
+  for (const src of srcFails) {
+    notes.push(`${src} was unavailable during lookup — ${src}-sourced fields were not reviewed`);
+  }
+
   // ── Pre-flight: inspection volume + BASIC data availability ─────────────────
   const inspCount = parseInt(d.inspections24mo, 10);
   const inspKnown = !isNaN(inspCount);
@@ -332,6 +345,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
     const fmcsaOnFile   = d.fmcsaLiabilityOnFile;
     const fmcsaRequired = d.fmcsaLiabilityRequired;
     const fmcsaIsReq    = (d.fmcsaLiabilityIsRequired ?? '').toUpperCase();
+    if (fmcsaIsReq !== 'Y' && fmcsaIsReq !== 'N' && fmcsaOnFile == null) {
+      notes.push('FMCSA live liability check not run (data unavailable)');
+    }
     if (fmcsaIsReq === 'Y' && fmcsaOnFile != null) {
       const liabOnFile = parseFloat(fmcsaOnFile);
       const liabReq    = parseFloat(fmcsaRequired) || 0;
@@ -402,14 +418,22 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   // OOS rate classification — uses classifyOos() so rule and cert label always use the same >= comparison
   const maxTruck        = parseFloat(cfg.oosMaxTruck)        || DEFAULT_SETTINGS.oosMaxTruck;
   const hardBlockDriver = parseFloat(cfg.oosHardBlockDriver) || 7;
-  const avgTruck  = parseFloat(d.nationalAvgTruckOos)  || 0;
-  const avgDriver = parseFloat(d.nationalAvgDriverOos) || 0;
+  const _rawAvgTruck  = parseFloat(d.nationalAvgTruckOos);
+  const _rawAvgDriver = parseFloat(d.nationalAvgDriverOos);
+  const avgTruck  = isNaN(_rawAvgTruck)  ? null : _rawAvgTruck;
+  const avgDriver = isNaN(_rawAvgDriver) ? null : _rawAvgDriver;
   const mult      = parseFloat(cfg.oosRateMultiplier)  || 2;
   const truckOos  = parseFloat(d.truckOosPct);
   const driverOos = parseFloat(d.driverOosPct);
 
-  const truckOosClass  = classifyOos(truckOos,  avgTruck,  mult, maxTruck);
-  const driverOosClass = classifyOos(driverOos, avgDriver, mult, hardBlockDriver);
+  const truckOosClass  = classifyOos(truckOos,  avgTruck ?? 0,  mult, maxTruck);
+  const driverOosClass = classifyOos(driverOos, avgDriver ?? 0, mult, hardBlockDriver);
+
+  // When national averages are unavailable, the yellow flag (>= natAvg * mult) cannot fire.
+  // Hard-block (> rejectThreshold) still works because it doesn't use the average.
+  if ((avgTruck === null || avgDriver === null) && !isNaN(truckOos) && !isNaN(driverOos)) {
+    notes.push('OOS national-average comparison not run (national average data unavailable)');
+  }
 
   if (truckOosClass === 'hard_block') {
     red.push(`Vehicle OOS rate ${truckOos}% exceeds the ${maxTruck}% maximum — automatic disqualification, no override`);

@@ -93,7 +93,7 @@ function extractGrantDate(authorityJson) {
   return dates[0].toISOString().slice(0, 10);
 }
 
-function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
+function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}, sourceErrors = {}) {
   const truckInsp = c.vehicleInsp    ?? null;
   const truckOos  = c.vehicleOosInsp ?? 0;
   const {
@@ -217,6 +217,7 @@ function buildPayload(c, dot, docketJson, authorityGrantDate, saferData = {}) {
       vehicleOosPct:  saferInsp?.vehicleOosPct  ?? null,
       driverOosPct:   saferInsp?.driverOosPct   ?? null,
     },
+    sourceErrors,
   };
 }
 
@@ -481,7 +482,7 @@ async function fetchSaferData(dot) {
 
   if (!html) {
     console.warn(`[SAFER] DOT ${dot} — HTML unavailable, inspection data will be empty`);
-    return {};
+    return { _saferUnavailable: true };
   }
   const result = {
     phone:        parseSaferPhone(html),
@@ -505,10 +506,10 @@ async function fetchGrantDate(dot, webKey) {
     const r = await fetchFmcsa(fmcsaUrl(`/carriers/${dot}/authority`, webKey));
     const result = r.ok ? extractGrantDate(await r.json()) : '';
     console.log(`[TIMING][FMCSA] QCMobile authority (DOT ${dot}): ${ms(t)}`);
-    return result;
-  } catch (_) {
-    console.log(`[TIMING][FMCSA] QCMobile authority (DOT ${dot}): ${ms(t)} (failed)`);
-    return '';
+    return { date: result, error: null };
+  } catch (e) {
+    console.error(`[FMCSA] Authority fetch failed for DOT ${dot} (${ms(t)}): ${e.message}`);
+    return { date: '', error: e.message };
   }
 }
 
@@ -535,13 +536,16 @@ export async function fmcsaDotLookup(dot, webKey) {
   const docketJson = docketRes.ok ? await docketRes.json() : null;
 
   const tWave2 = Date.now();
-  const [authorityGrantDate, saferData] = await Promise.all([
+  const [grantResult, saferData] = await Promise.all([
     fetchGrantDate(dot, webKey),
     fetchSaferData(dot),
   ]);
   console.log(`[TIMING][FMCSA] DOT ${dot}: wave 2 (authority+SAFER parallel): ${ms(tWave2)}`);
   console.log(`[TIMING][FMCSA] DOT ${dot}: total: ${ms(tTotal)}`);
-  return buildPayload(c, dot, docketJson, authorityGrantDate, saferData);
+  const sourceErrors = {};
+  if (grantResult.error) sourceErrors.authorityGrantDate = grantResult.error;
+  if (saferData._saferUnavailable) sourceErrors.safer = 'SAFER HTML unavailable';
+  return buildPayload(c, dot, docketJson, grantResult.date, saferData, sourceErrors);
 }
 
 export async function fmcsaMcLookup(mc, webKey) {
@@ -563,12 +567,15 @@ export async function fmcsaMcLookup(mc, webKey) {
   }
 
   const dot = String(c.dotNumber);
-  const [docketsRes, authorityGrantDate, saferData] = await Promise.all([
+  const [docketsRes, grantResult, saferData] = await Promise.all([
     fetchFmcsa(fmcsaUrl(`/carriers/${dot}/docket-numbers`, webKey)).then(r => r.ok ? r.json() : null),
     fetchGrantDate(dot, webKey),
     fetchSaferData(dot),
   ]);
-  return buildPayload(c, dot, docketsRes, authorityGrantDate, saferData);
+  const sourceErrors = {};
+  if (grantResult.error) sourceErrors.authorityGrantDate = grantResult.error;
+  if (saferData._saferUnavailable) sourceErrors.safer = 'SAFER HTML unavailable';
+  return buildPayload(c, dot, docketsRes, grantResult.date, saferData, sourceErrors);
 }
 
 export { getWebKey };
@@ -626,12 +633,15 @@ router.get('/:dot', async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'FMCSA returned no carrier record for that DOT' });
 
     const docketJson = docketRes.ok ? await docketRes.json() : null;
-    const [authorityGrantDate, saferData] = await Promise.all([
+    const [grantResult, saferData] = await Promise.all([
       fetchGrantDate(dot, webKey),
       fetchSaferData(dot),
     ]);
+    const sourceErrors = {};
+    if (grantResult.error) sourceErrors.authorityGrantDate = grantResult.error;
+    if (saferData._saferUnavailable) sourceErrors.safer = 'SAFER HTML unavailable';
 
-    res.json(buildPayload(c, dot, docketJson, authorityGrantDate, saferData));
+    res.json(buildPayload(c, dot, docketJson, grantResult.date, saferData, sourceErrors));
   } catch (e) {
     if (isNetworkError(e)) {
       return res.status(503).json({ cannotVerify: true, lastAttemptAt: new Date().toISOString(), error: e.message });

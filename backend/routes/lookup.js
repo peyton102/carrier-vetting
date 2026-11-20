@@ -76,11 +76,17 @@ router.post('/', requireActive, async (req, res, next) => {
         setTimeout(() => resolve({ notReviewed: true, timedOut: true }), CHAMELEON_CAP_MS)
       ),
     ]);
-    const [sw, insurance, chameleon] = await Promise.allSettled([
+    const sourceNames = ['SaferWatch', 'Insurance', 'Chameleon'];
+    const settled = await Promise.allSettled([
       swLookup(resolvedDot, 'dot', tenantSlug),
       insuranceLookup(resolvedDot, getSupabase()),
       chameleonCapped,
-    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+    ]);
+    const [sw, insurance, chameleon] = settled.map((r, i) => {
+      if (r.status === 'fulfilled') return r.value;
+      console.error(`[LOOKUP] ${sourceNames[i]} lookup failed for DOT ${resolvedDot}: ${r.reason?.message ?? r.reason}`);
+      return null;
+    });
 
     // ── 3. Merge results (server-side applyLookupResults equivalent) ──────────
     const { autoFilled, fieldSources, serverFields } = mergeResults({
@@ -89,6 +95,13 @@ router.post('/', requireActive, async (req, res, next) => {
       insurance,
       chameleon,
     });
+
+    // Track which secondary sources failed entirely (Promise rejected, not just empty data).
+    const lookupSourceFailures = [];
+    settled.forEach((r, i) => {
+      if (r.status === 'rejected') lookupSourceFailures.push(sourceNames[i]);
+    });
+    if (lookupSourceFailures.length) serverFields.lookupSourceFailures = lookupSourceFailures;
 
     // ── 4. Save to carrier_lookups ────────────────────────────────────────────
     const lookupId = randomUUID();

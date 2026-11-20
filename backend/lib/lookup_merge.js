@@ -293,6 +293,9 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
   serverFields.winVehInsp        = winVehInsp ?? null;
   serverFields.winDrvInsp        = winDrvInsp ?? null;
 
+  // Propagate source errors so the rules engine and PDF can note unavailable data.
+  serverFields.sourceErrors      = fmcsa?.sourceErrors ?? {};
+
   // ── Insurance ──────────────────────────────────────────────────────────────
   if (insurance && !insurance.notReviewed) {
     const pending = insurance.bipdCancelPending ?? false;
@@ -484,7 +487,7 @@ export function applyToSubmission(savedLookup, browserBody) {
   // Apply OOS display metadata from serverFields
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
                    'driverInspections24mo','_basicSufficiency',
-                   'insuranceHistoryNotReviewed']) {
+                   'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
 

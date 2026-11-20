@@ -2068,5 +2068,125 @@ export async function runAll() {
       `driver column should be 5, got: ${result.driverInsp}`);
   }));
 
+  // ── Batch 1 audit fixes: missing data → note, never silent skip ───────────
+
+  // #1: National OOS averages missing → note, yellow flag disabled, hard-block still works
+  results.push(await t('#1 missing national OOS averages → note, no yellow flag, hard-block still fires', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:  '',    // unavailable
+      nationalAvgDriverOos: '',    // unavailable
+      truckOosPct:          '15.00',
+      driverOosPct:         '5.00',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const noteFound = r.notes.some(n => /national.average.*unavailable/i.test(n));
+    assert(noteFound, `should have note about OOS national average, got notes: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  results.push(await t('#1 missing national OOS averages → hard-block still fires above max', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:  '',
+      nationalAvgDriverOos: '',
+      truckOosPct:          '25.00',  // above 20% max
+      driverOosPct:         '2.00',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `should REJECT, got ${r.verdict}`);
+    assert(r.reasons.some(s => /exceeds.*20%/i.test(s)), 'should mention truck OOS exceeds max');
+  }));
+
+  results.push(await t('#1 national OOS averages present → no note', async () => {
+    const r = runVettingRules(CLEAN, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const noteFound = r.notes.some(n => /national.average.*unavailable/i.test(n));
+    assert(!noteFound, 'should NOT have note when averages are present');
+  }));
+
+  // #7: fmcsaLiabilityIsRequired missing → note
+  results.push(await t('#7 fmcsaLiabilityIsRequired missing → note, no silent skip', async () => {
+    const data = { ...CLEAN, fmcsaLiabilityIsRequired: undefined, fmcsaLiabilityOnFile: undefined };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const noteFound = r.notes.some(n => /FMCSA live liability check not run/i.test(n));
+    assert(noteFound, `should have note about liability check, got notes: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  results.push(await t('#7 fmcsaLiabilityIsRequired=Y → no note', async () => {
+    const data = { ...CLEAN, fmcsaLiabilityIsRequired: 'Y', fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000 };
+    const r = runVettingRules(data, CFG);
+    const noteFound = r.notes.some(n => /FMCSA live liability check not run/i.test(n));
+    assert(!noteFound, 'should NOT have liability-not-run note when isReq=Y');
+  }));
+
+  // #16: SAFER unavailable → sourceErrors.safer → note
+  results.push(await t('#16 SAFER unavailable → note about SAFER data', async () => {
+    const data = { ...CLEAN, sourceErrors: { safer: 'SAFER HTML unavailable' } };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const noteFound = r.notes.some(n => /SAFER HTML was unavailable/i.test(n));
+    assert(noteFound, `should have SAFER unavailable note, got notes: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  // #15: authority grant date fetch fails → sourceErrors.authorityGrantDate → note
+  results.push(await t('#15 authority grant date fetch fails → note about authority age', async () => {
+    const data = {
+      ...CLEAN,
+      authorityGrantDate: '',  // empty because fetch failed
+      sourceErrors: { authorityGrantDate: 'FMCSA authority timeout' },
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE (note only, not HOLD), got ${r.verdict}`);
+    const noteFound = r.notes.some(n => /authority.*grant.*date.*not reviewed/i.test(n));
+    assert(noteFound, `should have authority-age note, got notes: ${JSON.stringify(r.notes)}`);
+    // Authority age rules must NOT fire with no grant date
+    const authHold = r.reasons?.some(s => /authority age/i.test(s));
+    assert(!authHold, 'authority age rule should not fire when grant date unknown');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  // #17: lookup source failures → notes
+  results.push(await t('#17 lookup source failures → notes for each failed source', async () => {
+    const data = { ...CLEAN, lookupSourceFailures: ['SaferWatch', 'Insurance'] };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    const swNote = r.notes.some(n => /SaferWatch was unavailable/i.test(n));
+    assert(swNote, `should have SaferWatch unavailable note, got: ${JSON.stringify(r.notes)}`);
+    const insNote = r.notes.some(n => /Insurance was unavailable/i.test(n));
+    assert(insNote, `should have Insurance unavailable note, got: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  results.push(await t('#17 no lookup source failures → no notes from that path', async () => {
+    const data = { ...CLEAN };
+    const r = runVettingRules(data, CFG);
+    const anyFailNote = r.notes.some(n => /was unavailable during lookup/i.test(n));
+    assert(!anyFailNote, 'should NOT have source-failure notes when all sources succeeded');
+  }));
+
+  // Combined: SAFER unavailable + missing national averages → both notes, verdict unchanged
+  results.push(await t('combined SAFER unavail + missing OOS averages → APPROVE with both notes', async () => {
+    const data = {
+      ...CLEAN,
+      nationalAvgTruckOos:  '',
+      nationalAvgDriverOos: '',
+      sourceErrors: { safer: 'SAFER HTML unavailable' },
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'APPROVE', `should APPROVE, got ${r.verdict}`);
+    assert(r.notes.some(n => /SAFER HTML was unavailable/i.test(n)), 'should have SAFER note');
+    assert(r.notes.some(n => /national.average.*unavailable/i.test(n)), 'should have OOS avg note');
+  }));
+
   return results;
 }
