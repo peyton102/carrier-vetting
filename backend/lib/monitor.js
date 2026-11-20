@@ -577,7 +577,7 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
-      const sharedSwTenants = (process.env.SAFERWATCH_SHARED_TENANTS || '')
+      const envSwTenants = (process.env.SW_ENV_TENANTS || '')
         .split(',').map(s => s.trim()).filter(Boolean);
 
       const [tenantRow, credRow] = await Promise.all([
@@ -589,12 +589,12 @@ export async function runMonitoringCheck(supabase, tenantId = null) {
 
       tenantEmail = tenantRow.data?.email ?? null;
       webKey      = process.env.FMCSA_WEBKEY || null;
-      const isShared = sharedSwTenants.includes(tid);
+      const isEnvTenant = envSwTenants.includes(tid);
       swKeys = {
         serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)
-                     : (isShared ? process.env.SAFERWATCH_SERVICE_KEY  : null),
+                     : (isEnvTenant ? process.env.SAFERWATCH_SERVICE_KEY  : null),
         customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key)
-                     : (isShared ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
+                     : (isEnvTenant ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
       };
     } catch (e) {
       console.warn(`[MONITOR] Could not fetch data for tenant ${tid}: ${e.message}`);
@@ -856,7 +856,7 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
     try {
       [settings] = await Promise.all([fetchSettings(tid)]);
 
-      const sharedSwTenants = (process.env.SAFERWATCH_SHARED_TENANTS || '')
+      const envSwTenants = (process.env.SW_ENV_TENANTS || '')
         .split(',').map(s => s.trim()).filter(Boolean);
 
       const [tenantRow, credRow] = await Promise.all([
@@ -868,12 +868,12 @@ export async function runWatchedCarriersCheck(supabase, tenantId = null) {
 
       tenantEmail = tenantRow.data?.email ?? null;
       webKey      = process.env.FMCSA_WEBKEY || null;
-      const isShared = sharedSwTenants.includes(tid);
+      const isEnvTenant = envSwTenants.includes(tid);
       swKeys = {
         serviceKey:  credRow.data?.sw_service_key  ? decrypt(credRow.data.sw_service_key)
-                     : (isShared ? process.env.SAFERWATCH_SERVICE_KEY  : null),
+                     : (isEnvTenant ? process.env.SAFERWATCH_SERVICE_KEY  : null),
         customerKey: credRow.data?.sw_customer_key ? decrypt(credRow.data.sw_customer_key)
-                     : (isShared ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
+                     : (isEnvTenant ? process.env.SAFERWATCH_CUSTOMER_KEY : null),
       };
     } catch (e) {
       console.warn(`[MONITOR:WATCH] Could not fetch data for tenant ${tid}: ${e.message}`);

@@ -232,6 +232,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   const notes  = [];
 
   // ── Source availability notes ─────────────────────────────────────────────
+  if (d.swNotConnected) {
+    notes.push('SaferWatch not connected — BASIC scores, cargo insurance, and drug/alcohol data were not reviewed');
+  }
   const srcErr = d.sourceErrors ?? {};
   if (srcErr.safer) {
     notes.push('SAFER HTML was unavailable during lookup — phone, crash data, national OOS averages, and mileage were not reviewed');

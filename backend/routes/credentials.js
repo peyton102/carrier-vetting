@@ -1,7 +1,7 @@
 // ── Per-tenant credential management ─────────────────────────────────────────
 // SaferWatch keys are stored encrypted per-tenant in tenant_credentials.
-// Tenants listed in SAFERWATCH_SHARED_TENANTS (comma-separated env var) may
-// fall back to the shared operator keys from .env.
+// Tenants listed in SW_ENV_TENANTS (comma-separated env var) may use the
+// shared operator keys from .env. All others need their own keys or get no SW.
 // FMCSA uses a single shared key (FMCSA_WEBKEY) — no per-tenant FMCSA config.
 
 import express from 'express';
@@ -16,17 +16,18 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
-function isSharedTenant(slug) {
-  return (process.env.SAFERWATCH_SHARED_TENANTS || '')
+function isEnvTenant(slug) {
+  return (process.env.SW_ENV_TENANTS || '')
     .split(',').map(s => s.trim()).filter(Boolean).includes(slug);
 }
 
 // ── GET /api/credentials/saferwatch ───────────────────────────────────────────
-// Returns { configured, configuredAt, shared? }.
-// Exempt tenants always return configured:true (they use the shared env keys).
+// Returns { configured, configuredAt, shared?, skipped? }.
+// Env-listed tenants always return configured:true (they use the env keys).
+// Tenants with a row in tenant_credentials but no keys have skipped onboarding.
 router.get('/saferwatch', async (req, res, next) => {
   try {
-    if (isSharedTenant(req.auth.tenant)) {
+    if (isEnvTenant(req.auth.tenant)) {
       return res.json({ configured: true, configuredAt: null, shared: true });
     }
 
@@ -36,9 +37,14 @@ router.get('/saferwatch', async (req, res, next) => {
       .eq('tenant_slug', req.auth.tenant)
       .maybeSingle();
 
+    const configured = !!(data?.sw_service_key);
+    // Row exists but no key → tenant explicitly skipped SW setup
+    const skipped    = !!data && !data.sw_service_key;
+
     res.json({
-      configured:   !!(data?.sw_service_key),
+      configured,
       configuredAt: data?.sw_configured_at ?? null,
+      skipped,
     });
   } catch (e) { next(e); }
 });
@@ -63,6 +69,23 @@ router.put('/saferwatch', async (req, res, next) => {
 
     if (error) throw error;
     res.json({ ok: true, configured: true, configuredAt: now });
+  } catch (e) { next(e); }
+});
+
+// ── POST /api/credentials/saferwatch/skip ─────────────────────────────────────
+// Creates a tenant_credentials row with no keys — marks onboarding as skipped.
+// The tenant can add keys later from Settings.
+router.post('/saferwatch/skip', async (req, res, next) => {
+  try {
+    const { error } = await getSupabase()
+      .from('tenant_credentials')
+      .upsert({
+        tenant_slug: req.auth.tenant,
+        updated_at:  new Date().toISOString(),
+      }, { onConflict: 'tenant_slug', ignoreDuplicates: false });
+
+    if (error) throw error;
+    res.json({ ok: true, skipped: true });
   } catch (e) { next(e); }
 });
 

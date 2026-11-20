@@ -284,6 +284,24 @@ function SaferwatchOnboarding({ onDone }) {
         <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 14, marginBottom: 0 }}>
           Test the connection first, then save to continue.
         </p>
+        <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 20, paddingTop: 16 }}>
+          <button
+            onClick={async () => {
+              try {
+                await fetch('/api/credentials/saferwatch/skip', { method: 'POST' });
+              } catch { /* skip endpoint is best-effort */ }
+              onDone();
+            }}
+            style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 13,
+                     cursor: 'pointer', fontFamily: 'inherit', padding: 0, textDecoration: 'underline' }}
+          >
+            Skip, I don't use SaferWatch
+          </button>
+          <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6, marginBottom: 0 }}>
+            You can still vet carriers using FMCSA data. BASIC scores, cargo insurance, and drug/alcohol
+            data won't be available. You can add SaferWatch keys later in Settings.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -317,7 +335,7 @@ export default function App() {
     if (user.isCanceled) { setSwReady(true); return; }
     fetch('/api/credentials/saferwatch')
       .then(r => r.ok ? r.json() : null)
-      .then(d => setSwReady(d?.configured === true))
+      .then(d => setSwReady(d?.configured === true || d?.skipped === true))
       .catch(() => setSwReady(false));
   }, [user]);
 

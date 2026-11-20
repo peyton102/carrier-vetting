@@ -176,6 +176,17 @@ export function generateVettingPDF(opts) {
     dataRow(doc, L, W, 'MC Number (display only)',     d.mcNumber);
     dataRow(doc, L, W, `Times used by ${name}`,        String(timesUsed));
 
+    // ── SaferWatch not connected banner ──────────────────────────────────────
+    if (d.swNotConnected) {
+      doc.moveDown(0.3);
+      const swBannerY = doc.y;
+      doc.rect(L, swBannerY, W, 20).fill('#fef3c7');
+      doc.fontSize(8).font('Helvetica-Bold').fillColor(C.yellow)
+         .text('SaferWatch: not connected — BASIC scores, cargo insurance, and drug/alcohol data not available for this lookup',
+               L + 6, swBannerY + 6, { width: W - 12, align: 'center' });
+      doc.y = swBannerY + 24;
+    }
+
     doc.moveDown(0.6);
 
     // ── Verdict block ─────────────────────────────────────────────────────────
@@ -237,10 +248,16 @@ export function generateVettingPDF(opts) {
       dataRow(doc, L, W, 'Auto Liability Expiration', null);
     }
 
-    dataRow(doc, L, W, `Cargo Insurance (min $${fmtMoney(cfg.cargoMin)})`,
-      d.cargoInsurance != null && d.cargoInsurance !== ''
-        ? `$${Number(d.cargoInsurance).toLocaleString('en-US')}` : null,
-      src('cargoInsurance'));
+    const cargoVal = d.cargoInsurance != null && d.cargoInsurance !== ''
+      ? `$${Number(d.cargoInsurance).toLocaleString('en-US')}`
+      : null;
+    if (d.swNotConnected && cargoVal == null) {
+      _twoColRow(doc, L, W,
+        'Helvetica-Bold', C.darkgray, `Cargo Insurance (min $${fmtMoney(cfg.cargoMin)}):`,
+        'Helvetica-Oblique', C.gray, 'Not reviewed (SaferWatch not connected)');
+    } else {
+      dataRow(doc, L, W, `Cargo Insurance (min $${fmtMoney(cfg.cargoMin)})`, cargoVal, src('cargoInsurance'));
+    }
     autoFilledNote(doc, L, W, d, 'cargoInsurance');
     if (d.cargoExpiration) {
       const expDays = daysUntilExpiry(d.cargoExpiration);
@@ -283,41 +300,57 @@ export function generateVettingPDF(opts) {
     // Drug/alcohol row — shows source tag (auto-filled vs dispatcher-answered)
     {
       const isNull = d.drugAlcoholViolation === null || d.drugAlcoholViolation === undefined;
-      const isYes  = d.drugAlcoholViolation === true || d.drugAlcoholViolation === 'true';
-      const drugSrc = isNull
-        ? null
-        : (d.drugAlcoholSource || `Answered by ${d.dispatcher || 'dispatcher'}`);
-      drugAlcoholRow(doc, L, W, d.drugAlcoholViolation, drugSrc);
+      if (d.swNotConnected && isNull) {
+        _twoColRow(doc, L, W,
+          'Helvetica-Bold', C.darkgray, 'Drug/Alcohol Violation (24mo):',
+          'Helvetica-Oblique', C.gray, 'Not reviewed (SaferWatch not connected)');
+      } else {
+        const drugSrc = isNull
+          ? null
+          : (d.drugAlcoholSource || `Answered by ${d.dispatcher || 'dispatcher'}`);
+        drugAlcoholRow(doc, L, W, d.drugAlcoholViolation, drugSrc);
+      }
     }
 
+    // Helper: render BASIC row with "SaferWatch not connected" when SW absent and no data
+    const swNcBasic = (label, val, threshold, srcLabel, zeroNote) => {
+      if (d.swNotConnected && (val == null || val === '')) {
+        _twoColRow(doc, L, W,
+          'Helvetica-Bold', C.darkgray, `${label}:`,
+          'Helvetica-Oblique', C.gray, 'Not reviewed (SaferWatch not connected)');
+      } else {
+        basicRow(doc, L, W, label, val, threshold, srcLabel, zeroNote);
+      }
+    };
+
     const bs = d._basicSufficiency || {};
-    basicRow(doc, L, W,
+    swNcBasic(
       `Unsafe Driving BASIC (${cfg.basicUnsafeDrivingAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicUnsafeDrivingThreshold}%)`,
       d.unsafeDrivingBasic, cfg.basicUnsafeDrivingThreshold, src('unsafeDrivingBasic'),
       bs.unsafeDriving === 'ok' && parseFloat(d.unsafeDrivingBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'unsafeDrivingBasic');
-    basicRow(doc, L, W,
+    swNcBasic(
       `Crash Indicator BASIC (${cfg.basicCrashIndicatorAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicCrashIndicatorThreshold}%)`,
       d.crashIndicatorBasic, cfg.basicCrashIndicatorThreshold, src('crashIndicatorBasic'));
-    basicRow(doc, L, W,
+    swNcBasic(
       `Hours of Service BASIC (${cfg.basicHosAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicHosThreshold}%)`,
       d.hosBasic, cfg.basicHosThreshold, src('hosBasic'),
       bs.hos === 'ok' && parseFloat(d.hosBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'hosBasic');
-    basicRow(doc, L, W,
+    swNcBasic(
       `Vehicle Maintenance BASIC (${cfg.basicVehicleMaintenanceAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicVehicleMaintenanceThreshold}%)`,
       d.vehicleMaintenanceBasic, cfg.basicVehicleMaintenanceThreshold, src('vehicleMaintenanceBasic'),
       bs.vehicleMaintenance === 'ok' && parseFloat(d.vehicleMaintenanceBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'vehicleMaintenanceBasic');
-    basicRow(doc, L, W,
+    swNcBasic(
       `Vehicle Driver-Observed BASIC (${cfg.basicVehicleDriverObservedAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicVehicleDriverObservedThreshold}%)`,
       d.vehicleDriverObservedBasic, cfg.basicVehicleDriverObservedThreshold, src('vehicleDriverObservedBasic'));
-    basicRow(doc, L, W,
+    swNcBasic(
       `Driver Fitness BASIC (${cfg.basicDriverFitnessAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicDriverFitnessThreshold}%)`,
       d.driverFitnessBasic, cfg.basicDriverFitnessThreshold, src('driverFitnessBasic'),
       bs.driverFitness === 'ok' && parseFloat(d.driverFitnessBasic) === 0 ? '0.00% (no FMCSA percentile assigned)' : null);
     autoFilledNote(doc, L, W, d, 'driverFitnessBasic');
-    basicRow(doc, L, W,
+    swNcBasic(
       `Hazardous Materials BASIC (${cfg.basicHazmatAction === 'reject' ? 'REJECT' : 'HOLD'} at or above ${cfg.basicHazmatThreshold}%)`,
       d.hazmatBasic, cfg.basicHazmatThreshold, src('hazmatBasic'));
 

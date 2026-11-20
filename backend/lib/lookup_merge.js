@@ -81,7 +81,7 @@ function sanitizeDate(val) {
 //
 // All four objects together represent the server's authoritative view of the carrier.
 // ─────────────────────────────────────────────────────────────────────────────
-export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
+export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected = false }) {
   const autoFilled   = {};  // { field: { value: string, sourceLabel } }
   const fieldSources = {};  // { field: 'fmcsa' | 'saferwatch' | ... }
   const serverFields = {};  // complex non-scalar fields, applied verbatim
@@ -282,8 +282,11 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon }) {
     serverFields.swBipdRequired          = sw.bipdRequired ?? null;
     serverFields.swErr                   = null;
   } else {
-    // SW failed
-    serverFields.swErr = sw?.error ?? 'SaferWatch lookup failed — manual entry required for BASIC scores and insurance';
+    // SW not available
+    serverFields.swNotConnected = swNotConnected;
+    serverFields.swErr = swNotConnected
+      ? 'SaferWatch not connected — add your keys in Settings to enable BASIC scores and insurance data'
+      : (sw?.error ?? 'SaferWatch lookup failed — manual entry required for BASIC scores and insurance');
   }
 
   // Store SAFER HTML data for the frontend display
@@ -490,7 +493,7 @@ export function applyToSubmission(savedLookup, browserBody) {
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
                    'driverInspections24mo','_basicSufficiency',
                    'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures',
-                   'nationalAvgOosCached']) {
+                   'nationalAvgOosCached','swNotConnected']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
 

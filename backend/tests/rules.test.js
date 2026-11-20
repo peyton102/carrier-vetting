@@ -2246,5 +2246,69 @@ export async function runAll() {
     assert(!unavailNote, 'should NOT have unavailable note when cached averages are present');
   }));
 
+  // ── SaferWatch not connected ────────────────────────────────────────────────
+
+  results.push(await t('SW not connected: note present, no RED from blank BASICs, PDF renders', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected:          true,
+      // SW-sourced fields blank (no SW data)
+      unsafeDrivingBasic:      '',
+      crashIndicatorBasic:     '',
+      hosBasic:                '',
+      vehicleMaintenanceBasic: '',
+      vehicleDriverObservedBasic: '',
+      driverFitnessBasic:      '',
+      hazmatBasic:             '',
+      cargoInsurance:          '',
+      drugAlcoholViolation:    false,  // dispatcher answered manually
+    };
+    const r = runVettingRules(data, CFG);
+    // HOLD expected: "sufficient inspections but no BASICs" yellow fires (correct — dispatcher
+    // should still enter BASICs manually or accept the hold). NOT a RED reject.
+    assert(r.verdict === 'HOLD', `should HOLD (not REJECT), got ${r.verdict}`);
+    assert(r.tier === 'YELLOW', `tier should be YELLOW, got ${r.tier}`);
+    const noteFound = r.notes.some(n => /SaferWatch not connected/i.test(n));
+    assert(noteFound, `should have SW-not-connected note, got notes: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF error: ${pdfErr}`);
+  }));
+
+  results.push(await t('SW not connected: FMCSA-only fields still cause REJECT', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected:    true,
+      authorityStatus:   'Inactive',
+      unsafeDrivingBasic: '',
+      cargoInsurance:     '',
+      drugAlcoholViolation: null,
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `should REJECT for inactive authority, got ${r.verdict}`);
+    assert(r.reasons.some(s => /authority.*not active/i.test(s) || /inactive/i.test(s)),
+      'should have authority reason');
+  }));
+
+  results.push(await t('SW connected: no swNotConnected note', async () => {
+    const r = runVettingRules(CLEAN, CFG);
+    const noteFound = r.notes.some(n => /SaferWatch not connected/i.test(n));
+    assert(!noteFound, 'should NOT have SW-not-connected note when SW is connected');
+  }));
+
+  results.push(await t('mergeResults: swNotConnected flag propagated to serverFields', () => {
+    const fmcsa = { filledFields: ['carrierName', 'dotNumber'], carrierName: 'Test', dotNumber: '123' };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(serverFields.swNotConnected === true, `swNotConnected should be true, got ${serverFields.swNotConnected}`);
+    assert(/not connected/i.test(serverFields.swErr), `swErr should mention not connected, got ${serverFields.swErr}`);
+  }));
+
+  results.push(await t('mergeResults: swNotConnected=false when SW available', () => {
+    const fmcsa = { filledFields: ['carrierName'], carrierName: 'Test' };
+    const sw = { ok: true, filledFields: ['autoLiability'], autoLiability: '1000000' };
+    const { serverFields } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null, swNotConnected: false });
+    assert(!serverFields.swNotConnected, `swNotConnected should be falsy, got ${serverFields.swNotConnected}`);
+    assert(serverFields.swErr === null, `swErr should be null, got ${serverFields.swErr}`);
+  }));
+
   return results;
 }

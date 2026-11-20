@@ -19,10 +19,10 @@ function getSupabase() {
 }
 
 // Resolve SaferWatch keys: prefer tenant's own stored credentials.
-// Tenants in SAFERWATCH_SHARED_TENANTS (comma-separated env var) fall back to
-// the shared operator keys from .env. All others get null — 503 returned to caller.
-async function resolveSwKeys(tenantSlug) {
-  const sharedTenants = (process.env.SAFERWATCH_SHARED_TENANTS || '')
+// Tenants in SW_ENV_TENANTS (comma-separated env var) may use the shared
+// operator keys from .env. All others get null — no SaferWatch data.
+export async function resolveSwKeys(tenantSlug) {
+  const envTenants = (process.env.SW_ENV_TENANTS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 
   try {
@@ -41,11 +41,12 @@ async function resolveSwKeys(tenantSlug) {
     }
   } catch (_) { /* fall through */ }
 
-  if (sharedTenants.includes(tenantSlug)) {
+  if (envTenants.includes(tenantSlug) &&
+      process.env.SAFERWATCH_SERVICE_KEY && process.env.SAFERWATCH_CUSTOMER_KEY) {
     return {
       serviceKey:  process.env.SAFERWATCH_SERVICE_KEY,
       customerKey: process.env.SAFERWATCH_CUSTOMER_KEY,
-      source: 'shared',
+      source: 'env',
     };
   }
 
@@ -207,11 +208,12 @@ function extractPendingCancellation(certData) {
 export async function swLookup(identifier, lookupType, tenantSlug) {
   const tTotal = Date.now();
   const tKeys  = Date.now();
-  const { serviceKey, customerKey } = await resolveSwKeys(tenantSlug);
+  const { serviceKey, customerKey, source } = await resolveSwKeys(tenantSlug);
   console.log(`[TIMING][SW] Supabase tenant_credentials read: ${ms(tKeys)}`);
+  console.log(`[SW] tenant ${tenantSlug}: ${source === 'tenant' ? 'own key' : source === 'env' ? 'env (allowed)' : 'none'}`);
 
   if (!serviceKey || !customerKey) {
-    return { ok: false, error: 'SaferWatch API key not configured — add your SaferWatch key in Settings' };
+    return { ok: false, error: 'SaferWatch API key not configured — add your SaferWatch key in Settings', notConnected: true };
   }
 
   const url    = swLookupUrl(identifier, lookupType ?? 'dot', serviceKey, customerKey);

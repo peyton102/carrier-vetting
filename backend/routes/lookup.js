@@ -10,7 +10,7 @@ import express                    from 'express';
 import { randomUUID }             from 'crypto';
 import { createClient }           from '@supabase/supabase-js';
 import { fmcsaDotLookup, fmcsaMcLookup, getWebKey } from './fmcsa.js';
-import { swLookup }               from './saferwatch.js';
+import { swLookup, resolveSwKeys } from './saferwatch.js';
 import { insuranceLookup }        from './insurance.js';
 import { chameleonLookup }        from './chameleon.js';
 import { mergeResults }           from '../lib/lookup_merge.js';
@@ -105,7 +105,14 @@ router.post('/', requireActive, async (req, res, next) => {
       }
     }
 
-    // ── 2. SaferWatch + insurance + chameleon in parallel ─────────────────────
+    // ── 2. Check SW key availability, then SaferWatch + insurance + chameleon ──
+    const swKeys = await resolveSwKeys(tenantSlug);
+    const swKeyPath = swKeys.source === 'tenant' ? 'own key'
+                    : swKeys.source === 'env'    ? 'env (allowed)'
+                    : 'none';
+    console.log(`[SW] tenant ${tenantSlug}: ${swKeyPath}`);
+    const swNotConnected = swKeys.source === 'none';
+
     // Chameleon is capped at 12s so a runaway Socrata call never blocks /run.
     const chameleonCapped = Promise.race([
       chameleonLookup(resolvedDot, tenantSlug),
@@ -113,9 +120,15 @@ router.post('/', requireActive, async (req, res, next) => {
         setTimeout(() => resolve({ notReviewed: true, timedOut: true }), CHAMELEON_CAP_MS)
       ),
     ]);
+
+    // Skip SW call entirely when tenant has no keys — no network call.
+    const swPromise = swNotConnected
+      ? Promise.resolve(null)
+      : swLookup(resolvedDot, 'dot', tenantSlug);
+
     const sourceNames = ['SaferWatch', 'Insurance', 'Chameleon'];
     const settled = await Promise.allSettled([
-      swLookup(resolvedDot, 'dot', tenantSlug),
+      swPromise,
       insuranceLookup(resolvedDot, getSupabase()),
       chameleonCapped,
     ]);
@@ -131,6 +144,7 @@ router.post('/', requireActive, async (req, res, next) => {
       sw,
       insurance,
       chameleon,
+      swNotConnected,
     });
 
     // Track which secondary sources failed entirely (Promise rejected, not just empty data).
@@ -174,6 +188,7 @@ router.post('/', requireActive, async (req, res, next) => {
       fmcsaCannotVerify,
       fmcsaLastAttemptAt: fmcsaCannotVerify ? fmcsa?.lastAttemptAt ?? null : null,
       sw,
+      swNotConnected,
       insurance,
       chameleon,
     });

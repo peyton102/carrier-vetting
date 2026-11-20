@@ -650,7 +650,11 @@ export default function CarrierVetting({ settings }) {
         setFmcsaCannotVerify(true);
         setFmcsaLastAttemptAt(data.fmcsaLastAttemptAt ?? null);
       } else if (data.fmcsa) {
-        applyLookupResults(data.fmcsa, { ok: data.sw?.ok !== false }, data.sw ?? {});
+        const swAvail = !data.swNotConnected && data.sw?.ok !== false;
+        applyLookupResults(data.fmcsa, { ok: swAvail }, data.sw ?? {});
+        if (data.swNotConnected) {
+          setSwErr('SaferWatch not connected — BASIC scores, cargo insurance, and drug/alcohol data not available');
+        }
       }
 
       // Insurance fields
@@ -734,7 +738,11 @@ export default function CarrierVetting({ settings }) {
         setFmcsaCannotVerify(true);
         setFmcsaLastAttemptAt(data.fmcsaLastAttemptAt ?? null);
       } else if (data.fmcsa) {
-        applyLookupResults(data.fmcsa, { ok: data.sw?.ok !== false }, data.sw ?? {});
+        const swAvail = !data.swNotConnected && data.sw?.ok !== false;
+        applyLookupResults(data.fmcsa, { ok: swAvail }, data.sw ?? {});
+        if (data.swNotConnected) {
+          setSwErr('SaferWatch not connected — BASIC scores, cargo insurance, and drug/alcohol data not available');
+        }
 
         const dot = data.fmcsa.dotNumber;
         if (dot) {
