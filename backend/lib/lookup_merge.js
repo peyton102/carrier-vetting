@@ -301,6 +301,26 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
   // Flag when national averages came from cache instead of live SAFER HTML.
   serverFields.nationalAvgOosCached = !!(fmcsa?.nationalAvgOosCached);
 
+  // ── No-SW fallbacks: use FMCSA data for fields SW normally provides ───────
+  if (swNotConnected && fmcsaOk) {
+    // Authority grant date: label "(FMCSA)" to identify source.
+    // If the grant-date fetch returned empty, ensure the "not reviewed" note fires.
+    if (autoFilled.authorityGrantDate) {
+      autoFilled.authorityGrantDate.sourceLabel = '(FMCSA)';
+    } else if (!serverFields.sourceErrors.authorityGrantDate) {
+      serverFields.sourceErrors.authorityGrantDate = 'No authority grant date available from FMCSA';
+    }
+
+    // Auto liability: use QCMobile on-file amount when SW isn't available.
+    // Stale/cancelled logic still applies (bipdCancelLapsed checks are independent).
+    if (!autoFilled.autoLiability) {
+      const fmcsaLiab = fmcsa.fmcsaLiabilityOnFile;
+      if (fmcsaLiab != null && !isNaN(parseFloat(fmcsaLiab)) && parseFloat(fmcsaLiab) > 0) {
+        setScalar('autoLiability', String(fmcsaLiab), 'fmcsa', '(FMCSA live)');
+      }
+    }
+  }
+
   // ── Insurance ──────────────────────────────────────────────────────────────
   if (insurance && !insurance.notReviewed) {
     const pending = insurance.bipdCancelPending ?? false;

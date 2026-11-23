@@ -2310,5 +2310,137 @@ export async function runAll() {
     assert(serverFields.swErr === null, `swErr should be null, got ${serverFields.swErr}`);
   }));
 
+  // ── No-SW fallbacks: authority grant date + auto liability ──────────────────
+
+  // NF1. No-SW: authority grant date from FMCSA → labeled "(FMCSA)"
+  results.push(await t('mergeResults: no-SW — authority grant date labeled (FMCSA)', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
+      carrierName: 'No SW Carrier', dotNumber: '5555555',
+      authorityGrantDate: '2022-06-15',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(autoFilled.authorityGrantDate?.value === '2022-06-15',
+      `grant date must be set, got ${autoFilled.authorityGrantDate?.value}`);
+    assert(autoFilled.authorityGrantDate?.sourceLabel === '(FMCSA)',
+      `label must be (FMCSA), got ${autoFilled.authorityGrantDate?.sourceLabel}`);
+  }));
+
+  // NF2. No-SW: authority grant date empty (fetch returned empty) → sourceErrors note
+  results.push(await t('mergeResults: no-SW — empty grant date → sourceErrors set for note', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'No Grant Date LLC', dotNumber: '5555556',
+      authorityGrantDate: '',  // empty — no grant date in authority records
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(serverFields.sourceErrors?.authorityGrantDate,
+      `sourceErrors.authorityGrantDate must be set when grant date is empty, got: ${JSON.stringify(serverFields.sourceErrors)}`);
+  }));
+
+  // NF3. No-SW: empty grant date → rules engine emits note + authority age doesn't fire
+  results.push(await t('no-SW: empty grant date → "not reviewed" note, no authority-age HOLD', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected: true,
+      authorityGrantDate: '',
+      sourceErrors: { authorityGrantDate: 'No authority grant date available from FMCSA' },
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '',
+      drugAlcoholViolation: false, cargoInsurance: '',
+    };
+    const r = runVettingRules(data, CFG);
+    const noteFound = r.notes.some(n => /authority.*grant.*date.*not reviewed/i.test(n));
+    assert(noteFound, `should have authority-age note, got notes: ${JSON.stringify(r.notes)}`);
+    const authHold = [...r.reasons, ...(r.warnings ?? [])].some(s => /authority age/i.test(s));
+    assert(!authHold, 'authority age rule should not fire when grant date unknown');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF4. No-SW: auto liability from fmcsaLiabilityOnFile, labeled "(FMCSA live)"
+  results.push(await t('mergeResults: no-SW — auto liability from fmcsaLiabilityOnFile', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityRequired', 'fmcsaLiabilityIsRequired'],
+      carrierName: 'No SW Carrier', dotNumber: '5555555',
+      fmcsaLiabilityOnFile: 750000, fmcsaLiabilityRequired: 750000,
+      fmcsaLiabilityIsRequired: 'Y',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled, fieldSources } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(autoFilled.autoLiability?.value === '750000',
+      `autoLiability must be 750000, got ${autoFilled.autoLiability?.value}`);
+    assert(autoFilled.autoLiability?.sourceLabel === '(FMCSA live)',
+      `label must be (FMCSA live), got ${autoFilled.autoLiability?.sourceLabel}`);
+    assert(fieldSources.autoLiability === 'fmcsa',
+      `fieldSource must be fmcsa, got ${fieldSources.autoLiability}`);
+  }));
+
+  // NF5. No-SW: fmcsaLiabilityOnFile = 0 → autoLiability NOT set (zero means no coverage)
+  results.push(await t('mergeResults: no-SW — fmcsaLiabilityOnFile=0 → autoLiability NOT set', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile'],
+      carrierName: 'Zero Liab', dotNumber: '5555557',
+      fmcsaLiabilityOnFile: 0,
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(!autoFilled.autoLiability,
+      `autoLiability must NOT be set when fmcsaLiabilityOnFile is 0, got ${autoFilled.autoLiability?.value}`);
+  }));
+
+  // NF6. No-SW: auto liability rules engine rejects below federal minimum
+  results.push(await t('no-SW: FMCSA live liability below federal minimum → REJECT', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected: true,
+      autoLiability: '500000',  // below $750K federal min
+      autoLiabilityExpiration: '',
+      cargoInsurance: '',
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '',
+      drugAlcoholViolation: false,
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `should REJECT for $500K liability, got ${r.verdict}`);
+    assert(r.reasons.some(s => /federal minimum/i.test(s)), 'should mention federal minimum');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF7. SW connected: authority grant date label stays 'FMCSA' (not changed to '(FMCSA)')
+  results.push(await t('mergeResults: SW connected — authority grant date label unchanged', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
+      carrierName: 'SW Carrier', dotNumber: '7777777',
+      authorityGrantDate: '2022-06-15',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const sw = { ok: true, filledFields: ['autoLiability'], autoLiability: '1000000' };
+    const { autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null, swNotConnected: false });
+    assert(autoFilled.authorityGrantDate?.sourceLabel === 'FMCSA',
+      `SW-connected label must stay FMCSA, got ${autoFilled.authorityGrantDate?.sourceLabel}`);
+  }));
+
+  // NF8. SW connected: autoLiability comes from SW, NOT overridden by fmcsaLiabilityOnFile
+  results.push(await t('mergeResults: SW connected — autoLiability from SW, not FMCSA fallback', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile'],
+      carrierName: 'SW Carrier', dotNumber: '7777777',
+      fmcsaLiabilityOnFile: 750000,
+      saferData: null, saferSnapshotDate: null,
+    };
+    const sw = { ok: true, filledFields: ['autoLiability'], autoLiability: '1000000' };
+    const { autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null, swNotConnected: false });
+    assert(autoFilled.autoLiability?.value === '1000000',
+      `autoLiability must be SW's $1M, got ${autoFilled.autoLiability?.value}`);
+    assert(autoFilled.autoLiability?.sourceLabel === 'SaferWatch',
+      `label must be SaferWatch, got ${autoFilled.autoLiability?.sourceLabel}`);
+  }));
+
   return results;
 }
