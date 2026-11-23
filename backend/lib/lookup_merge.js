@@ -312,11 +312,18 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
     }
 
     // Auto liability: use QCMobile on-file amount when SW isn't available.
+    // When fmcsaLiabilityIsRequired='Y', $0 is a real "no insurance on file" → use it
+    // so the federal-minimum check fires REJECT.  When Required is 'U'/'N'/missing,
+    // $0 is ambiguous (data unavailable) → treat as "not reviewed".
     // Stale/cancelled logic still applies (bipdCancelLapsed checks are independent).
     if (!autoFilled.autoLiability) {
-      const fmcsaLiab = fmcsa.fmcsaLiabilityOnFile;
-      if (fmcsaLiab != null && !isNaN(parseFloat(fmcsaLiab)) && parseFloat(fmcsaLiab) > 0) {
-        setScalar('autoLiability', String(fmcsaLiab), 'fmcsa', '(FMCSA live)');
+      const fmcsaLiab  = fmcsa.fmcsaLiabilityOnFile;
+      const fmcsaIsReq = (fmcsa.fmcsaLiabilityIsRequired ?? '').toUpperCase();
+      if (fmcsaLiab != null && !isNaN(parseFloat(fmcsaLiab))) {
+        const liabVal = parseFloat(fmcsaLiab);
+        if (fmcsaIsReq === 'Y' || liabVal > 0) {
+          setScalar('autoLiability', String(fmcsaLiab), 'fmcsa', '(FMCSA live)');
+        }
       }
     }
   }

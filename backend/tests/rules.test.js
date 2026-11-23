@@ -2379,27 +2379,64 @@ export async function runAll() {
       `fieldSource must be fmcsa, got ${fieldSources.autoLiability}`);
   }));
 
-  // NF5. No-SW: fmcsaLiabilityOnFile = 0 → autoLiability NOT set (zero means no coverage)
-  results.push(await t('mergeResults: no-SW — fmcsaLiabilityOnFile=0 → autoLiability NOT set', () => {
+  // NF5. No-SW: Required=Y + $0 → autoLiability = '0' → REJECT (below federal min)
+  results.push(await t('mergeResults: no-SW — Required=Y + $0 → autoLiability set to 0', () => {
     const fmcsa = {
-      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile'],
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityIsRequired'],
       carrierName: 'Zero Liab', dotNumber: '5555557',
-      fmcsaLiabilityOnFile: 0,
+      fmcsaLiabilityOnFile: 0, fmcsaLiabilityIsRequired: 'Y',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(autoFilled.autoLiability?.value === '0',
+      `autoLiability must be '0' when Required=Y, got ${autoFilled.autoLiability?.value}`);
+    assert(autoFilled.autoLiability?.sourceLabel === '(FMCSA live)',
+      `label must be (FMCSA live), got ${autoFilled.autoLiability?.sourceLabel}`);
+  }));
+
+  // NF5b. No-SW: Required=Y + $0 → rules engine REJECT below federal minimum
+  results.push(await t('no-SW: Required=Y + $0 → REJECT below federal minimum', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected: true,
+      autoLiability: '0',
+      autoLiabilityExpiration: '',
+      cargoInsurance: '',
+      fmcsaLiabilityOnFile: 0, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '',
+      drugAlcoholViolation: false,
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `should REJECT for $0 liability, got ${r.verdict}`);
+    assert(r.reasons.some(s => /federal minimum/i.test(s)), 'should mention federal minimum');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF5c. No-SW: Required=U + $0 → autoLiability NOT set (treat as not reviewed)
+  results.push(await t('mergeResults: no-SW — Required=U + $0 → autoLiability NOT set', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityIsRequired'],
+      carrierName: 'Unknown Liab', dotNumber: '5555558',
+      fmcsaLiabilityOnFile: 0, fmcsaLiabilityIsRequired: 'U',
       saferData: null, saferSnapshotDate: null,
     };
     const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
     assert(!autoFilled.autoLiability,
-      `autoLiability must NOT be set when fmcsaLiabilityOnFile is 0, got ${autoFilled.autoLiability?.value}`);
+      `autoLiability must NOT be set when Required=U and $0, got ${autoFilled.autoLiability?.value}`);
   }));
 
-  // NF6. No-SW: auto liability rules engine rejects below federal minimum
-  results.push(await t('no-SW: FMCSA live liability below federal minimum → REJECT', async () => {
+  // NF6. No-SW: Required=Y + $500K → REJECT (below $750K federal min)
+  results.push(await t('no-SW: Required=Y + $500K → REJECT below federal minimum', async () => {
     const data = {
       ...CLEAN,
       swNotConnected: true,
-      autoLiability: '500000',  // below $750K federal min
+      autoLiability: '500000',
       autoLiabilityExpiration: '',
       cargoInsurance: '',
+      fmcsaLiabilityOnFile: 500000, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
       unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
       vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
       driverFitnessBasic: '', hazmatBasic: '',
@@ -2408,6 +2445,34 @@ export async function runAll() {
     const r = runVettingRules(data, CFG);
     assert(r.verdict === 'REJECT', `should REJECT for $500K liability, got ${r.verdict}`);
     assert(r.reasons.some(s => /federal minimum/i.test(s)), 'should mention federal minimum');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF6b. Gully-style: cancelled + QCMobile still $1M → REJECT on cancellation, not stale amount
+  results.push(await t('no-SW: Gully — cancelled + QCMobile $1M → REJECT on cancellation', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected: true,
+      autoLiability: '1000000',  // from fmcsaLiabilityOnFile (stale)
+      autoLiabilityExpiration: '',
+      cargoInsurance: '',
+      fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
+      bipdCancelLapsed: true, bipdCancelEffectiveDate: '2026-10-01',
+      currentInsurer: null, insuranceHistoryNotReviewed: false,
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '',
+      drugAlcoholViolation: false,
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.verdict === 'REJECT', `should REJECT, got ${r.verdict}`);
+    assert(r.reasons.some(s => /cancelled/i.test(s)), 'should mention cancellation');
+    // Auto liability $1M passes the amount check — REJECT is from cancellation only
+    assert(!r.reasons.some(s => /federal minimum/i.test(s)), 'should NOT reject on amount (stale $1M passes)');
+    // Stale-amount note should fire
+    assert(r.notes.some(s => /still shows.*1,000,000.*not yet updated/i.test(s)),
+      `should have stale-amount note, got notes: ${JSON.stringify(r.notes)}`);
     const pdfErr = await checkPdf(data, r);
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
