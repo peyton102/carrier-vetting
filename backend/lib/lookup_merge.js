@@ -300,6 +300,10 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
   serverFields.sourceErrors      = fmcsa?.sourceErrors ?? {};
   // Flag when national averages came from cache instead of live SAFER HTML.
   serverFields.nationalAvgOosCached = !!(fmcsa?.nationalAvgOosCached);
+  // Authority reinstatement note from Socrata AuthHist (set by lookup.js fallback).
+  if (fmcsa?._authorityReinstatementNote) {
+    serverFields.authorityReinstatementNote = fmcsa._authorityReinstatementNote;
+  }
 
   // ── No-SW fallbacks: use FMCSA data for fields SW normally provides ───────
   if (swNotConnected && fmcsaOk) {
@@ -520,7 +524,7 @@ export function applyToSubmission(savedLookup, browserBody) {
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
                    'driverInspections24mo','_basicSufficiency',
                    'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures',
-                   'nationalAvgOosCached','swNotConnected']) {
+                   'nationalAvgOosCached','swNotConnected','authorityReinstatementNote']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
 

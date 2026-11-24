@@ -9,7 +9,7 @@
 import express                    from 'express';
 import { randomUUID }             from 'crypto';
 import { createClient }           from '@supabase/supabase-js';
-import { fmcsaDotLookup, fmcsaMcLookup, getWebKey } from './fmcsa.js';
+import { fmcsaDotLookup, fmcsaMcLookup, getWebKey, fetchSocrataGrantDate } from './fmcsa.js';
 import { swLookup, resolveSwKeys } from './saferwatch.js';
 import { insuranceLookup }        from './insurance.js';
 import { chameleonLookup }        from './chameleon.js';
@@ -137,6 +137,34 @@ router.post('/', requireActive, async (req, res, next) => {
       console.error(`[LOOKUP] ${sourceNames[i]} lookup failed for DOT ${resolvedDot}: ${r.reason?.message ?? r.reason}`);
       return null;
     });
+
+    // ── 2b. Socrata authority grant date fallback ─────────────────────────────
+    // QCMobile /authority often returns no date fields (content[] shape).
+    // When the grant date is empty AND SW won't provide it, query Socrata.
+    const swHasGrantDate = sw?.filledFields?.includes('authorityGrantDate') && sw.authorityGrantDate;
+    const needSocrataGrant = !fmcsaCannotVerify && fmcsa
+      && !fmcsa.authorityGrantDate
+      && (swNotConnected || !swHasGrantDate);
+
+    if (needSocrataGrant) {
+      const socrata = await fetchSocrataGrantDate(resolvedDot);
+      if (socrata.date) {
+        fmcsa.authorityGrantDate = socrata.date;
+        if (!fmcsa.filledFields?.includes('authorityGrantDate')) {
+          fmcsa.filledFields = [...(fmcsa.filledFields ?? []), 'authorityGrantDate'];
+        }
+        // Clear any QCMobile sourceError since we now have a date
+        if (fmcsa.sourceErrors?.authorityGrantDate) {
+          delete fmcsa.sourceErrors.authorityGrantDate;
+        }
+      } else if (socrata.error) {
+        fmcsa.sourceErrors = fmcsa.sourceErrors ?? {};
+        fmcsa.sourceErrors.authorityGrantDate = socrata.error;
+      }
+      if (socrata.reinstatementNote) {
+        fmcsa._authorityReinstatementNote = socrata.reinstatementNote;
+      }
+    }
 
     // ── 3. Merge results (server-side applyLookupResults equivalent) ──────────
     const { autoFilled, fieldSources, serverFields } = mergeResults({

@@ -246,6 +246,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
   for (const src of srcFails) {
     notes.push(`${src} was unavailable during lookup — ${src}-sourced fields were not reviewed`);
   }
+  if (d.authorityReinstatementNote) {
+    notes.push(d.authorityReinstatementNote);
+  }
 
   // ── Pre-flight: inspection volume + BASIC data availability ─────────────────
   const inspCount = parseInt(d.inspections24mo, 10);

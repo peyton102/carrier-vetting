@@ -228,7 +228,7 @@ export function generateVettingPDF(opts) {
       doc.y = nBoxY + 22;
       notes.forEach(n => {
         doc.fontSize(9).font('Helvetica').fillColor('#3b82f6')
-           .text(`\u2139  ${n}`, L + 8, doc.y, { width: W - 8 });
+           .text(`Note: ${n}`, L + 8, doc.y, { width: W - 8 });
       });
     }
 

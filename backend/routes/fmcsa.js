@@ -589,6 +589,80 @@ export async function fmcsaMcLookup(mc, webKey) {
   return buildPayload(c, dot, docketsRes, grantResult.date, saferData, sourceErrors);
 }
 
+// ── Socrata authority history — grant date fallback ─────────────────────────
+// Dataset yu5v-wbh6 "Motus AuthHist - All With History" has per-docket
+// authority events with status_change_date (YYYYMMDD) and reason (GRANTED,
+// REINSTATED, etc.).  Used when QCMobile /authority has no date fields.
+const AUTH_HIST_DS        = 'yu5v-wbh6';
+const AUTH_HIST_TIMEOUT   = 5_000;
+const SOCRATA_BASE        = 'https://data.transportation.gov/resource';
+// Only common/contract carrier authority types — ignore broker rows.
+const CARRIER_AUTH_TYPES  = new Set([
+  'motor carrier of property (except household goods)',
+  'enterprise motor carrier of property (except household goods)',
+  'motor carrier of household goods',
+  'motor carrier of passengers',
+  'enterprise motor carrier of passengers',
+]);
+
+function parseYmd(s) {
+  if (!s || s.length < 8) return null;
+  const clean = String(s).replace(/-/g, '');
+  const d = new Date(`${clean.slice(0, 4)}-${clean.slice(4, 6)}-${clean.slice(6, 8)}`);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export async function fetchSocrataGrantDate(dot) {
+  const t = Date.now();
+  try {
+    const where = `usdot_number='${dot}'`;
+    const url = `${SOCRATA_BASE}/${AUTH_HIST_DS}.json?$where=${encodeURIComponent(where)}&$order=status_change_date ASC&$limit=200`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(AUTH_HIST_TIMEOUT) });
+    if (!r.ok) {
+      console.warn(`[AUTH-HIST] Socrata HTTP ${r.status} for DOT ${dot} (${ms(t)})`);
+      return { date: '', error: `Socrata HTTP ${r.status}`, reinstatementNote: null };
+    }
+    const rows = await r.json();
+    console.log(`[TIMING][AUTH-HIST] Socrata authority history (DOT ${dot}): ${ms(t)} — ${rows.length} rows`);
+
+    // Filter to carrier authority types (exclude broker)
+    const carrierRows = rows.filter(row => {
+      const authType = (row.op_auth_type ?? '').toLowerCase();
+      return CARRIER_AUTH_TYPES.has(authType);
+    });
+
+    // Find earliest GRANTED row
+    const grantedRows = carrierRows.filter(r => (r.reason ?? '').toUpperCase() === 'GRANTED');
+    let grantDate = '';
+    if (grantedRows.length > 0) {
+      // Already sorted ASC by status_change_date
+      const d = parseYmd(grantedRows[0].status_change_date);
+      if (d) grantDate = d.toISOString().slice(0, 10);
+    }
+
+    // Check for reinstatement in the last 90 days
+    let reinstatementNote = null;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 90 * 86_400_000);
+    for (const row of carrierRows) {
+      if ((row.reason ?? '').toUpperCase() !== 'REINSTATED') continue;
+      const d = parseYmd(row.status_change_date);
+      if (d && d >= cutoff) {
+        const dateStr = d.toISOString().slice(0, 10);
+        reinstatementNote = `Authority reinstated on ${dateStr} after a lapse, verify carrier`;
+        break;  // only need the first (earliest in sorted order)
+      }
+    }
+
+    return { date: grantDate, error: null, reinstatementNote };
+  } catch (e) {
+    const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    const reason    = isTimeout ? 'Socrata timeout' : e.message;
+    console.warn(`[AUTH-HIST] Authority history for DOT ${dot} failed (${ms(t)}): ${reason}`);
+    return { date: '', error: reason, reinstatementNote: null };
+  }
+}
+
 export { getWebKey, extractGrantDate };
 
 // ── DOT lookup ────────────────────────────────────────────────────────────────

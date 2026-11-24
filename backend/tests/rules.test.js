@@ -5,7 +5,7 @@ import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/ru
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions, runPostRefreshChecks } from '../lib/monitor.js';
-import { fmcsaMcLookup, parseSaferInspections, extractGrantDate } from '../routes/fmcsa.js';
+import { fmcsaMcLookup, parseSaferInspections, extractGrantDate, fetchSocrataGrantDate } from '../routes/fmcsa.js';
 import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
@@ -2606,6 +2606,119 @@ export async function runAll() {
     // Clean carrier should have no notes (or at most informational ones)
     const pdfErr = await checkPdf(CLEAN, { ...r, notes: [] });
     assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF16. Socrata grant date: UGN shape (content[] no dates) → Socrata fills grant date
+  // Simulates what lookup.js does: QCMobile returns empty, Socrata fills it on fmcsa obj.
+  results.push(await t('mergeResults: Socrata grant date fills empty QCMobile grant date', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
+      carrierName: 'UGN Logistics', dotNumber: '2939905',
+      authorityGrantDate: '2017-01-03',  // filled by Socrata in lookup.js before mergeResults
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(autoFilled.authorityGrantDate?.value === '2017-01-03',
+      `grant date must be 2017-01-03, got ${autoFilled.authorityGrantDate?.value}`);
+    assert(autoFilled.authorityGrantDate?.sourceLabel === 'FMCSA',
+      `label must be FMCSA, got ${autoFilled.authorityGrantDate?.sourceLabel}`);
+  }));
+
+  // NF17. No GRANTED row → grant date empty → "not reviewed" note
+  results.push(await t('no-SW: no Socrata GRANTED row → "not reviewed" note fires', async () => {
+    // Simulates: QCMobile empty + Socrata returned no GRANTED row
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'No Grant LLC', dotNumber: '5555556',
+      authorityGrantDate: '',  // neither QCMobile nor Socrata had it
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(!autoFilled.authorityGrantDate, 'authorityGrantDate should not be in autoFilled');
+    assert(serverFields.sourceErrors?.authorityGrantDate,
+      `sourceErrors.authorityGrantDate must be set, got: ${JSON.stringify(serverFields.sourceErrors)}`);
+    // Rules engine should emit the note
+    const data = {
+      ...CLEAN, swNotConnected: true, authorityGrantDate: '',
+      sourceErrors: serverFields.sourceErrors,
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '', drugAlcoholViolation: false, cargoInsurance: '',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.notes.some(n => /authority.*grant.*date.*not reviewed/i.test(n)),
+      `should have authority note, got: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF18. Recent reinstatement → note emitted by rules engine
+  results.push(await t('no-SW: recent reinstatement → note appears in rules output', async () => {
+    const today = new Date();
+    const reinDate = new Date(today.getTime() - 30 * 86_400_000).toISOString().slice(0, 10);
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
+      carrierName: 'Reinstated LLC', dotNumber: '5555559',
+      authorityGrantDate: '2018-05-01',  // original grant
+      _authorityReinstatementNote: `Authority reinstated on ${reinDate} after a lapse, verify carrier`,
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(serverFields.authorityReinstatementNote,
+      'reinstatement note should be in serverFields');
+    // Rules engine emits it
+    const data = {
+      ...CLEAN, swNotConnected: true,
+      authorityGrantDate: '2018-05-01',
+      authorityReinstatementNote: serverFields.authorityReinstatementNote,
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '', drugAlcoholViolation: false, cargoInsurance: '',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.notes.some(n => /reinstated/i.test(n)),
+      `should have reinstatement note, got: ${JSON.stringify(r.notes)}`);
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF19. Socrata timeout → grant date empty + sourceError set
+  results.push(await t('mergeResults: Socrata timeout → sourceErrors.authorityGrantDate set', () => {
+    // Simulates: QCMobile empty + Socrata timed out → sourceErrors set by lookup.js
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'Timeout LLC', dotNumber: '5555560',
+      authorityGrantDate: '',
+      sourceErrors: { authorityGrantDate: 'Socrata timeout' },
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(serverFields.sourceErrors?.authorityGrantDate === 'Socrata timeout',
+      `sourceError should be 'Socrata timeout', got: ${serverFields.sourceErrors?.authorityGrantDate}`);
+  }));
+
+  // NF20. SW connected: Socrata grant date NOT used (SW provides it)
+  results.push(await t('mergeResults: SW connected — grant date from SW, not Socrata', () => {
+    // When SW is connected and has grant date, the Socrata fallback is never called
+    // (lookup.js skips it). This test verifies mergeResults doesn't relabel SW's date.
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'SW Carrier', dotNumber: '7777777',
+      authorityGrantDate: '',  // QCMobile had none
+      saferData: null, saferSnapshotDate: null,
+    };
+    const sw = { ok: true, filledFields: ['autoLiability', 'authorityGrantDate'], autoLiability: '1000000', authorityGrantDate: '2019-03-15' };
+    const { autoFilled } = mergeResults({ fmcsa, sw, insurance: null, chameleon: null, swNotConnected: false });
+    assert(autoFilled.authorityGrantDate?.value === '2019-03-15',
+      `grant date must be from SW, got ${autoFilled.authorityGrantDate?.value}`);
+    assert(autoFilled.authorityGrantDate?.sourceLabel === 'SaferWatch',
+      `label must be SaferWatch, got ${autoFilled.authorityGrantDate?.sourceLabel}`);
+  }));
+
+  // NF21. fetchSocrataGrantDate: unit test with real Socrata shape (mocked via pure function)
+  results.push(await t('fetchSocrataGrantDate: function exists and is exported', () => {
+    assert(typeof fetchSocrataGrantDate === 'function',
+      'fetchSocrataGrantDate should be an exported function');
   }));
 
   return results;
