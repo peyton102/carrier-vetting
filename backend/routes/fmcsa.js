@@ -81,7 +81,18 @@ function extractMcNumber(docketJson) {
 }
 
 function extractGrantDate(authorityJson) {
-  const items = authorityJson?.content?.item;
+  // QCMobile /authority endpoint returns two shapes:
+  //   1. content.item[]  — older format, items have grantDate/statusDate/insertDate
+  //   2. content[]       — newer format, items have .carrierAuthority (no date fields)
+  // Handle both shapes gracefully.
+  let items = authorityJson?.content?.item;
+  if (!Array.isArray(items)) {
+    const arr = authorityJson?.content;
+    if (Array.isArray(arr)) {
+      // content[] shape: unwrap .carrierAuthority if present
+      items = arr.map(i => i.carrierAuthority ?? i);
+    }
+  }
   if (!Array.isArray(items) || items.length === 0) return '';
   const dates = items
     .map(i => i.grantDate || i.statusDate || i.insertDate)
@@ -578,7 +589,7 @@ export async function fmcsaMcLookup(mc, webKey) {
   return buildPayload(c, dot, docketsRes, grantResult.date, saferData, sourceErrors);
 }
 
-export { getWebKey };
+export { getWebKey, extractGrantDate };
 
 // ── DOT lookup ────────────────────────────────────────────────────────────────
 router.get('/dot/:dot', async (req, res, next) => {

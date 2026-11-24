@@ -5,7 +5,7 @@ import { runVettingRules, DEFAULT_SETTINGS, classifyEmailMatch } from '../lib/ru
 import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions, runPostRefreshChecks } from '../lib/monitor.js';
-import { fmcsaMcLookup, parseSaferInspections } from '../routes/fmcsa.js';
+import { fmcsaMcLookup, parseSaferInspections, extractGrantDate } from '../routes/fmcsa.js';
 import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
@@ -26,6 +26,7 @@ async function checkPdf(carrierData, ruleResult) {
       tier:         ruleResult.tier,
       reasons:      ruleResult.reasons,
       warnings:     ruleResult.warnings ?? [],
+      notes:        ruleResult.notes ?? [],
       authorityDays: ruleResult.authorityDays,
       override:     null,
       generatedAt:  new Date(),
@@ -2539,6 +2540,72 @@ export async function runAll() {
       'autoLiability SHOULD be flagged when browser sends blank but server had a value');
     assert(edits.autoLiability.sourceLabel === 'FMCSA live',
       `sourceLabel should be FMCSA live, got ${edits.autoLiability.sourceLabel}`);
+  }));
+
+  // NF11. extractGrantDate: content[] shape (no dates) → returns empty string
+  results.push(await t('extractGrantDate: content[] shape (carrierAuthority, no dates) → empty', () => {
+    const json = {
+      content: [{
+        carrierAuthority: {
+          applicantID: 916751, authority: 'N', commonAuthorityStatus: 'A',
+          docketNumber: 994024, dotNumber: 2939905, prefix: 'MC',
+        },
+        _links: { self: { href: 'https://example.com' } },
+      }],
+    };
+    const result = extractGrantDate(json);
+    assert(result === '', `should return empty for content[] with no dates, got '${result}'`);
+  }));
+
+  // NF12. extractGrantDate: content[] shape WITH grantDate → extracts it
+  results.push(await t('extractGrantDate: content[] shape with grantDate → extracts date', () => {
+    const json = {
+      content: [{
+        carrierAuthority: {
+          commonAuthorityStatus: 'A', dotNumber: 1234567,
+          grantDate: '2015-08-20T00:00:00.000+0000',
+        },
+      }],
+    };
+    const result = extractGrantDate(json);
+    assert(result === '2015-08-20', `should extract 2015-08-20, got '${result}'`);
+  }));
+
+  // NF13. extractGrantDate: legacy content.item[] shape still works
+  results.push(await t('extractGrantDate: legacy content.item[] shape → extracts date', () => {
+    const json = {
+      content: {
+        item: [{ grantDate: '2017-03-15T00:00:00.000+0000' }],
+      },
+    };
+    const result = extractGrantDate(json);
+    assert(result === '2017-03-15', `should extract 2017-03-15, got '${result}'`);
+  }));
+
+  // NF14. PDF renders notes section when notes are present
+  results.push(await t('PDF renders notes section ("CHECKS NOT RUN / DATA NOTES")', async () => {
+    const data = {
+      ...CLEAN,
+      swNotConnected: true,
+      authorityGrantDate: '',
+      sourceErrors: { authorityGrantDate: 'No authority grant date available from FMCSA' },
+      unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+      vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+      driverFitnessBasic: '', hazmatBasic: '',
+      drugAlcoholViolation: false, cargoInsurance: '',
+    };
+    const r = runVettingRules(data, CFG);
+    assert(r.notes.length > 0, 'should have at least one note');
+    const pdfErr = await checkPdf(data, r);
+    assert(!pdfErr, `PDF: ${pdfErr}`);
+  }));
+
+  // NF15. PDF doesn't crash with empty notes array
+  results.push(await t('PDF renders without notes section when notes are empty', async () => {
+    const r = runVettingRules(CLEAN, CFG);
+    // Clean carrier should have no notes (or at most informational ones)
+    const pdfErr = await checkPdf(CLEAN, { ...r, notes: [] });
+    assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
   return results;

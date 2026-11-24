@@ -109,6 +109,10 @@ router.post('/run', requireActive, async (req, res, next) => {
     const cfg    = await fetchSettings(orgId);
     const result = runVettingRules(ruleData, cfg);
 
+    // Stash notes into carrier data so the PDF endpoint can retrieve them
+    // without re-running rules (vetting_logs has no notes column).
+    if (result.notes?.length) ruleData._notes = result.notes;
+
     // ── Insert authoritative record ───────────────────────────────────────────
     const recordId = randomUUID();
     const supabase = getSupabase();
@@ -203,6 +207,7 @@ router.post('/pdf', requireActive, async (req, res, next) => {
       tier:         row.tier,
       reasons:      row.reasons  ?? [],
       warnings:     row.warnings ?? [],
+      notes:        carrierData._notes ?? [],
       authorityDays,
       override:     applyOverride ? override : null,
       generatedAt,
@@ -465,6 +470,7 @@ router.get('/logs/:id/pdf', async (req, res, next) => {
       tier:         row.tier,
       reasons:      row.reasons  ?? [],
       warnings:     row.warnings ?? [],
+      notes:        carrierData._notes ?? [],
       authorityDays,
       override,
       generatedAt:  originalDate,

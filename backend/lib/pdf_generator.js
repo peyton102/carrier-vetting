@@ -71,7 +71,7 @@ export function generateVettingPDF(opts) {
   return new Promise((resolve, reject) => {
     const {
       carrierData: carrierDataRaw,
-      verdict, tier, reasons, warnings = [], authorityDays,
+      verdict, tier, reasons, warnings = [], notes = [], authorityDays,
       override, generatedAt, recordId,
       settings, brokerName,
       fieldSources,
@@ -215,6 +215,20 @@ export function generateVettingPDF(opts) {
       warnings.forEach(w => {
         doc.fontSize(9).font('Helvetica').fillColor(C.yellow)
            .text(`!!  ${w}`, L + 8, doc.y, { width: W - 8 });
+      });
+    }
+
+    // ── Notes (checks not run / data notes) ───────────────────────────────────
+    if (Array.isArray(notes) && notes.length > 0) {
+      doc.moveDown(0.4);
+      const nBoxY = doc.y;
+      doc.rect(L, nBoxY, W, 18).fill('#eff6ff');
+      doc.fontSize(8).font('Helvetica-Bold').fillColor('#3b82f6')
+         .text('CHECKS NOT RUN / DATA NOTES', L + 6, nBoxY + 5, { width: W - 12 });
+      doc.y = nBoxY + 22;
+      notes.forEach(n => {
+        doc.fontSize(9).font('Helvetica').fillColor('#3b82f6')
+           .text(`\u2139  ${n}`, L + 8, doc.y, { width: W - 8 });
       });
     }
 
