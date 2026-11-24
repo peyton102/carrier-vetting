@@ -2312,8 +2312,8 @@ export async function runAll() {
 
   // ── No-SW fallbacks: authority grant date + auto liability ──────────────────
 
-  // NF1. No-SW: authority grant date from FMCSA → labeled "(FMCSA)"
-  results.push(await t('mergeResults: no-SW — authority grant date labeled (FMCSA)', () => {
+  // NF1. No-SW: authority grant date from FMCSA → labeled "FMCSA"
+  results.push(await t('mergeResults: no-SW — authority grant date labeled FMCSA', () => {
     const fmcsa = {
       filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
       carrierName: 'No SW Carrier', dotNumber: '5555555',
@@ -2323,8 +2323,8 @@ export async function runAll() {
     const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
     assert(autoFilled.authorityGrantDate?.value === '2022-06-15',
       `grant date must be set, got ${autoFilled.authorityGrantDate?.value}`);
-    assert(autoFilled.authorityGrantDate?.sourceLabel === '(FMCSA)',
-      `label must be (FMCSA), got ${autoFilled.authorityGrantDate?.sourceLabel}`);
+    assert(autoFilled.authorityGrantDate?.sourceLabel === 'FMCSA',
+      `label must be FMCSA, got ${autoFilled.authorityGrantDate?.sourceLabel}`);
   }));
 
   // NF2. No-SW: authority grant date empty (fetch returned empty) → sourceErrors note
@@ -2361,7 +2361,7 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // NF4. No-SW: auto liability from fmcsaLiabilityOnFile, labeled "(FMCSA live)"
+  // NF4. No-SW: auto liability from fmcsaLiabilityOnFile, labeled "FMCSA live"
   results.push(await t('mergeResults: no-SW — auto liability from fmcsaLiabilityOnFile', () => {
     const fmcsa = {
       filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityRequired', 'fmcsaLiabilityIsRequired'],
@@ -2373,8 +2373,8 @@ export async function runAll() {
     const { autoFilled, fieldSources } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
     assert(autoFilled.autoLiability?.value === '750000',
       `autoLiability must be 750000, got ${autoFilled.autoLiability?.value}`);
-    assert(autoFilled.autoLiability?.sourceLabel === '(FMCSA live)',
-      `label must be (FMCSA live), got ${autoFilled.autoLiability?.sourceLabel}`);
+    assert(autoFilled.autoLiability?.sourceLabel === 'FMCSA live',
+      `label must be FMCSA live, got ${autoFilled.autoLiability?.sourceLabel}`);
     assert(fieldSources.autoLiability === 'fmcsa',
       `fieldSource must be fmcsa, got ${fieldSources.autoLiability}`);
   }));
@@ -2390,8 +2390,8 @@ export async function runAll() {
     const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
     assert(autoFilled.autoLiability?.value === '0',
       `autoLiability must be '0' when Required=Y, got ${autoFilled.autoLiability?.value}`);
-    assert(autoFilled.autoLiability?.sourceLabel === '(FMCSA live)',
-      `label must be (FMCSA live), got ${autoFilled.autoLiability?.sourceLabel}`);
+    assert(autoFilled.autoLiability?.sourceLabel === 'FMCSA live',
+      `label must be FMCSA live, got ${autoFilled.autoLiability?.sourceLabel}`);
   }));
 
   // NF5b. No-SW: Required=Y + $0 → rules engine REJECT below federal minimum
@@ -2477,7 +2477,7 @@ export async function runAll() {
     assert(!pdfErr, `PDF: ${pdfErr}`);
   }));
 
-  // NF7. SW connected: authority grant date label stays 'FMCSA' (not changed to '(FMCSA)')
+  // NF7. SW connected: authority grant date label stays 'FMCSA' (unchanged)
   results.push(await t('mergeResults: SW connected — authority grant date label unchanged', () => {
     const fmcsa = {
       filledFields: ['carrierName', 'dotNumber', 'authorityGrantDate'],
@@ -2505,6 +2505,40 @@ export async function runAll() {
       `autoLiability must be SW's $1M, got ${autoFilled.autoLiability?.value}`);
     assert(autoFilled.autoLiability?.sourceLabel === 'SaferWatch',
       `label must be SaferWatch, got ${autoFilled.autoLiability?.sourceLabel}`);
+  }));
+
+  // NF9. detectEdits: browser submits the same autoLiability as server auto-filled → no edit flagged
+  results.push(await t('detectEdits: no-SW autoLiability not flagged as dispatcher edit', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityIsRequired'],
+      carrierName: 'No SW Carrier', dotNumber: '5555555',
+      fmcsaLiabilityOnFile: 750000, fmcsaLiabilityIsRequired: 'Y',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    // Browser submits the same value the server auto-filled
+    const browserBody = { autoLiability: '750000' };
+    const edits = detectEdits(autoFilled, browserBody);
+    assert(!edits.autoLiability,
+      `autoLiability should NOT be flagged as edit when browser matches server, got: ${JSON.stringify(edits.autoLiability)}`);
+  }));
+
+  // NF10. detectEdits: browser submits blank autoLiability (didn't receive it) → flagged as edit
+  results.push(await t('detectEdits: blank browser autoLiability IS flagged as dispatcher edit', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber', 'fmcsaLiabilityOnFile', 'fmcsaLiabilityIsRequired'],
+      carrierName: 'No SW Carrier', dotNumber: '5555555',
+      fmcsaLiabilityOnFile: 750000, fmcsaLiabilityIsRequired: 'Y',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { autoFilled } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    // Browser submits blank (old frontend that didn't get the injected filledFields)
+    const browserBody = { autoLiability: '' };
+    const edits = detectEdits(autoFilled, browserBody);
+    assert(edits.autoLiability,
+      'autoLiability SHOULD be flagged when browser sends blank but server had a value');
+    assert(edits.autoLiability.sourceLabel === 'FMCSA live',
+      `sourceLabel should be FMCSA live, got ${edits.autoLiability.sourceLabel}`);
   }));
 
   return results;

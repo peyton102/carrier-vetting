@@ -179,7 +179,18 @@ router.post('/', requireActive, async (req, res, next) => {
       if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) throw insertErr;
     }
 
-    // ── 5. Return combined payload ────────────────────────────────────────────
+    // ── 5. Inject no-SW fallback values into fmcsa for the frontend ───────────
+    // The server's mergeResults auto-fills autoLiability from QCMobile for no-SW
+    // tenants, but the frontend only reads fmcsa.filledFields. Without this,
+    // the form stays blank and detectEdits flags the value as a dispatcher edit.
+    if (swNotConnected && !fmcsaCannotVerify && fmcsa && autoFilled.autoLiability) {
+      fmcsa.autoLiability = autoFilled.autoLiability.value;
+      if (!fmcsa.filledFields?.includes('autoLiability')) {
+        fmcsa.filledFields = [...(fmcsa.filledFields ?? []), 'autoLiability'];
+      }
+    }
+
+    // ── 6. Return combined payload ────────────────────────────────────────────
     // The browser receives: lookupId + raw source responses (same shape as individual routes)
     // so the existing applyLookupResults() in the frontend can process them unchanged.
     res.json({

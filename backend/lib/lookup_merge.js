@@ -306,7 +306,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
     // Authority grant date: label "(FMCSA)" to identify source.
     // If the grant-date fetch returned empty, ensure the "not reviewed" note fires.
     if (autoFilled.authorityGrantDate) {
-      autoFilled.authorityGrantDate.sourceLabel = '(FMCSA)';
+      autoFilled.authorityGrantDate.sourceLabel = 'FMCSA';
     } else if (!serverFields.sourceErrors.authorityGrantDate) {
       serverFields.sourceErrors.authorityGrantDate = 'No authority grant date available from FMCSA';
     }
@@ -322,7 +322,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
       if (fmcsaLiab != null && !isNaN(parseFloat(fmcsaLiab))) {
         const liabVal = parseFloat(fmcsaLiab);
         if (fmcsaIsReq === 'Y' || liabVal > 0) {
-          setScalar('autoLiability', String(fmcsaLiab), 'fmcsa', '(FMCSA live)');
+          setScalar('autoLiability', String(fmcsaLiab), 'fmcsa', 'FMCSA live');
         }
       }
     }
