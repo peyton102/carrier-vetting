@@ -2823,5 +2823,88 @@ export async function runAll() {
     // last_insurer is NOT updated (line 1045)
   }));
 
+  // NF27. mergeResults: history dataset failed → insuranceHistoryIncomplete=true
+  results.push(await t('mergeResults: history dataset failed → insuranceHistoryIncomplete=true', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'Partial History LLC', dotNumber: '8888886',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const insurance = {
+      bipdCancelPending: false, bipdCancelLapsed: false,
+      history: {
+        currentInsurer: 'Great West Casualty',
+        currentPolicyNo: 'GWC123',
+        currentPolicyStartDate: '01/15/2026',
+        insurerChanges12mo: 1,
+        timeline: [],
+        policyStartedRecently: false,
+        historyIncomplete: true,
+      },
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance, chameleon: null, swNotConnected: true });
+    assert(serverFields.insuranceHistoryIncomplete === true,
+      `insuranceHistoryIncomplete should be true, got ${serverFields.insuranceHistoryIncomplete}`);
+    assert(serverFields.insuranceHistoryNotReviewed === false,
+      `insuranceHistoryNotReviewed should be false (history worked partially), got ${serverFields.insuranceHistoryNotReviewed}`);
+    assert(autoFilled.currentInsurer?.value === 'Great West Casualty',
+      `currentInsurer should still be set, got ${autoFilled.currentInsurer?.value}`);
+  }));
+
+  // NF28. mergeResults: history dataset OK → insuranceHistoryIncomplete=false
+  results.push(await t('mergeResults: history dataset OK → insuranceHistoryIncomplete=false', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'Full History LLC', dotNumber: '8888887',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const insurance = {
+      bipdCancelPending: false, bipdCancelLapsed: false,
+      history: {
+        currentInsurer: 'Progressive',
+        insurerChanges12mo: 2,
+        timeline: [],
+        policyStartedRecently: false,
+        historyIncomplete: false,
+      },
+    };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance, chameleon: null, swNotConnected: true });
+    assert(serverFields.insuranceHistoryIncomplete === false,
+      `insuranceHistoryIncomplete should be false, got ${serverFields.insuranceHistoryIncomplete}`);
+  }));
+
+  // NF29. rules engine: insuranceHistoryIncomplete → note about churn count
+  results.push(await t('rules: insuranceHistoryIncomplete adds churn-may-be-low note', () => {
+    const d = { ...CLEAN, insuranceHistoryIncomplete: true, insurerChanges12mo: 1 };
+    const r = runVettingRules(d, CFG);
+    const hasNote = r.notes.some(n => n.includes('Insurance history incomplete'));
+    assert(hasNote, `Expected "Insurance history incomplete" note, got notes: ${JSON.stringify(r.notes)}`);
+  }));
+
+  // NF30. rules engine: insuranceHistoryIncomplete false → no note
+  results.push(await t('rules: insuranceHistoryIncomplete false → no incomplete note', () => {
+    const d = { ...CLEAN, insuranceHistoryIncomplete: false, insurerChanges12mo: 1 };
+    const r = runVettingRules(d, CFG);
+    const hasNote = r.notes.some(n => n.includes('Insurance history incomplete'));
+    assert(!hasNote, `Should NOT have incomplete note, got notes: ${JSON.stringify(r.notes)}`);
+  }));
+
+  // NF31. PDF: churn line shows "(partial)" when history incomplete
+  results.push(await t('PDF: churn line shows (partial) when insuranceHistoryIncomplete', async () => {
+    const d = {
+      ...CLEAN,
+      insuranceHistoryIncomplete: true,
+      insurerChanges12mo: 2,
+      currentInsurer: 'Great West Casualty',
+      insuranceHistoryNotReviewed: false,
+    };
+    const result = runVettingRules(d, CFG);
+    const pdfErr = await checkPdf(d, result);
+    assert(!pdfErr, `PDF generation failed: ${pdfErr}`);
+    // Note should be present in rules output
+    const hasNote = result.notes.some(n => n.includes('Insurance history incomplete'));
+    assert(hasNote, `Expected incomplete note in rules output`);
+  }));
+
   return results;
 }

@@ -82,9 +82,10 @@ export async function fetchInsuranceHistory(dot) {
       console.warn(`[INSUR] URL: ${historyUrl.replace(/webKey=[^&]+/, 'webKey=REDACTED')}`);
     }
 
+    const historyFailed = !historyRes.ok;
     const [activeRows, historyRows] = await Promise.all([
       activeRes.ok ? activeRes.json() : [],
-      historyRes.ok ? historyRes.json() : [],
+      historyFailed ? [] : historyRes.json(),
     ]);
 
     // Merge + deduplicate by (company, effective_date, policy_no, formCode)
@@ -136,6 +137,7 @@ export async function fetchInsuranceHistory(dot) {
       insurerChanges12mo:     distinctInsurers.size,
       timeline:               recent,
       policyStartedRecently,
+      historyIncomplete:      historyFailed,
     };
   } catch (e) {
     const isTimeout = e?.name === 'TimeoutError' || e?.name === 'AbortError';

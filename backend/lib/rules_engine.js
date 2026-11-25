@@ -615,6 +615,9 @@ export function runVettingRules(d, cfg = DEFAULT_SETTINGS) {
         `(threshold: ${churnThreshold}) — frequent insurer changes may indicate instability, manager review required`
       );
     }
+    if (d.insuranceHistoryIncomplete) {
+      notes.push('Insurance history incomplete (FMCSA history data unavailable) — churn count may be low');
+    }
   }
 
   // Policy started recently — informational only

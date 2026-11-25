@@ -974,7 +974,8 @@ function insuranceHistorySection(doc, L, W, d, cfg) {
   }
 
   if (changes > 0) {
-    const text = `${changes} distinct insurer${changes === 1 ? '' : 's'} in 12 months` +
+    const partial = d.insuranceHistoryIncomplete ? ' (partial)' : '';
+    const text = `${changes} distinct insurer${changes === 1 ? '' : 's'} in 12 months${partial}` +
       (isChurn ? ` — EXCEEDS ${churnThreshold} THRESHOLD` : '');
     _twoColRow(doc, L, W,
       'Helvetica-Bold', C.darkgray, 'Insurer Changes (12 months):',

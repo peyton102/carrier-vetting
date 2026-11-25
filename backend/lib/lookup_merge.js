@@ -366,6 +366,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
       fieldSources.insuranceTimeline = 'insurance';
     }
     serverFields.insuranceHistoryNotReviewed = false;
+    serverFields.insuranceHistoryIncomplete = !!(h.historyIncomplete);
   } else {
     serverFields.insuranceHistoryNotReviewed = !!(insurance?.historyNotReviewed ?? true);
   }
@@ -523,7 +524,7 @@ export function applyToSubmission(savedLookup, browserBody) {
   // Apply OOS display metadata from serverFields
   for (const f of ['oosWinLabel','truckOosPctAlt','truckOosPctAltSrc','driverOosPctAlt','driverOosPctAltSrc',
                    'driverInspections24mo','_basicSufficiency',
-                   'insuranceHistoryNotReviewed','sourceErrors','lookupSourceFailures',
+                   'insuranceHistoryNotReviewed','insuranceHistoryIncomplete','sourceErrors','lookupSourceFailures',
                    'nationalAvgOosCached','swNotConnected','authorityReinstatementNote']) {
     if (serverFields[f] !== undefined) data[f] = serverFields[f];
   }
