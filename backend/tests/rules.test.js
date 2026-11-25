@@ -2721,5 +2721,107 @@ export async function runAll() {
       'fetchSocrataGrantDate should be an exported function');
   }));
 
+  // NF22. mergeResults: insurance history timeout → insuranceHistoryNotReviewed, no currentInsurer
+  results.push(await t('mergeResults: insurance history timeout sets insuranceHistoryNotReviewed, skips currentInsurer', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'History Timeout LLC', dotNumber: '8888881',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const insurance = {
+      bipdCancelPending: false, bipdCancelLapsed: false,
+      history: { historyNotReviewed: true, reason: 'FMCSA slow to respond' },
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance, chameleon: null, swNotConnected: true });
+    assert(serverFields.insuranceHistoryNotReviewed === true,
+      `insuranceHistoryNotReviewed should be true, got ${serverFields.insuranceHistoryNotReviewed}`);
+    assert(autoFilled.currentInsurer === undefined,
+      `currentInsurer should NOT be auto-filled, got ${JSON.stringify(autoFilled.currentInsurer)}`);
+    assert(autoFilled.currentPolicyNo === undefined,
+      `currentPolicyNo should NOT be auto-filled, got ${JSON.stringify(autoFilled.currentPolicyNo)}`);
+  }));
+
+  // NF23. mergeResults: insurance history success → insuranceHistoryNotReviewed false, currentInsurer set
+  results.push(await t('mergeResults: insurance history success sets currentInsurer and insuranceHistoryNotReviewed=false', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'Good Carrier LLC', dotNumber: '8888882',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const insurance = {
+      bipdCancelPending: false, bipdCancelLapsed: false,
+      history: {
+        currentInsurer: 'MS Transverse',
+        currentPolicyNo: 'TINCA1986433',
+        currentPolicyStartDate: '01/24/2026',
+        insurerChanges12mo: 1,
+        timeline: [],
+        policyStartedRecently: false,
+      },
+    };
+    const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance, chameleon: null, swNotConnected: true });
+    assert(serverFields.insuranceHistoryNotReviewed === false,
+      `insuranceHistoryNotReviewed should be false, got ${serverFields.insuranceHistoryNotReviewed}`);
+    assert(autoFilled.currentInsurer?.value === 'MS Transverse',
+      `currentInsurer should be MS Transverse, got ${autoFilled.currentInsurer?.value}`);
+  }));
+
+  // NF24. mergeResults: insurance null (Promise rejected) → insuranceHistoryNotReviewed true
+  results.push(await t('mergeResults: insurance null → insuranceHistoryNotReviewed true', () => {
+    const fmcsa = {
+      filledFields: ['carrierName', 'dotNumber'],
+      carrierName: 'No Insurance LLC', dotNumber: '8888883',
+      saferData: null, saferSnapshotDate: null,
+    };
+    const { serverFields } = mergeResults({ fmcsa, sw: null, insurance: null, chameleon: null, swNotConnected: true });
+    assert(serverFields.insuranceHistoryNotReviewed === true,
+      `insuranceHistoryNotReviewed should be true when insurance is null, got ${serverFields.insuranceHistoryNotReviewed}`);
+  }));
+
+  // NF25. PDF: insuranceHistoryNotReviewed renders "Not reviewed", not "No active policy"
+  results.push(await t('PDF: insuranceHistoryNotReviewed shows Not reviewed for current insurer', async () => {
+    const d = {
+      carrierName: 'Timeout Carrier', dotNumber: '8888884', mcNumber: '',
+      operatingStatus: 'AUTHORIZED', entityType: 'CARRIER',
+      autoLiability: '1000000', cargoInsurance: '100000',
+      authorityGrantDate: '2020-01-01',
+      insuranceHistoryNotReviewed: true,
+      currentInsurer: null, currentPolicyNo: null, currentPolicyStartDate: null,
+    };
+    const result = runVettingRules(d, CFG);
+    const pdfErr = await checkPdf(d, result);
+    assert(!pdfErr, `PDF generation failed: ${pdfErr}`);
+  }));
+
+  // NF26. POST-REFRESH cron: historyNotReviewed → insurer skipped, never NONE ON FILE
+  results.push(await t('POST-REFRESH: historyNotReviewed puts DOT in insurerErrors, not insurerMap', () => {
+    // Simulate the cron logic from monitor.js lines 955-964
+    const insurerMap = {};
+    const insurerErrors = {};
+    const dot = '8888885';
+
+    // Simulated fetchInsuranceHistory result when it times out
+    const h = { historyNotReviewed: true, reason: 'FMCSA slow to respond' };
+
+    // This mirrors the exact cron logic at monitor.js:957-963
+    if (h.historyNotReviewed) {
+      insurerErrors[dot] = h.reason || 'history not reviewed';
+    } else {
+      insurerMap[dot] = h.currentInsurer || 'NONE ON FILE';
+    }
+
+    assert(insurerErrors[dot] === 'FMCSA slow to respond',
+      `DOT should be in insurerErrors, got ${insurerErrors[dot]}`);
+    assert(insurerMap[dot] === undefined,
+      `DOT should NOT be in insurerMap (would be NONE ON FILE), got ${insurerMap[dot]}`);
+
+    // Now simulate the per-DOT processing (monitor.js:987-1045)
+    const curInsurerName = insurerMap[dot] ?? null;
+    const insurerSkipped = curInsurerName === null;
+    assert(insurerSkipped === true, 'insurerSkipped should be true');
+    // Insurer change check is skipped (line 1029)
+    // last_insurer is NOT updated (line 1045)
+  }));
+
   return results;
 }

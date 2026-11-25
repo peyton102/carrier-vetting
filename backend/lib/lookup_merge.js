@@ -355,7 +355,7 @@ export function mergeResults({ fmcsa, sw, insurance, chameleon, swNotConnected =
   serverFields.insuranceNotReviewed = !!(insurance?.notReviewed);
 
   // ── Insurance history (Socrata — per-DOT timeline) ───────────────────────
-  if (insurance?.history) {
+  if (insurance?.history && !insurance.history.historyNotReviewed) {
     const h = insurance.history;
     if (h.currentInsurer)         setScalar('currentInsurer',         h.currentInsurer,         'insurance', 'FMCSA Socrata');
     if (h.currentPolicyNo)        setScalar('currentPolicyNo',       h.currentPolicyNo,        'insurance', 'FMCSA Socrata');

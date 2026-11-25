@@ -56,20 +56,31 @@ export async function fetchInsuranceHistory(dot) {
     // Query both datasets in parallel — all BIPD filings (ins_type_code='1') for this DOT.
     // BMC-91, BMC-91X, BMC-82 = active policies; BMC-35 = cancellation notice (not coverage).
     const where = `usdot_number='${dot}' AND ins_type_code='1'`;
-    const fields = '$select=insurance_company_name,policy_no,effective_date,trans_date,ins_form_code';
+    // Active dataset has trans_date; history dataset does not (would cause 400).
+    const activeFields  = '$select=insurance_company_name,policy_no,effective_date,trans_date,ins_form_code';
+    const historyFields = '$select=insurance_company_name,policy_no,effective_date,ins_form_code';
     const order  = '$order=effective_date DESC';
     const limit  = '$limit=100';
 
+    const activeUrl  = `${SOCRATA_BASE}/${INSUR_ACTIVE_DS}.json?$where=${encodeURIComponent(where)}&${activeFields}&${order}&${limit}`;
+    const historyUrl = `${SOCRATA_BASE}/${INSUR_HISTORY_DS}.json?$where=${encodeURIComponent(where)}&${historyFields}&${order}&${limit}`;
+
     const [activeRes, historyRes] = await Promise.all([
-      fetch(
-        `${SOCRATA_BASE}/${INSUR_ACTIVE_DS}.json?$where=${encodeURIComponent(where)}&${fields}&${order}&${limit}`,
-        { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }
-      ),
-      fetch(
-        `${SOCRATA_BASE}/${INSUR_HISTORY_DS}.json?$where=${encodeURIComponent(where)}&${fields}&${order}&${limit}`,
-        { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }
-      ),
+      fetch(activeUrl,  { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }),
+      fetch(historyUrl, { signal: AbortSignal.timeout(HISTORY_TIMEOUT_MS) }),
     ]);
+
+    // Log non-OK responses for diagnosis — Socrata 400s indicate schema mismatches.
+    if (!activeRes.ok) {
+      const body = await activeRes.text().catch(() => '');
+      console.warn(`[INSUR] Socrata active dataset HTTP ${activeRes.status} for DOT ${dot}: ${body.slice(0, 300)}`);
+      console.warn(`[INSUR] URL: ${activeUrl.replace(/webKey=[^&]+/, 'webKey=REDACTED')}`);
+    }
+    if (!historyRes.ok) {
+      const body = await historyRes.text().catch(() => '');
+      console.warn(`[INSUR] Socrata history dataset HTTP ${historyRes.status} for DOT ${dot}: ${body.slice(0, 300)}`);
+      console.warn(`[INSUR] URL: ${historyUrl.replace(/webKey=[^&]+/, 'webKey=REDACTED')}`);
+    }
 
     const [activeRows, historyRows] = await Promise.all([
       activeRes.ok ? activeRes.json() : [],
