@@ -89,27 +89,50 @@ export async function fetchInsuranceHistory(dot) {
     ]);
 
     // Merge + deduplicate by (company, effective_date, policy_no, formCode)
+    // Tag each row with its source so history rows are never treated as current.
     const POLICY_FORMS = new Set(['BMC-91', 'BMC-91X', 'BMC-82']);
     const seen = new Set();
     const all = [];
-    for (const row of [...activeRows, ...historyRows]) {
-      const eff      = String(row.effective_date ?? '').slice(0, 10);
-      const company  = (row.insurance_company_name ?? '').trim();
-      const policyNo = (row.policy_no ?? '').trim();
-      const formCode = (row.ins_form_code ?? '').trim();
-      const key = `${company}|${eff}|${policyNo}|${formCode}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const isPolicy = POLICY_FORMS.has(formCode);
-      all.push({ date: fmtDate(eff), rawDate: eff, company, policyNo, formCode, isPolicy });
-    }
+    const parseRows = (rows, source) => {
+      for (const row of rows) {
+        const eff      = String(row.effective_date ?? '').slice(0, 10);
+        const company  = (row.insurance_company_name ?? '').trim();
+        const policyNo = (row.policy_no ?? '').trim();
+        const formCode = (row.ins_form_code ?? '').trim();
+        const key = `${company}|${eff}|${policyNo}|${formCode}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const isPolicy = POLICY_FORMS.has(formCode);
+        all.push({ date: fmtDate(eff), rawDate: eff, company, policyNo, formCode, isPolicy, source });
+      }
+    };
+    parseRows(activeRows, 'active');
+    parseRows(historyRows, 'history');
 
     // Sort by effective date descending
     all.sort((a, b) => b.rawDate.localeCompare(a.rawDate));
 
-    // Policies only (BMC-91, 91X, 82) — BMC-35 is a cancellation notice, not coverage
+    // Build a set of policy numbers cancelled by a BMC-35 whose effective date has passed.
+    const todayYmd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const cancelledPolicyNos = new Set();
+    for (const r of all) {
+      if (r.formCode === 'BMC-35' && r.policyNo && r.rawDate <= todayYmd) {
+        cancelledPolicyNos.add(r.policyNo.toUpperCase());
+      }
+    }
+
+    // Mark cancelled policies — a 91/91X/82 whose policy_no matches a past-effective BMC-35
+    for (const r of all) {
+      if (r.isPolicy && cancelledPolicyNos.has(r.policyNo.toUpperCase())) {
+        r.cancelled = true;
+      }
+    }
+
+    // Current insurer: only from the ACTIVE dataset, and only if not cancelled.
+    // History-dataset rows are never current — they're historical filings.
     const policies = all.filter(r => r.isPolicy);
-    const current = policies[0] || null;
+    const activePolicies = policies.filter(r => r.source === 'active' && !r.cancelled);
+    const current = activePolicies[0] || null;
 
     // Filter to last 12 months for churn count (policies only)
     const recent = all.filter(r => r.rawDate >= cutoffYmd);

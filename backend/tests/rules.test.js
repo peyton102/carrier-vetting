@@ -6,6 +6,7 @@ import { generateVettingPDF } from '../lib/pdf_generator.js';
 import { mergeResults, applyToSubmission, detectEdits, validateLookupRow, applyStricterEdits } from '../lib/lookup_merge.js';
 import { refreshInsuranceCancellations, refreshOosOrders, refreshSaferRevocations, refreshMotusSuspensions, runPostRefreshChecks } from '../lib/monitor.js';
 import { fmcsaMcLookup, parseSaferInspections, extractGrantDate, fetchSocrataGrantDate } from '../routes/fmcsa.js';
+import { fetchInsuranceHistory } from '../routes/insurance.js';
 import { createHash } from 'crypto';
 
 const CFG = DEFAULT_SETTINGS;
@@ -2904,6 +2905,212 @@ export async function runAll() {
     // Note should be present in rules output
     const hasNote = result.notes.some(n => n.includes('Insurance history incomplete'));
     assert(hasNote, `Expected incomplete note in rules output`);
+  }));
+
+  // NF32. fetchInsuranceHistory: Gully shape — cancelled policy from history dataset is NOT current insurer
+  results.push(await t('fetchInsuranceHistory: cancelled policy (BMC-35 match) → currentInsurer null', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      // Active dataset: BMC-35 cancellation (effective 30 days ago)
+      // History dataset: the original BMC-91X policy (effective 6 months ago)
+      const cancelDate = futureDate(-30);
+      const policyDate = futureDate(-180);
+      const activeRows = [
+        { insurance_company_name: 'MS Transverse Insurance Company', policy_no: 'TIRPCA000121',
+          effective_date: `${cancelDate}T00:00:00.000`, trans_date: `${cancelDate}T00:00:00.000`,
+          ins_form_code: 'BMC-35' },
+      ];
+      const historyRows = [
+        { insurance_company_name: 'MS Transverse Insurance Company', policy_no: 'TIRPCA000121',
+          effective_date: `${policyDate}T00:00:00.000`,
+          ins_form_code: 'BMC-91X' },
+      ];
+      globalThis.fetch = async (url) => {
+        const isHistory = url.includes('3uet-3z4i');
+        return { ok: true, json: async () => isHistory ? historyRows : activeRows };
+      };
+      const h = await fetchInsuranceHistory('2640993');
+      assert(h.currentInsurer === null,
+        `currentInsurer should be null (cancelled), got "${h.currentInsurer}"`);
+      assert(!h.historyNotReviewed, 'should NOT be historyNotReviewed');
+      // The cancelled policy should still appear in timeline (within 12mo)
+      const has91X = h.timeline.some(e => e.formCode === 'BMC-91X');
+      assert(has91X, 'cancelled BMC-91X should appear in timeline for context');
+      // The BMC-91X should be marked cancelled
+      const the91X = h.timeline.find(e => e.formCode === 'BMC-91X');
+      assert(the91X.cancelled === true, `BMC-91X should be marked cancelled, got cancelled=${the91X.cancelled}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }));
+
+  // NF33. fetchInsuranceHistory: UGN shape — active policy in active dataset → currentInsurer set
+  results.push(await t('fetchInsuranceHistory: active policy in active dataset → currentInsurer set', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      const activeRows = [
+        { insurance_company_name: 'MS Transverse Insurance Company', policy_no: 'TINCA1986433',
+          effective_date: '2026-01-24T00:00:00.000', trans_date: '2026-01-20T00:00:00.000',
+          ins_form_code: 'BMC-91X' },
+      ];
+      globalThis.fetch = async (url) => {
+        const isHistory = url.includes('3uet-3z4i');
+        return { ok: true, json: async () => isHistory ? [] : activeRows };
+      };
+      const h = await fetchInsuranceHistory('2939905');
+      assert(h.currentInsurer === 'MS Transverse Insurance Company',
+        `currentInsurer should be MS Transverse, got "${h.currentInsurer}"`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }));
+
+  // NF34. fetchInsuranceHistory: replacement 91X after cancellation → currentInsurer is replacement
+  results.push(await t('fetchInsuranceHistory: replacement policy after cancellation → currentInsurer is replacement', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      // Active dataset: BMC-35 cancels old policy, new BMC-91X is the replacement
+      const cancelDate = futureDate(-30);
+      const replaceDate = futureDate(-15);
+      const oldPolicyDate = futureDate(-180);
+      const activeRows = [
+        { insurance_company_name: 'New Insurance Co', policy_no: 'NEW-001',
+          effective_date: `${replaceDate}T00:00:00.000`, trans_date: `${replaceDate}T00:00:00.000`,
+          ins_form_code: 'BMC-91X' },
+        { insurance_company_name: 'Old Insurance Co', policy_no: 'OLD-001',
+          effective_date: `${cancelDate}T00:00:00.000`, trans_date: `${cancelDate}T00:00:00.000`,
+          ins_form_code: 'BMC-35' },
+      ];
+      const historyRows = [
+        { insurance_company_name: 'Old Insurance Co', policy_no: 'OLD-001',
+          effective_date: `${oldPolicyDate}T00:00:00.000`,
+          ins_form_code: 'BMC-91X' },
+      ];
+      globalThis.fetch = async (url) => {
+        const isHistory = url.includes('3uet-3z4i');
+        return { ok: true, json: async () => isHistory ? historyRows : activeRows };
+      };
+      const h = await fetchInsuranceHistory('1111111');
+      assert(h.currentInsurer === 'New Insurance Co',
+        `currentInsurer should be New Insurance Co, got "${h.currentInsurer}"`);
+      assert(h.insurerChanges12mo >= 2,
+        `should have at least 2 distinct insurers, got ${h.insurerChanges12mo}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }));
+
+  // NF35. Full path: Gully cancelled + history-only 91X → REJECT, not "sources conflict" HOLD
+  results.push(await t('full path: Gully cancelled + history-only policy → REJECT on cancellation', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      const cancelDate = futureDate(-30);
+      const policyDate = futureDate(-180);
+      const activeRows = [
+        { insurance_company_name: 'MS Transverse Insurance Company', policy_no: 'TIRPCA000121',
+          effective_date: `${cancelDate}T00:00:00.000`, trans_date: `${cancelDate}T00:00:00.000`,
+          ins_form_code: 'BMC-35' },
+      ];
+      const historyRows = [
+        { insurance_company_name: 'MS Transverse Insurance Company', policy_no: 'TIRPCA000121',
+          effective_date: `${policyDate}T00:00:00.000`,
+          ins_form_code: 'BMC-91X' },
+      ];
+      globalThis.fetch = async (url) => {
+        const isHistory = url.includes('3uet-3z4i');
+        return { ok: true, json: async () => isHistory ? historyRows : activeRows };
+      };
+      const h = await fetchInsuranceHistory('2640993');
+
+      // Build carrier data like mergeResults would
+      const insurance = {
+        bipdCancelPending: false, bipdCancelLapsed: true,
+        effectiveDate: cancelDate,
+        history: h,
+      };
+      const fmcsa = {
+        filledFields: ['carrierName', 'dotNumber'],
+        carrierName: 'Gully LLC', dotNumber: '2640993',
+        fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
+        saferData: null, saferSnapshotDate: null,
+      };
+      const { autoFilled, serverFields } = mergeResults({ fmcsa, sw: null, insurance, chameleon: null, swNotConnected: true });
+
+      // currentInsurer must be null (cancelled, no replacement)
+      assert(autoFilled.currentInsurer === undefined,
+        `currentInsurer should NOT be set, got ${JSON.stringify(autoFilled.currentInsurer)}`);
+
+      // Build the full carrier data for rules
+      const data = {
+        ...CLEAN,
+        swNotConnected: true,
+        autoLiability: '1000000',
+        autoLiabilityExpiration: '',
+        fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
+        bipdCancelLapsed: true, bipdCancelEffectiveDate: cancelDate,
+        currentInsurer: autoFilled.currentInsurer?.value ?? null,
+        insuranceHistoryNotReviewed: serverFields.insuranceHistoryNotReviewed,
+        unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+        vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+        driverFitnessBasic: '', hazmatBasic: '',
+        drugAlcoholViolation: false,
+      };
+      const r = runVettingRules(data, CFG);
+      assert(r.verdict === 'REJECT', `should REJECT, got ${r.verdict}`);
+      assert(r.reasons.some(s => /cancelled/i.test(s)), 'should mention cancellation');
+      assert(!r.warnings.some(s => /sources conflict/i.test(s)),
+        `should NOT have "sources conflict" HOLD, got warnings: ${JSON.stringify(r.warnings)}`);
+      const pdfErr = await checkPdf(data, r);
+      assert(!pdfErr, `PDF: ${pdfErr}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  }));
+
+  // NF36. fetchInsuranceHistory: replacement after cancel → "sources conflict" HOLD still works
+  results.push(await t('full path: cancelled + real replacement → HOLD sources conflict', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      const cancelDate = futureDate(-30);
+      const replaceDate = futureDate(-15);
+      // Active: BMC-35 cancels OLD-001, new BMC-91X (NEW-001) is a replacement
+      const activeRows = [
+        { insurance_company_name: 'New Insurance Co', policy_no: 'NEW-001',
+          effective_date: `${replaceDate}T00:00:00.000`, trans_date: `${replaceDate}T00:00:00.000`,
+          ins_form_code: 'BMC-91X' },
+        { insurance_company_name: 'Old Insurance Co', policy_no: 'OLD-001',
+          effective_date: `${cancelDate}T00:00:00.000`, trans_date: `${cancelDate}T00:00:00.000`,
+          ins_form_code: 'BMC-35' },
+      ];
+      globalThis.fetch = async (url) => {
+        const isHistory = url.includes('3uet-3z4i');
+        return { ok: true, json: async () => isHistory ? [] : activeRows };
+      };
+      const h = await fetchInsuranceHistory('2222222');
+
+      // Build carrier data: nightly says lapsed, but we have an active replacement filing
+      const data = {
+        ...CLEAN,
+        swNotConnected: true,
+        autoLiability: '1000000',
+        autoLiabilityExpiration: '',
+        fmcsaLiabilityOnFile: 1000000, fmcsaLiabilityRequired: 750000, fmcsaLiabilityIsRequired: 'Y',
+        bipdCancelLapsed: true, bipdCancelEffectiveDate: cancelDate,
+        currentInsurer: h.currentInsurer,  // 'New Insurance Co' (active, different policy_no)
+        insuranceHistoryNotReviewed: false,
+        unsafeDrivingBasic: '', crashIndicatorBasic: '', hosBasic: '',
+        vehicleMaintenanceBasic: '', vehicleDriverObservedBasic: '',
+        driverFitnessBasic: '', hazmatBasic: '',
+        drugAlcoholViolation: false,
+      };
+      const r = runVettingRules(data, CFG);
+      // Should be HOLD (sources conflict), not REJECT — yellow items go to reasons on HOLD
+      assert(r.verdict === 'HOLD', `should HOLD, got ${r.verdict}`);
+      assert(r.reasons.some(s => /sources conflict/i.test(s)),
+        `should have "sources conflict" reason, got reasons: ${JSON.stringify(r.reasons)}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   }));
 
   return results;

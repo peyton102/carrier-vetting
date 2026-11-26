@@ -989,9 +989,11 @@ function insuranceHistorySection(doc, L, W, d, cfg) {
   for (let i = startIdx; i < showCount; i++) {
     const e = timeline[i];
     const isCancellation = e.formCode === 'BMC-35';
-    const isCancelledPolicy = !e.isPolicy && !isCancellation; // from history dataset with CANCEL status
-    const showRed = isCancellation || isCancelledPolicy || !e.isPolicy;
-    const label = isCancellation ? 'CANCELLED' : (e.formCode || 'policy');
+    const isCancelledPolicy = e.cancelled || (!e.isPolicy && !isCancellation);
+    const showRed = isCancellation || isCancelledPolicy;
+    const label = isCancellation ? 'CANCELLED'
+                : isCancelledPolicy ? `${e.formCode || 'policy'} CANCELLED`
+                : (e.formCode || 'policy');
     const color = showRed ? C.red : C.gray;
     doc.fontSize(8).font('Helvetica').fillColor(color)
        .text(`  ${e.date}: ${e.company} [${label}]${e.policyNo ? ` (#${e.policyNo})` : ''}`, L + 10, doc.y, { width: W - 10 });
